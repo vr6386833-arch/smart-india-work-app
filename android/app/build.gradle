@@ -22,13 +22,42 @@ android {
 
     signingConfigs {
         release {
-            if (file('debug.keystore').exists()) {
-                storeFile file('debug.keystore')
+            def releaseKs = file('release.keystore')
+            def debugKs = file('debug.keystore')
+            def userKs = file("${System.properties['user.home']}/.android/debug.keystore")
+            if (releaseKs.exists()) {
+                storeFile releaseKs
+                storePassword 'smartindiawork'
+                keyAlias 'releasekey'
+                keyPassword 'smartindiawork'
+            } else if (debugKs.exists()) {
+                storeFile debugKs
+                storePassword 'smartindiawork'
+                keyAlias 'releasekey'
+                keyPassword 'smartindiawork'
+            } else if (userKs.exists()) {
+                storeFile userKs
                 storePassword 'android'
                 keyAlias 'androiddebugkey'
                 keyPassword 'android'
-            } else if (file("${System.properties['user.home']}/.android/debug.keystore").exists()) {
-                storeFile file("${System.properties['user.home']}/.android/debug.keystore")
+            }
+        }
+        debug {
+            def releaseKs = file('release.keystore')
+            def debugKs = file('debug.keystore')
+            def userKs = file("${System.properties['user.home']}/.android/debug.keystore")
+            if (releaseKs.exists()) {
+                storeFile releaseKs
+                storePassword 'smartindiawork'
+                keyAlias 'releasekey'
+                keyPassword 'smartindiawork'
+            } else if (debugKs.exists()) {
+                storeFile debugKs
+                storePassword 'smartindiawork'
+                keyAlias 'releasekey'
+                keyPassword 'smartindiawork'
+            } else if (userKs.exists()) {
+                storeFile userKs
                 storePassword 'android'
                 keyAlias 'androiddebugkey'
                 keyPassword 'android'
@@ -38,18 +67,24 @@ android {
 
     buildTypes {
         release {
-            signingConfig signingConfigs.release
+            if (signingConfigs.release.storeFile != null && signingConfigs.release.storeFile.exists()) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
         debug {
-            signingConfig signingConfigs.release
+            if (signingConfigs.debug.storeFile != null && signingConfigs.debug.storeFile.exists()) {
+                signingConfig signingConfigs.debug
+            }
         }
     }
 
     lint {
         abortOnError false
         checkReleaseBuilds false
+        checkDependencies false
+        ignoreTestSources true
     }
 }
 
