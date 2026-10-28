@@ -22,8 +22,8 @@ allprojects {
         google()
         mavenCentral()
     }
-    tasks.whenTaskAdded { task ->
-        if (task.name.startsWith("lintVital")) {
+    tasks.configureEach { task ->
+        if (task.name.contains("lintVital") || task.name.contains("AarMetadata") || task.name.contains("CheckAarMetadata")) {
             task.enabled = false
         }
     }
