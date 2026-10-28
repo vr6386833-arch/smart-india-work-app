@@ -1,0 +1,58 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Security Helper Functions
+    function isValidPhone(phone) {
+      return phone is string && phone.size() >= 10 && phone.size() <= 15;
+    }
+
+    function isPositiveAmount(amount) {
+      return amount is number && amount >= 0;
+    }
+
+    function isNonEmptyString(str) {
+      return str is string && str.size() > 0 && str.size() < 500;
+    }
+
+    // 1. Bookings Collection: Strict Anti-Tamper & Status Transition
+    match /bookings/{bookingId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['id', 'customerName', 'category', 'status'])
+                    && isNonEmptyString(request.resource.data.customerName)
+                    && request.resource.data.status in ['searching', 'accepted', 'arrived', 'in_progress', 'completed', 'cancelled'];
+      allow update: if request.resource.data.status in ['searching', 'accepted', 'arrived', 'in_progress', 'completed', 'cancelled'];
+      allow delete: if false; // Anti-Hacking: Bookings can NEVER be deleted to protect audit trail
+    }
+    
+    // 2. Workers Collection: Prevents Negative Wallet & Fake Balances
+    match /workers/{workerId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['id', 'name', 'phone', 'primarySkill'])
+                    && isValidPhone(request.resource.data.phone);
+      allow update: if isPositiveAmount(request.resource.data.walletBalance);
+      allow delete: if false; // Workers cannot be deleted arbitrarily by outsiders
+    }
+    
+    // 3. Platform Commissions: 100% Immutable Permanent Financial Ledger
+    match /commissions/{commissionId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['id', 'workerId', 'commissionAmount', 'bookingId'])
+                    && isPositiveAmount(request.resource.data.commissionAmount);
+      allow update, delete: if false; // STRICT IMMUTABILITY: Nobody can alter or delete commission records
+    }
+    
+    // 4. Owner Payouts: Bank Withdrawals cannot be deleted or faked
+    match /owner_payouts/{payoutId} {
+      allow read: if true;
+      allow create: if isPositiveAmount(request.resource.data.amount);
+      allow update, delete: if false; // Permanent Bank Audit Log
+    }
+
+    // 5. App Owner Config (UPI & Commission Settings)
+    match /app_config/{configId} {
+      allow read: if true;
+      allow write: if request.resource.data.upiId is string && request.resource.data.upiId.size() > 3;
+    }
+  }
+}

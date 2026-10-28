@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Smart India Work</string>
+    <string name="title_activity_main">Smart India Work</string>
+    <string name="package_name">in.smartindiawork.app</string>
+    <string name="custom_url_scheme">in.smartindiawork.app</string>
+</resources>

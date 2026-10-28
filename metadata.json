@@ -1,0 +1,10 @@
+{
+  "name": "Remix Smart India Work App",
+  "description": "Production-ready dual-mode local service marketplace for workers and customers in India with OTP verification, micro-fee wallet, live tracking, and Flutter/Node.js architecture.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

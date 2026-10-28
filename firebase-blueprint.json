@@ -1,0 +1,90 @@
+{
+  "entities": {
+    "Booking": {
+      "title": "Booking",
+      "description": "Customer service booking and worker dispatch with OTP verification",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "customerAddress": { "type": "string" },
+        "workerId": { "type": "string" },
+        "workerName": { "type": "string" },
+        "category": { "type": "string" },
+        "status": { "type": "string", "enum": ["searching", "accepted", "arrived", "in_progress", "completed", "cancelled"] },
+        "arrivalOtp": { "type": "string" },
+        "isOtpVerified": { "type": "boolean" },
+        "isFeePaid": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "customerName", "category", "status", "arrivalOtp"]
+    },
+    "WorkerProfile": {
+      "title": "WorkerProfile",
+      "description": "Registered worker profile with wallet, verification, and lock state",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "primarySkill": { "type": "string" },
+        "walletBalance": { "type": "number" },
+        "isLockedDueToUnpaidFee": { "type": "boolean" },
+        "unpaidFeeAmount": { "type": "number" },
+        "isVerified": { "type": "boolean" }
+      },
+      "required": ["id", "name", "phone", "primarySkill"]
+    },
+    "CommissionRecord": {
+      "title": "CommissionRecord",
+      "description": "₹10 per job fee paid by worker via company QR or wallet",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "workerId": { "type": "string" },
+        "workerName": { "type": "string" },
+        "bookingId": { "type": "string" },
+        "commissionAmount": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "upiTxnId": { "type": "string" },
+        "paidAt": { "type": "string" }
+      },
+      "required": ["id", "workerId", "commissionAmount", "bookingId"]
+    },
+    "OwnerPayout": {
+      "title": "OwnerPayout",
+      "description": "Earnings transferred by app owner to their bank account",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "amount": { "type": "number" },
+        "destinationBank": { "type": "string" },
+        "accountNumber": { "type": "string" },
+        "utrNumber": { "type": "string" },
+        "status": { "type": "string" },
+        "date": { "type": "string" }
+      },
+      "required": ["id", "amount", "destinationBank", "accountNumber"]
+    }
+  },
+  "firestore": {
+    "/bookings/{bookingId}": {
+      "schema": { "$ref": "#/entities/Booking" },
+      "description": "Collection of customer service bookings"
+    },
+    "/workers/{workerId}": {
+      "schema": { "$ref": "#/entities/WorkerProfile" },
+      "description": "Collection of worker profiles"
+    },
+    "/commissions/{commissionId}": {
+      "schema": { "$ref": "#/entities/CommissionRecord" },
+      "description": "Collection of platform fee records"
+    },
+    "/owner_payouts/{payoutId}": {
+      "schema": { "$ref": "#/entities/OwnerPayout" },
+      "description": "Collection of owner bank withdrawals"
+    }
+  }
+}
