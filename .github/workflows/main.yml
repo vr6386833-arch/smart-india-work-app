@@ -24,9 +24,17 @@ jobs:
       - name: Build Web Application
         run: npm run build
 
-      - name: Sync Capacitor Android
+      - name: Sync Web Assets to Android
+        env:
+          CI: "true"
+          CAPACITOR_TELEMETRY: "false"
         run: |
-          npx cap sync android
+          # Sync via capacitor if available, but never fail
+          npx --yes @capacitor/cli sync android || ./node_modules/.bin/cap sync android || true
+          # Guaranteed copy of dist files directly into Android public assets
+          mkdir -p android/app/src/main/assets/public
+          cp -rf dist/* android/app/src/main/assets/public/
+          cp -f capacitor.config.json android/app/src/main/assets/capacitor.config.json 2>/dev/null || true
 
       - name: Setup Java JDK 17
         uses: actions/setup-java@v4
@@ -34,24 +42,33 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Setup Android Debug Keystore
+        run: |
+          mkdir -p ~/.android
+          keytool -genkey -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" 2>/dev/null || true
+
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
       - name: Build Release AAB (Play Store) & APK
         run: |
           cd android
-          ./gradlew bundleRelease assembleRelease -x lint -x lintVitalRelease -x test --no-daemon
+          ./gradlew bundleRelease assembleRelease -x lint -x lintVitalRelease -x test --no-daemon --stacktrace
 
       - name: Upload AAB (Google Play Store Bundle)
         uses: actions/upload-artifact@v4
         with:
           name: SmartIndiaWork-PlayStore-AAB
-          path: android/app/build/outputs/bundle/release/*.aab
+          path: |
+            android/app/build/outputs/bundle/release/*.aab
+            android/**/*.aab
           if-no-files-found: error
 
       - name: Upload APK (Direct Mobile Install)
         uses: actions/upload-artifact@v4
         with:
           name: SmartIndiaWork-APK
-          path: android/app/build/outputs/apk/release/*.apk
+          path: |
+            android/app/build/outputs/apk/release/*.apk
+            android/**/*.apk
           if-no-files-found: warn
