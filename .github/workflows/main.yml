@@ -35,19 +35,27 @@ jobs:
           mkdir -p android/app/src/main/assets/public
           cp -rf dist/* android/app/src/main/assets/public/
           cp -f capacitor.config.json android/app/src/main/assets/capacitor.config.json 2>/dev/null || true
+          sed -i 's/VERSION_21/VERSION_17/g' android/app/capacitor.build.gradle 2>/dev/null || true
 
-      - name: Setup Java JDK 21
+      - name: Setup Java JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '17'
 
       - name: Setup Android Release & Debug Keystores
         run: |
           mkdir -p ~/.android
+          mkdir -p android/capacitor-cordova-android-plugins/src/main/libs
+          # Verify keystore password, recreate if invalid
+          if [ -f android/app/release.keystore ]; then
+            keytool -list -keystore android/app/release.keystore -storepass smartindiawork >/dev/null 2>&1 || rm -f android/app/release.keystore
+          fi
           if [ ! -f android/app/release.keystore ]; then
+            echo "Generating fresh release keystore..."
             keytool -genkeypair -v -keystore android/app/release.keystore -storepass smartindiawork -alias releasekey -keypass smartindiawork -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Smart India Work, O=Smart India Work, C=IN" -noprompt
           fi
+          chmod 644 android/app/release.keystore
           cp -f android/app/release.keystore android/app/debug.keystore || true
           cp -f android/app/release.keystore ~/.android/debug.keystore || true
 
@@ -57,18 +65,12 @@ jobs:
       - name: Build Release AAB (Play Store)
         run: |
           cd android
-          ./gradlew bundleRelease -x lint -x lintVitalRelease -x lintVitalAnalyzeRelease -x lintVitalReportRelease -x test -Pandroid.lint.abortOnError=false -Pandroid.lint.checkReleaseBuilds=false --no-daemon --stacktrace || {
-            echo "Retrying bundleRelease without lint..."
-            ./gradlew bundleRelease -x lint -x test --no-daemon --stacktrace
-          }
+          ./gradlew bundleRelease -x lint -x test --no-daemon --stacktrace
 
       - name: Build Release APK (Direct Install)
         run: |
           cd android
-          ./gradlew assembleRelease -x lint -x lintVitalRelease -x lintVitalAnalyzeRelease -x lintVitalReportRelease -x test -Pandroid.lint.abortOnError=false -Pandroid.lint.checkReleaseBuilds=false --no-daemon --stacktrace || {
-            echo "Retrying assembleRelease without lint..."
-            ./gradlew assembleRelease -x lint -x test --no-daemon --stacktrace || true
-          }
+          ./gradlew assembleRelease -x lint -x test --no-daemon --stacktrace
 
       - name: Upload AAB (Google Play Store Bundle)
         uses: actions/upload-artifact@v4
