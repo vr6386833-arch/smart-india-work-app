@@ -5,6 +5,9 @@ on:
   push:
     branches: [ main, master ]
 
+permissions:
+  contents: write
+
 jobs:
   build-android:
     runs-on: ubuntu-latest
@@ -15,7 +18,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install Dependencies
         run: |
@@ -100,3 +103,22 @@ jobs:
             android/app/build/outputs/apk/**/*.apk
             android/**/*.apk
           if-no-files-found: warn
+
+      - name: Publish Direct Release (Play Store AAB & APK)
+        if: always()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0-release
+          name: "Smart India Work - Play Store Ready (v1.0.0)"
+          body: |
+            ## Smart India Work - Production Release
+            - Download `app-release.aab` below for Google Play Console.
+            - Download `app-release.apk` below for direct installation on Android phones.
+          draft: false
+          prerelease: false
+          files: |
+            android/app/build/outputs/bundle/**/*.aab
+            android/app/build/outputs/apk/**/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
