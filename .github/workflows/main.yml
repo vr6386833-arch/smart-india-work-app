@@ -61,64 +61,62 @@ jobs:
           cp -f android/app/release.keystore android/app/debug.keystore || true
           cp -f android/app/release.keystore ~/.android/debug.keystore || true
 
+      - name: Setup Android SDK Platform 36
+        run: |
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-36" "build-tools;35.0.0" "platform-tools" || true
+
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
       - name: Build Release AAB (Play Store)
-        continue-on-error: true
         run: |
           cd android
           ./gradlew bundleRelease -x lint -x test -x lintVitalRelease -x lintVitalAnalyzeRelease -x checkReleaseAarMetadata --no-daemon --stacktrace
 
       - name: Build Release APK (Direct Install)
-        continue-on-error: true
         run: |
           cd android
           ./gradlew assembleRelease -x lint -x test -x lintVitalRelease -x lintVitalAnalyzeRelease -x checkReleaseAarMetadata --no-daemon --stacktrace
 
-      - name: Verify Generated Android Files
-        if: always()
+      - name: Prepare Release Artifacts
         run: |
-          echo "=== Built AAB Files ==="
-          find android/ -name "*.aab" -ls || true
-          echo "=== Built APK Files ==="
-          find android/ -name "*.apk" -ls || true
+          mkdir -p release-output
+          # Find and copy generated AAB
+          find android/app/build/outputs/bundle -name "*.aab" -exec cp -vf {} release-output/SmartIndiaWork-PlayStore.aab \; || true
+          # Find and copy generated APK
+          find android/app/build/outputs/apk -name "*.apk" -exec cp -vf {} release-output/SmartIndiaWork-DirectInstall.apk \; || true
+          echo "=== Files ready in release-output ==="
+          ls -lh release-output/
 
       - name: Upload AAB (Google Play Store Bundle)
         uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: SmartIndiaWork-PlayStore-AAB
-          path: |
-            android/app/build/outputs/bundle/**/*.aab
-            android/**/*.aab
-          if-no-files-found: warn
+          path: release-output/SmartIndiaWork-PlayStore.aab
+          if-no-files-found: error
 
       - name: Upload APK (Direct Mobile Install)
         uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: SmartIndiaWork-APK
-          path: |
-            android/app/build/outputs/apk/**/*.apk
-            android/**/*.apk
+          path: release-output/SmartIndiaWork-DirectInstall.apk
           if-no-files-found: warn
 
       - name: Publish Direct Release (Play Store AAB & APK)
-        if: always()
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0-release
-          name: "Smart India Work - Play Store Ready (v1.0.0)"
+          tag_name: latest-release
+          name: "Smart India Work - Play Store Ready AAB & APK"
           body: |
             ## Smart India Work - Production Release
-            - Download `app-release.aab` below for Google Play Console.
-            - Download `app-release.apk` below for direct installation on Android phones.
+            - **Google Play Store**: `SmartIndiaWork-PlayStore.aab`
+            - **Direct Phone Install**: `SmartIndiaWork-DirectInstall.apk`
           draft: false
           prerelease: false
           files: |
-            android/app/build/outputs/bundle/**/*.aab
-            android/app/build/outputs/apk/**/*.apk
+            release-output/SmartIndiaWork-PlayStore.aab
+            release-output/SmartIndiaWork-DirectInstall.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
