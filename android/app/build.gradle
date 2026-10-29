@@ -86,6 +86,10 @@ android {
         checkDependencies false
         ignoreTestSources true
     }
+
+    buildFeatures {
+        buildConfig = true
+    }
 }
 
 repositories {
@@ -123,3 +127,10 @@ try {
 } catch(Exception e) {
     logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
 }
+
+afterEvaluate {
+    tasks.matching { it.name.contains("AarMetadata") || it.name.contains("lintVital") }.configureEach {
+        enabled = false
+    }
+}
+

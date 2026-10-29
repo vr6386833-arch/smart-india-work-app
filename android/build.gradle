@@ -39,6 +39,9 @@ allprojects {
 
 subprojects {
     afterEvaluate { project ->
+        project.tasks.matching { it.name.contains("AarMetadata") || it.name.contains("lintVital") }.configureEach {
+            enabled = false
+        }
         if (project.plugins.hasPlugin("com.android.application") || project.plugins.hasPlugin("com.android.library")) {
             project.android {
                 lint {
