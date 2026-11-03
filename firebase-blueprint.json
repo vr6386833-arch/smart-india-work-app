@@ -12,14 +12,13 @@
         "customerAddress": { "type": "string" },
         "workerId": { "type": "string" },
         "workerName": { "type": "string" },
-        "category": { "type": "string" },
-        "status": { "type": "string", "enum": ["searching", "accepted", "arrived", "in_progress", "completed", "cancelled"] },
+        "serviceCategory": { "type": "string" },
+        "status": { "type": "string", "enum": ["requested", "searching", "accepted", "arrived", "in_progress", "completed", "cancelled"] },
         "arrivalOtp": { "type": "string" },
         "isOtpVerified": { "type": "boolean" },
-        "isFeePaid": { "type": "boolean" },
         "createdAt": { "type": "string" }
       },
-      "required": ["id", "customerName", "category", "status", "arrivalOtp"]
+      "required": ["id", "customerName", "status"]
     },
     "WorkerProfile": {
       "title": "WorkerProfile",
@@ -29,13 +28,13 @@
         "id": { "type": "string" },
         "name": { "type": "string" },
         "phone": { "type": "string" },
-        "primarySkill": { "type": "string" },
+        "category": { "type": "string" },
         "walletBalance": { "type": "number" },
-        "isLockedDueToUnpaidFee": { "type": "boolean" },
+        "isBlockedDueToUnpaidFee": { "type": "boolean" },
         "unpaidFeeAmount": { "type": "number" },
-        "isVerified": { "type": "boolean" }
+        "isAadhaarVerified": { "type": "boolean" }
       },
-      "required": ["id", "name", "phone", "primarySkill"]
+      "required": ["id", "name", "phone"]
     },
     "CommissionRecord": {
       "title": "CommissionRecord",
@@ -66,7 +65,7 @@
         "status": { "type": "string" },
         "date": { "type": "string" }
       },
-      "required": ["id", "amount", "destinationBank", "accountNumber"]
+      "required": ["id", "amount"]
     }
   },
   "firestore": {

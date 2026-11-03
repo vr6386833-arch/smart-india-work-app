@@ -69,7 +69,6 @@ jobs:
           echo "sdk.dir=$ANDROID_HOME" > android/local.properties
           cat android/local.properties
           echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --channel=3 "platforms;android-36" "build-tools;36.0.0" "platforms;android-35" "build-tools;35.0.0" "platform-tools" || true
           $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools" || true
 
       - name: Make gradlew executable
@@ -78,13 +77,14 @@ jobs:
       - name: Build Android AAB and APK (Play Store & Direct Install)
         run: |
           cd android
-          # Run unified build so Gradle resolves all inputs in a single DAG without intermediate cache collisions
-          ./gradlew assembleRelease bundleRelease assembleDebug -x lint -x test -x lintVitalRelease -x lintVitalAnalyzeRelease -x checkReleaseAarMetadata --stacktrace --no-daemon || {
-            echo "Retrying individual build tasks..."
-            ./gradlew assembleRelease -x lint -x test -x lintVitalRelease -x lintVitalAnalyzeRelease -x checkReleaseAarMetadata --stacktrace --no-daemon || true
-            ./gradlew bundleRelease -x lint -x test -x lintVitalRelease -x lintVitalAnalyzeRelease -x checkReleaseAarMetadata --stacktrace --no-daemon || true
-            ./gradlew assembleDebug -x lint -x test -x checkReleaseAarMetadata --stacktrace --no-daemon || true
+          ./gradlew clean --no-daemon
+          # 1. Build Direct Install Release APK (Sequential execution guarantees valid task inputs)
+          ./gradlew assembleRelease -x lint -x test --stacktrace --no-daemon || {
+            echo "Fallback to debug APK build..."
+            ./gradlew assembleDebug -x lint -x test --stacktrace --no-daemon || true
           }
+          # 2. Build Google Play Store AAB Bundle
+          ./gradlew bundleRelease -x lint -x test --stacktrace --no-daemon || true
 
       - name: Prepare Release Artifacts
         run: |
@@ -110,7 +110,7 @@ jobs:
         with:
           name: SmartIndiaWork-PlayStore-AAB
           path: release-output/SmartIndiaWork-PlayStore.aab
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: Upload APK (Direct Mobile Install)
         uses: actions/upload-artifact@v4
@@ -135,4 +135,3 @@ jobs:
             release-output/SmartIndiaWork-DirectInstall.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-

@@ -28,12 +28,16 @@ import {
   WorkerNotification
 } from './types';
 import { StorageService } from './services/storageService';
+import { safeStorage } from './services/safeStorage';
 import { 
   testFirestoreConnection, 
   syncBookingToFirestore, 
+  syncJobToFirestore,
   syncWorkerToFirestore, 
   syncCommissionToFirestore, 
-  syncPayoutToFirestore 
+  syncPayoutToFirestore,
+  listenToWorkers,
+  listenToJobs
 } from './services/firebase';
 import { Header } from './components/common/Header';
 import { PhoneFrame } from './components/common/PhoneFrame';
@@ -164,23 +168,112 @@ export default function App() {
   const [commissionRecords, setCommissionRecords] = useState<CommissionRecord[]>(INITIAL_COMMISSION_RECORDS);
   const [ownerPayouts, setOwnerPayouts] = useState<OwnerPayoutRecord[]>(INITIAL_APP_OWNER_PAYOUTS);
 
-  // Shared synchronized application state
-  const [workers, setWorkers] = useState<WorkerProfile[]>(INITIAL_WORKERS);
-  const [activeWorkerId, setActiveWorkerId] = useState<string>(INITIAL_WORKERS[0].id);
+  // Shared synchronized application state with persistent local & cloud sync
+  const [workers, setWorkers] = useState<WorkerProfile[]>(() => {
+    try {
+      const saved = safeStorage.getItem('smart_india_workers_v2');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.warn('Failed to parse local workers', e);
+    }
+    return INITIAL_WORKERS;
+  });
+
+  const [activeWorkerId, setActiveWorkerId] = useState<string>(() => workers[0]?.id || INITIAL_WORKERS[0].id);
   const activeWorker = workers.find((w) => w.id === activeWorkerId) || workers[0];
 
   const [customers, setCustomers] = useState<CustomerProfile[]>(INITIAL_CUSTOMERS);
   const [activeCustomerId, setActiveCustomerId] = useState<string>(INITIAL_CUSTOMERS[0].id);
   const customer = customers.find((c) => c.id === activeCustomerId) || customers[0];
 
-  const [jobs, setJobs] = useState<JobPost[]>(INITIAL_JOBS);
-  const [activeBooking, setActiveBooking] = useState<Booking | null>(INITIAL_BOOKING);
+  const [jobs, setJobs] = useState<JobPost[]>(() => {
+    try {
+      const saved = safeStorage.getItem('smart_india_jobs_v2');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.warn('Failed to parse local jobs', e);
+    }
+    return INITIAL_JOBS;
+  });
+
+  // Active Booking: Defaults to null for pristine live production start (no fake dummy bookings)
+  const [activeBooking, setActiveBooking] = useState<Booking | null>(() => {
+    try {
+      const saved = safeStorage.getItem('smart_india_active_booking_v2');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
   const [walletTransactions, setWalletTransactions] = useState<WalletTransaction[]>(INITIAL_WALLET_TRANSACTIONS);
   const [supportTickets, setSupportTickets] = useState<SupportTicket[]>(INITIAL_TICKETS);
   
-  // Real-time Worker Notifications & Incoming Booking Sound/Voice System
-  const [workerNotifications, setWorkerNotifications] = useState<WorkerNotification[]>(INITIAL_WORKER_NOTIFICATIONS);
+  // Real-time Worker Notifications: Starts empty for new live users
+  const [workerNotifications, setWorkerNotifications] = useState<WorkerNotification[]>(() => {
+    try {
+      const saved = safeStorage.getItem('smart_india_worker_notifs_v2');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const [incomingBookingAlert, setIncomingBookingAlert] = useState<Booking | null>(null);
+
+  // Auto-save changes to persistent storage
+  React.useEffect(() => {
+    if (activeBooking) {
+      safeStorage.setItem('smart_india_active_booking_v2', JSON.stringify(activeBooking));
+    } else {
+      safeStorage.removeItem('smart_india_active_booking_v2');
+    }
+  }, [activeBooking]);
+
+  React.useEffect(() => {
+    safeStorage.setItem('smart_india_workers_v2', JSON.stringify(workers));
+  }, [workers]);
+
+  React.useEffect(() => {
+    safeStorage.setItem('smart_india_jobs_v2', JSON.stringify(jobs));
+  }, [jobs]);
+
+  React.useEffect(() => {
+    safeStorage.setItem('smart_india_worker_notifs_v2', JSON.stringify(workerNotifications));
+  }, [workerNotifications]);
+
+  // Real-time Firestore sync listener
+  React.useEffect(() => {
+    const unsubWorkers = listenToWorkers((cloudWorkers) => {
+      if (cloudWorkers && cloudWorkers.length > 0) {
+        setWorkers((prev) => {
+          const map = new Map(prev.map((w) => [w.id, w]));
+          cloudWorkers.forEach((w) => map.set(w.id, { ...map.get(w.id), ...w }));
+          return Array.from(map.values());
+        });
+      }
+    });
+
+    const unsubJobs = listenToJobs((cloudJobs) => {
+      if (cloudJobs && cloudJobs.length > 0) {
+        setJobs((prev) => {
+          const map = new Map(prev.map((j) => [j.id, j]));
+          cloudJobs.forEach((j) => map.set(j.id, { ...map.get(j.id), ...j }));
+          return Array.from(map.values());
+        });
+      }
+    });
+
+    return () => {
+      unsubWorkers();
+      unsubJobs();
+    };
+  }, []);
 
   const handleMarkNotificationAsRead = (id: string) => {
     setWorkerNotifications((prev) =>
@@ -286,6 +379,9 @@ export default function App() {
     }));
 
     setWorkerNotifications((prev) => [...leadNotifs, ...prev]);
+
+    // Sync job post to cloud Firestore
+    syncJobToFirestore(newJob);
 
     // In dual view or single view, switch active worker to the first matching worker of this trade
     if (recipientWorkers.length > 0 && recipientWorkers[0].id !== activeWorkerId) {
@@ -1109,9 +1205,19 @@ export default function App() {
     const newWorker: WorkerProfile = {
       ...newWorkerData,
       id: newWorkerId,
+      workerIdCode: newWorkerData.workerIdCode || `SI-WRK-2026-${Math.floor(10000 + Math.random() * 90000)}`,
+      registeredDate: newWorkerData.registeredDate || new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+      rating: newWorkerData.rating || 5.0,
+      reviewsCount: newWorkerData.reviewsCount || 0,
+      completedJobsCount: newWorkerData.completedJobsCount || 0,
+      walletBalance: newWorkerData.walletBalance ?? 100,
+      isOnline: true,
+      portfolio: newWorkerData.portfolio || [],
+      currentLocation: newWorkerData.currentLocation || { lat: 28.5355, lng: 77.3910 }
     };
     setWorkers((prev) => [newWorker, ...prev]);
     setActiveWorkerId(newWorkerId);
+    syncWorkerToFirestore(newWorker);
     soundManager.playSuccess();
   };
 
@@ -1121,15 +1227,18 @@ export default function App() {
     soundManager.playSuccess();
   };
 
-  // Reset demo state
+  // Reset to clean, fresh live production state
   const handleResetData = () => {
     soundManager.playTap();
+    setActiveBooking(null);
+    setWorkerNotifications([]);
+    safeStorage.removeItem('smart_india_active_booking_v2');
+    safeStorage.removeItem('smart_india_worker_notifs_v2');
     setWorkers(INITIAL_WORKERS);
     setActiveWorkerId(INITIAL_WORKERS[0].id);
     setCustomers(INITIAL_CUSTOMERS);
     setActiveCustomerId(INITIAL_CUSTOMERS[0].id);
     setJobs(INITIAL_JOBS);
-    setActiveBooking(INITIAL_BOOKING);
     setWalletTransactions(INITIAL_WALLET_TRANSACTIONS);
     setSupportTickets(INITIAL_TICKETS);
   };

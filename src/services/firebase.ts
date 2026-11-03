@@ -8,10 +8,12 @@ import {
   getDocs, 
   onSnapshot, 
   serverTimestamp,
-  getDocFromServer
+  getDocFromServer,
+  query,
+  limit
 } from 'firebase/firestore';
 import firebaseConfigJson from '../../firebase-applet-config.json';
-import { Booking, WorkerProfile, CommissionRecord, OwnerPayoutRecord } from '../types';
+import { Booking, WorkerProfile, CommissionRecord, OwnerPayoutRecord, JobPost } from '../types';
 
 let app: FirebaseApp;
 let db: Firestore;
@@ -66,6 +68,20 @@ export async function syncBookingToFirestore(booking: Booking): Promise<void> {
   }
 }
 
+// Sync job post to cloud Firestore
+export async function syncJobToFirestore(job: JobPost): Promise<void> {
+  if (!db) return;
+  try {
+    const jobRef = doc(db, 'jobs', job.id);
+    await setDoc(jobRef, {
+      ...job,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+  } catch (err) {
+    console.error('Error syncing job to cloud:', err);
+  }
+}
+
 // Sync worker profile & lock status to cloud
 export async function syncWorkerToFirestore(worker: WorkerProfile): Promise<void> {
   if (!db) return;
@@ -105,5 +121,51 @@ export async function syncPayoutToFirestore(payout: OwnerPayoutRecord): Promise<
     }, { merge: true });
   } catch (err) {
     console.error('Error syncing payout to cloud:', err);
+  }
+}
+
+// Real-time listener for Workers in Firestore
+export function listenToWorkers(callback: (workers: WorkerProfile[]) => void): () => void {
+  if (!db) return () => {};
+  try {
+    const workersCol = collection(db, 'workers');
+    const unsub = onSnapshot(workersCol, (snapshot) => {
+      const list: WorkerProfile[] = [];
+      snapshot.forEach((doc) => {
+        list.push(doc.data() as WorkerProfile);
+      });
+      if (list.length > 0) {
+        callback(list);
+      }
+    }, (err) => {
+      console.warn('Firestore workers subscription notice:', err);
+    });
+    return unsub;
+  } catch (e) {
+    console.warn('Unable to subscribe to workers:', e);
+    return () => {};
+  }
+}
+
+// Real-time listener for Jobs in Firestore
+export function listenToJobs(callback: (jobs: JobPost[]) => void): () => void {
+  if (!db) return () => {};
+  try {
+    const jobsCol = collection(db, 'jobs');
+    const unsub = onSnapshot(jobsCol, (snapshot) => {
+      const list: JobPost[] = [];
+      snapshot.forEach((doc) => {
+        list.push(doc.data() as JobPost);
+      });
+      if (list.length > 0) {
+        callback(list);
+      }
+    }, (err) => {
+      console.warn('Firestore jobs subscription notice:', err);
+    });
+    return unsub;
+  } catch (e) {
+    console.warn('Unable to subscribe to jobs:', e);
+    return () => {};
   }
 }
