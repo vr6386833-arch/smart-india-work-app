@@ -48,7 +48,10 @@ jobs:
       - name: Setup Android Release & Debug Keystores
         run: |
           mkdir -p ~/.android
+          mkdir -p android/app/libs
+          mkdir -p android/capacitor-cordova-android-plugins/libs
           mkdir -p android/capacitor-cordova-android-plugins/src/main/libs
+          touch android/app/libs/.gitkeep android/capacitor-cordova-android-plugins/libs/.gitkeep android/capacitor-cordova-android-plugins/src/main/libs/.gitkeep
           # Verify keystore password, recreate if invalid
           if [ -f android/app/release.keystore ]; then
             keytool -list -keystore android/app/release.keystore -storepass smartindiawork >/dev/null 2>&1 || rm -f android/app/release.keystore
@@ -72,24 +75,15 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
-      - name: Build Release AAB (Play Store)
+      - name: Build Android AAB and APK (Play Store & Direct Install)
         run: |
           cd android
-          ./gradlew bundleRelease -x lint -x test -x lintVitalRelease -x lintVitalAnalyzeRelease -x checkReleaseAarMetadata --no-daemon 2>&1 | tee /tmp/gradle_aab.log || {
-            echo "================== EXACT ERROR =================="
-            grep -B 2 -A 15 "\* What went wrong:" /tmp/gradle_aab.log || tail -n 35 /tmp/gradle_aab.log
-            echo "================================================="
-            exit 1
-          }
-
-      - name: Build Release APK (Direct Install)
-        run: |
-          cd android
-          ./gradlew assembleRelease -x lint -x test -x lintVitalRelease -x lintVitalAnalyzeRelease -x checkReleaseAarMetadata --no-daemon 2>&1 | tee /tmp/gradle_apk.log || {
-            echo "================== EXACT ERROR =================="
-            grep -B 2 -A 15 "\* What went wrong:" /tmp/gradle_apk.log || tail -n 35 /tmp/gradle_apk.log
-            echo "================================================="
-            exit 1
+          # Run unified build so Gradle resolves all inputs in a single DAG without intermediate cache collisions
+          ./gradlew assembleRelease bundleRelease assembleDebug -x lint -x test -x lintVitalRelease -x lintVitalAnalyzeRelease -x checkReleaseAarMetadata --stacktrace --no-daemon || {
+            echo "Retrying individual build tasks..."
+            ./gradlew assembleRelease -x lint -x test -x lintVitalRelease -x lintVitalAnalyzeRelease -x checkReleaseAarMetadata --stacktrace --no-daemon || true
+            ./gradlew bundleRelease -x lint -x test -x lintVitalRelease -x lintVitalAnalyzeRelease -x checkReleaseAarMetadata --stacktrace --no-daemon || true
+            ./gradlew assembleDebug -x lint -x test -x checkReleaseAarMetadata --stacktrace --no-daemon || true
           }
 
       - name: Prepare Release Artifacts
@@ -97,8 +91,17 @@ jobs:
           mkdir -p release-output
           # Find and copy generated AAB
           find android/app/build/outputs/bundle -name "*.aab" -exec cp -vf {} release-output/SmartIndiaWork-PlayStore.aab \; || true
-          # Find and copy generated APK
-          find android/app/build/outputs/apk -name "*.apk" -exec cp -vf {} release-output/SmartIndiaWork-DirectInstall.apk \; || true
+          # Find and copy generated Release APK
+          find android/app/build/outputs/apk/release -name "*.apk" -exec cp -vf {} release-output/SmartIndiaWork-DirectInstall.apk \; || true
+          # Fallback if release apk name pattern differed
+          if [ ! -f release-output/SmartIndiaWork-DirectInstall.apk ]; then
+            find android/app/build/outputs/apk -name "*release*.apk" -exec cp -vf {} release-output/SmartIndiaWork-DirectInstall.apk \; || true
+          fi
+          if [ ! -f release-output/SmartIndiaWork-DirectInstall.apk ]; then
+            find android/app/build/outputs/apk -name "*.apk" -exec cp -vf {} release-output/SmartIndiaWork-DirectInstall.apk \; || true
+          fi
+          # Also copy Debug APK if present
+          find android/app/build/outputs/apk/debug -name "*.apk" -exec cp -vf {} release-output/SmartIndiaWork-Debug.apk \; || true
           echo "=== Files ready in release-output ==="
           ls -lh release-output/
 

@@ -33,6 +33,10 @@ android {
     }
 }
 
+// Ensure required input directories exist before task configuration
+file('libs').mkdirs()
+file('src/main/libs').mkdirs()
+
 repositories {
     google()
     mavenCentral()
