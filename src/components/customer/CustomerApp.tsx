@@ -32,7 +32,11 @@ import {
   Utensils,
   Lock,
   Unlock,
-  ClipboardList
+  ClipboardList,
+  Crown,
+  Globe,
+  RotateCcw,
+  ShieldAlert
 } from 'lucide-react';
 import { CATEGORIES } from '../../data/mockData';
 import { WorkerProfile, CustomerProfile, JobPost, Booking, Language, ChatMessage, SupportTicket } from '../../types';
@@ -43,6 +47,7 @@ import { ChatCallModal } from './ChatCallModal';
 import { RatingModal } from './RatingModal';
 import { AddCustomerModal } from './AddCustomerModal';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
+import { OwnerPinModal } from '../common/OwnerPinModal';
 import { soundManager } from '../../services/soundEffects';
 
 interface CustomerAppProps {
@@ -67,6 +72,12 @@ interface CustomerAppProps {
   onWorkerArrived?: () => void;
   onOpenReviews?: (worker: WorkerProfile) => void;
   onTriggerSos?: () => void;
+  onSwitchToWorker?: () => void;
+  onSwitchToOwner?: () => void;
+  onOpenLegalTerms?: () => void;
+  onOpenSecurityShield?: () => void;
+  onToggleLanguage?: (lang: Language) => void;
+  onResetData?: () => void;
 }
 
 export const CustomerApp: React.FC<CustomerAppProps> = ({
@@ -91,7 +102,18 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
   onWorkerArrived,
   onOpenReviews,
   onTriggerSos,
+  onSwitchToWorker,
+  onSwitchToOwner,
+  onOpenLegalTerms,
+  onOpenSecurityShield,
+  onToggleLanguage,
+  onResetData,
 }) => {
+  // Purge any mock/demo Rameshwar booking (BK_9081) so live customer starts pristine
+  const isMockBooking = activeBooking?.id === 'BK_9081' || activeBooking?.workerName?.includes('Rameshwar');
+  const safeActiveBooking = isMockBooking ? null : activeBooking;
+  const [isOwnerPinOpen, setIsOwnerPinOpen] = useState(false);
+
   const [activeTab, setActiveTab] = useState<'home' | 'search' | 'bookings' | 'profile'>('home');
   const [selectedGroup, setSelectedGroup] = useState<'all' | 'construction' | 'appliance' | 'events' | 'home_services'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -305,10 +327,10 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
             </div>
 
             {/* Active Booking Live Mini-Banner (if in progress or pending acceptance) */}
-            {activeBooking && (
+            {safeActiveBooking && (
               <div 
                 className={`p-3 rounded-2xl border shadow-lg transition-all flex items-center justify-between ${
-                  activeBooking.isLocationShared
+                  safeActiveBooking.isLocationShared
                     ? 'bg-gradient-to-r from-emerald-950/80 via-slate-900 to-emerald-950/80 border-emerald-500/40 hover:border-emerald-400'
                     : 'bg-gradient-to-r from-amber-950/80 via-slate-900 to-orange-950/80 border-amber-500/50 hover:border-amber-400 animate-pulse'
                 }`}
@@ -322,26 +344,26 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                 >
                   <div className="relative shrink-0">
                     <img 
-                      src={activeBooking.workerAvatar} 
+                      src={safeActiveBooking.workerAvatar} 
                       alt="Worker" 
                       className={`w-10 h-10 rounded-xl object-cover ring-2 ${
-                        activeBooking.isLocationShared ? 'ring-emerald-400' : 'ring-amber-400'
+                        safeActiveBooking.isLocationShared ? 'ring-emerald-400' : 'ring-amber-400'
                       }`}
                     />
                     <span className={`w-2.5 h-2.5 rounded-full absolute -bottom-0.5 -right-0.5 ring-1 ring-slate-950 ${
-                      activeBooking.isLocationShared ? 'bg-emerald-400' : 'bg-amber-400 animate-ping'
+                      safeActiveBooking.isLocationShared ? 'bg-emerald-400' : 'bg-amber-400 animate-ping'
                     }`} />
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-bold text-white truncate">{activeBooking.workerName}</span>
+                      <span className="text-xs font-bold text-white truncate">{safeActiveBooking.workerName}</span>
                       <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 flex items-center gap-1 ${
-                        activeBooking.isLocationShared 
+                        safeActiveBooking.isLocationShared 
                           ? 'bg-emerald-500/20 text-emerald-300' 
                           : 'bg-amber-500/20 text-amber-300'
                       }`}>
-                        {activeBooking.isLocationShared ? (
-                          activeBooking.status === 'in_progress' ? 'Working' : 'En Route'
+                        {safeActiveBooking.isLocationShared ? (
+                          safeActiveBooking.status === 'in_progress' ? 'Working' : 'En Route'
                         ) : (
                           <>
                             <Lock className="w-2.5 h-2.5" />
@@ -351,8 +373,8 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-300 truncate">
-                      {activeBooking.isLocationShared ? (
-                        <>OTP: <strong className="text-amber-300 font-mono tracking-wider">{activeBooking.arrivalOtp}</strong> • {language === 'hi' ? 'विवरण देखें' : 'View Details'}</>
+                      {safeActiveBooking.isLocationShared ? (
+                        <>OTP: <strong className="text-amber-300 font-mono tracking-wider">{safeActiveBooking.arrivalOtp}</strong> • {language === 'hi' ? 'विवरण देखें' : 'View Details'}</>
                       ) : (
                         language === 'hi'
                           ? 'कारीगर के स्वीकार करने पर विवरण अनलॉक होगा'
@@ -814,9 +836,9 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
 
         {/* Tab 3: Bookings / Active Booking Details */}
         {activeTab === 'bookings' && (
-          activeBooking ? (
+          safeActiveBooking ? (
             <LiveTrackingView
-              booking={activeBooking}
+              booking={safeActiveBooking}
               language={language}
               onOpenChat={() => {
                 soundManager.playTap();
@@ -1064,6 +1086,185 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                 </p>
               )}
             </div>
+
+            {/* App Settings, Security & Special Portals */}
+            <div className="bg-slate-900 rounded-2xl p-3.5 border border-slate-800 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <h5 className="text-slate-300 font-bold uppercase text-[11px]">
+                  {language === 'hi' ? 'सेटिंग्स व स्पेशल एक्सेस' : 'Settings & Portals'}
+                </h5>
+                <span className="text-[10px] text-slate-500 font-mono">v1.1</span>
+              </div>
+
+              {/* Language Switch */}
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/80 border border-slate-800">
+                <div className="flex items-center gap-2">
+                  <Globe className="w-4 h-4 text-blue-400" />
+                  <span className="text-xs font-semibold text-white">
+                    {language === 'hi' ? 'भाषा (Language)' : 'App Language'}
+                  </span>
+                </div>
+                <div className="flex items-center bg-slate-900 rounded-lg p-0.5 border border-slate-700 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => onToggleLanguage?.('en')}
+                    className={`px-2 py-0.5 rounded font-medium transition-colors ${
+                      language === 'en' ? 'bg-slate-800 text-white font-bold' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    English
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onToggleLanguage?.('hi')}
+                    className={`px-2 py-0.5 rounded font-medium transition-colors ${
+                      language === 'hi' ? 'bg-slate-800 text-amber-300 font-bold' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    हिंदी
+                  </button>
+                </div>
+              </div>
+
+              {/* Switch to Worker Mode */}
+              {onSwitchToWorker && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundManager.playTap();
+                    onSwitchToWorker();
+                  }}
+                  className="w-full flex items-center justify-between p-2.5 rounded-xl bg-emerald-950/30 hover:bg-emerald-950/60 border border-emerald-500/30 transition-all text-left group"
+                >
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-400">
+                      <HardHat className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="text-xs font-bold text-white group-hover:text-emerald-300">
+                        {language === 'hi' ? '👷 कारीगर / पार्टनर मोड' : '👷 Worker Partner Mode'}
+                      </span>
+                      <p className="text-[10px] text-slate-400">
+                        {language === 'hi' ? 'काम स्वीकारें, वॉलेट व उपस्थिति' : 'Accept leads, wallet & duty online'}
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-emerald-400 transition-transform" />
+                </button>
+              )}
+
+              {/* Protected App Owner Portal */}
+              {onSwitchToOwner && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundManager.playTap();
+                    setIsOwnerPinOpen(true);
+                  }}
+                  className="w-full flex items-center justify-between p-2.5 rounded-xl bg-amber-950/30 hover:bg-amber-950/60 border border-amber-500/30 transition-all text-left group"
+                >
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center text-amber-400">
+                      <Crown className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-white group-hover:text-amber-300">
+                          {language === 'hi' ? '👑 ऐप ओनर / एडमिन पोर्टल' : '👑 App Owner Portal'}
+                        </span>
+                        <Lock className="w-3 h-3 text-amber-400" />
+                      </div>
+                      <p className="text-[10px] text-slate-400">
+                        {language === 'hi' ? 'कमाई, बैंक ट्रांसफर व सेटिंग्स (PIN सुरक्षित: 1234)' : 'Revenue, Bank Payout & Admin (PIN protected)'}
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-amber-400 transition-transform" />
+                </button>
+              )}
+
+              {/* Security Shield */}
+              {onOpenSecurityShield && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundManager.playTap();
+                    onOpenSecurityShield();
+                  }}
+                  className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-950/80 hover:bg-slate-800 border border-slate-800 text-left transition-all group"
+                >
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                    <span className="text-xs font-medium text-slate-300 group-hover:text-white">
+                      {language === 'hi' ? '🛡️ सुरक्षा कवच व डेटा सुरक्षा' : '🛡️ Security Shield & Data Protection'}
+                    </span>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500" />
+                </button>
+              )}
+
+              {/* Legal Terms & Privacy */}
+              {onOpenLegalTerms && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundManager.playTap();
+                    onOpenLegalTerms();
+                  }}
+                  className="w-full flex items-center justify-between p-2.5 rounded-xl bg-slate-950/80 hover:bg-slate-800 border border-slate-800 text-left transition-all group"
+                >
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-blue-400" />
+                    <span className="text-xs font-medium text-slate-300 group-hover:text-white">
+                      {language === 'hi' ? '📄 प्राइवेसी पॉलिसी व नियम' : '📄 Privacy Policy & Terms of Service'}
+                    </span>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500" />
+                </button>
+              )}
+
+              {/* SOS Emergency 112 */}
+              {onTriggerSos && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundManager.playTap();
+                    onTriggerSos();
+                  }}
+                  className="w-full flex items-center justify-between p-2.5 rounded-xl bg-red-950/30 hover:bg-red-950/50 border border-red-500/40 text-left transition-all group"
+                >
+                  <div className="flex items-center gap-2">
+                    <ShieldAlert className="w-4 h-4 text-red-400" />
+                    <div>
+                      <span className="text-xs font-bold text-red-300 group-hover:text-red-200">
+                        {language === 'hi' ? '🚨 24x7 इमरजेंसी पुलिस SOS (112)' : '🚨 24x7 Emergency Police SOS (112)'}
+                      </span>
+                      <p className="text-[10px] text-red-400/80">
+                        {language === 'hi' ? 'महिला व नागरिक सुरक्षा पैनिक बटन' : 'Safety emergency panic button'}
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-red-400" />
+                </button>
+              )}
+
+              {/* Clean Reset */}
+              {onResetData && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundManager.playTap();
+                    onResetData();
+                  }}
+                  className="w-full flex items-center justify-between p-2 rounded-xl bg-slate-950/50 hover:bg-slate-900 border border-slate-800/60 text-left transition-all text-slate-500 hover:text-rose-400"
+                >
+                  <div className="flex items-center gap-2 text-[11px]">
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>{language === 'hi' ? 'ऐप रीसेट (Reset App Cache)' : 'Reset App Cache'}</span>
+                  </div>
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -1120,7 +1321,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
         >
           <ClipboardList className="w-4 h-4" />
           <span>{language === 'hi' ? 'बुकिंग्स' : 'Bookings'}</span>
-          {activeBooking && (
+          {safeActiveBooking && (
             <span className="absolute top-0 right-3 w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
           )}
         </button>
@@ -1386,6 +1587,16 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
         title={lightboxData?.title || 'Work Photo'}
         subtitle={lightboxData?.subtitle}
         tag={lightboxData?.tag}
+      />
+
+      {/* Owner & Admin Secret PIN Protection Modal */}
+      <OwnerPinModal
+        isOpen={isOwnerPinOpen}
+        onClose={() => setIsOwnerPinOpen(false)}
+        onSuccess={() => {
+          onSwitchToOwner?.();
+        }}
+        language={language}
       />
     </div>
   );

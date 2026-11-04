@@ -67,10 +67,8 @@ import { IndexedDbSyncService } from './services/indexedDbSyncService';
 import { Sparkles, RefreshCw, Zap, ShieldCheck } from 'lucide-react';
 
 export default function App() {
-  const isInitialMobile = typeof window !== 'undefined' && (window.innerWidth < 768 || window.matchMedia('(display-mode: standalone)').matches);
-  const [activeView, setActiveView] = useState<'dual' | 'customer' | 'worker' | 'owner' | 'admin' | 'studio'>(
-    isInitialMobile ? 'customer' : 'dual'
-  );
+  const isInitialMobile = typeof window !== 'undefined' && (window.innerWidth < 1024 || window.matchMedia('(display-mode: standalone)').matches);
+  const [activeView, setActiveView] = useState<'dual' | 'customer' | 'worker' | 'owner' | 'admin' | 'studio'>('customer');
   const [language, setLanguage] = useState<Language>('en');
   const [isGlobalIdCardOpen, setIsGlobalIdCardOpen] = useState(false);
   const [isGlobalAddCustomerOpen, setIsGlobalAddCustomerOpen] = useState(false);
@@ -98,6 +96,16 @@ export default function App() {
 
     PushNotificationService.init();
     IndexedDbSyncService.init();
+
+    // Purge legacy demo booking cache from previous builds
+    try {
+      safeStorage.removeItem('smart_india_active_booking');
+      const saved = safeStorage.getItem('smart_india_active_booking_v2');
+      if (saved && (saved.includes('BK_9081') || saved.includes('Rameshwar'))) {
+        safeStorage.removeItem('smart_india_active_booking_v2');
+        setActiveBooking(null);
+      }
+    } catch {}
 
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
@@ -206,7 +214,15 @@ export default function App() {
   const [activeBooking, setActiveBooking] = useState<Booking | null>(() => {
     try {
       const saved = safeStorage.getItem('smart_india_active_booking_v2');
-      return saved ? JSON.parse(saved) : null;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed?.id === 'BK_9081' || parsed?.workerName?.includes('Rameshwar') || (parsed?.customerId === 'c1' && parsed?.workerId === 'w1')) {
+          safeStorage.removeItem('smart_india_active_booking_v2');
+          return null;
+        }
+        return parsed;
+      }
+      return null;
     } catch {
       return null;
     }
@@ -1279,76 +1295,76 @@ export default function App() {
         </div>
       )}
 
-      {/* Top Navbar */}
-      <Header
-        activeView={activeView}
-        setActiveView={setActiveView}
-        language={language}
-        setLanguage={setLanguage}
-        onResetData={handleResetData}
-        workerOnline={activeWorker.isOnline}
-        walletBalance={activeWorker.walletBalance}
-        activeCustomerName={customer.name}
-        totalCommissionEarned={commissionRecords.reduce((acc, r) => acc + (r.status === 'paid' ? r.commissionAmount : 0), 0)}
-        onOpenAppOwnerEarnings={() => {
-          soundManager.playTap();
-          setIsAppOwnerEarningsOpen(true);
-        }}
-        onOpenAddCustomer={() => {
-          soundManager.playTap();
-          setIsGlobalAddCustomerOpen(true);
-        }}
-        onOpenAddWorker={() => {
-          soundManager.playTap();
-          setIsGlobalAddWorkerOpen(true);
-        }}
-        onOpenWorkerIdCard={() => {
-          soundManager.playTap();
-          setIsGlobalIdCardOpen(true);
-        }}
-        onOpenShareLink={() => {
-          soundManager.playTap();
-          setIsShareModalOpen(true);
-        }}
-        onOpenLegalTerms={() => {
-          soundManager.playTap();
-          setIsLegalTermsOpen(true);
-        }}
-        onOpenAndroidGuide={() => {
-          soundManager.playTap();
-          setIsAndroidGuideOpen(true);
-        }}
-        onOpenAwsServer={() => {
-          soundManager.playTap();
-          setIsAwsServerOpen(true);
-        }}
-        onOpenProductionServices={() => {
-          soundManager.playTap();
-          setIsProductionServicesOpen(true);
-        }}
-        onOpenSos={() => {
-          soundManager.playTap();
-          setIsSosModalOpen(true);
-        }}
-        onOpenTestGuide={() => {
-          soundManager.playTap();
-          setIsTestingGuideOpen(true);
-        }}
-        onOpenSecurityShield={() => {
-          soundManager.playTap();
-          setIsSecurityShieldOpen(true);
-        }}
-        onOpenApkDownload={() => {
-          soundManager.playTap();
-          setIsApkDownloadOpen(true);
-        }}
-        isCloudConnected={isCloudConnected}
-      />
-
-
+      {/* Top Navbar: Only shown in Desktop Dual Simulator or Studio mode */}
+      {(activeView === 'dual' || activeView === 'studio') && (
+        <Header
+          activeView={activeView}
+          setActiveView={setActiveView}
+          language={language}
+          setLanguage={setLanguage}
+          onResetData={handleResetData}
+          workerOnline={activeWorker.isOnline}
+          walletBalance={activeWorker.walletBalance}
+          activeCustomerName={customer.name}
+          totalCommissionEarned={commissionRecords.reduce((acc, r) => acc + (r.status === 'paid' ? r.commissionAmount : 0), 0)}
+          onOpenAppOwnerEarnings={() => {
+            soundManager.playTap();
+            setIsAppOwnerEarningsOpen(true);
+          }}
+          onOpenAddCustomer={() => {
+            soundManager.playTap();
+            setIsGlobalAddCustomerOpen(true);
+          }}
+          onOpenAddWorker={() => {
+            soundManager.playTap();
+            setIsGlobalAddWorkerOpen(true);
+          }}
+          onOpenWorkerIdCard={() => {
+            soundManager.playTap();
+            setIsGlobalIdCardOpen(true);
+          }}
+          onOpenShareLink={() => {
+            soundManager.playTap();
+            setIsShareModalOpen(true);
+          }}
+          onOpenLegalTerms={() => {
+            soundManager.playTap();
+            setIsLegalTermsOpen(true);
+          }}
+          onOpenAndroidGuide={() => {
+            soundManager.playTap();
+            setIsAndroidGuideOpen(true);
+          }}
+          onOpenAwsServer={() => {
+            soundManager.playTap();
+            setIsAwsServerOpen(true);
+          }}
+          onOpenProductionServices={() => {
+            soundManager.playTap();
+            setIsProductionServicesOpen(true);
+          }}
+          onOpenSos={() => {
+            soundManager.playTap();
+            setIsSosModalOpen(true);
+          }}
+          onOpenTestGuide={() => {
+            soundManager.playTap();
+            setIsTestingGuideOpen(true);
+          }}
+          onOpenSecurityShield={() => {
+            soundManager.playTap();
+            setIsSecurityShieldOpen(true);
+          }}
+          onOpenApkDownload={() => {
+            soundManager.playTap();
+            setIsApkDownloadOpen(true);
+          }}
+          isCloudConnected={isCloudConnected}
+        />
+      )}
 
       {/* Main Workspace Canvas */}
-      <main className="flex-1 flex flex-col p-3 md:p-6 overflow-hidden">
+      <main className={activeView === 'dual' || activeView === 'studio' ? "flex-1 flex flex-col p-3 md:p-6 overflow-hidden" : "flex-1 flex flex-col h-screen w-full overflow-hidden"}>
         {/* VIEW 1: Dual Mobile Split Simulator */}
         {activeView === 'dual' && (
           <div className="max-w-7xl mx-auto w-full flex-1 grid grid-cols-1 lg:grid-cols-2 gap-6 items-center justify-center">

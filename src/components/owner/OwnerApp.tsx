@@ -1536,7 +1536,19 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
         </div>
 
         {/* Layout Switcher: Mobile Phone App vs Full Dashboard */}
-        <div className="flex items-center gap-2">
+          {onNavigateToView && (
+            <button
+              onClick={() => {
+                soundManager.playTap();
+                onNavigateToView('customer');
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/40 text-xs font-bold transition-all active:scale-95"
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>{language === 'hi' ? '← ग्राहक ऐप' : '← Customer App'}</span>
+            </button>
+          )}
+
           <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
             <button
               onClick={() => {

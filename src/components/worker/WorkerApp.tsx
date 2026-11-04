@@ -103,6 +103,7 @@ interface WorkerAppProps {
   onTriggerSos?: () => void;
   onOpenReviews?: (worker: WorkerProfile) => void;
   onTogglePauseId?: (workerId: string, isPaused: boolean, reason?: string, pauseUntil?: string) => void;
+  onNavigateToCustomer?: () => void;
 }
 
 export const WorkerApp: React.FC<WorkerAppProps> = ({
@@ -140,9 +141,9 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
   onMarkNotificationAsRead,
   onMarkAllNotificationsAsRead,
   onClearAllNotifications,
-  incomingBookingAlert = null,
   onDismissIncomingBookingAlert,
   onAcceptBooking,
+  onNavigateToCustomer,
   onDeclineBooking,
   onTriggerSos,
   onOpenReviews,
@@ -449,6 +450,21 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
           >
             <Power className="w-4 h-4" />
           </button>
+
+          {/* Switch to Customer App Button */}
+          {onNavigateToCustomer && (
+            <button
+              onClick={() => {
+                soundManager.playTap();
+                onNavigateToCustomer();
+              }}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-blue-600/30 hover:bg-blue-600/50 text-blue-200 border border-blue-500/40 text-xs font-bold transition-all active:scale-95"
+              title={language === 'hi' ? 'ग्राहक ऐप पर वापस जाएं' : 'Switch to Customer App'}
+            >
+              <UserCheck className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{language === 'hi' ? 'ग्राहक ऐप' : 'Customer'}</span>
+            </button>
+          )}
         </div>
       </div>
 
