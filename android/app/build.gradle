@@ -22,61 +22,31 @@ android {
 
     signingConfigs {
         release {
-            def releaseKs = file('release.keystore')
-            def debugKs = file('debug.keystore')
-            def userKs = file("${System.properties['user.home']}/.android/debug.keystore")
-            if (releaseKs.exists()) {
-                storeFile releaseKs
-                storePassword 'smartindiawork'
-                keyAlias 'releasekey'
-                keyPassword 'smartindiawork'
-            } else if (debugKs.exists()) {
-                storeFile debugKs
-                storePassword 'smartindiawork'
-                keyAlias 'releasekey'
-                keyPassword 'smartindiawork'
-            } else if (userKs.exists()) {
-                storeFile userKs
-                storePassword 'android'
-                keyAlias 'androiddebugkey'
-                keyPassword 'android'
-            }
+            storeFile file('release.keystore')
+            storePassword 'smartindiawork'
+            keyAlias 'releasekey'
+            keyPassword 'smartindiawork'
+            v1SigningEnabled true
+            v2SigningEnabled true
         }
         debug {
-            def releaseKs = file('release.keystore')
-            def debugKs = file('debug.keystore')
-            def userKs = file("${System.properties['user.home']}/.android/debug.keystore")
-            if (releaseKs.exists()) {
-                storeFile releaseKs
-                storePassword 'smartindiawork'
-                keyAlias 'releasekey'
-                keyPassword 'smartindiawork'
-            } else if (debugKs.exists()) {
-                storeFile debugKs
-                storePassword 'smartindiawork'
-                keyAlias 'releasekey'
-                keyPassword 'smartindiawork'
-            } else if (userKs.exists()) {
-                storeFile userKs
-                storePassword 'android'
-                keyAlias 'androiddebugkey'
-                keyPassword 'android'
-            }
+            storeFile file('release.keystore')
+            storePassword 'smartindiawork'
+            keyAlias 'releasekey'
+            keyPassword 'smartindiawork'
+            v1SigningEnabled true
+            v2SigningEnabled true
         }
     }
 
     buildTypes {
         release {
-            if (signingConfigs.release.storeFile != null && signingConfigs.release.storeFile.exists()) {
-                signingConfig signingConfigs.release
-            }
+            signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
         debug {
-            if (signingConfigs.debug.storeFile != null && signingConfigs.debug.storeFile.exists()) {
-                signingConfig signingConfigs.debug
-            }
+            signingConfig signingConfigs.debug
         }
     }
 

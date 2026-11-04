@@ -1486,117 +1486,135 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 2: Single Customer Mobile View */}
+        {/* VIEW 2: Single Customer Mobile View (Native Full-Screen, Clean UI) */}
         {activeView === 'customer' && (
-          <div className="max-w-md mx-auto w-full flex-1 flex flex-col items-center justify-center">
-            <PhoneFrame
-              title="Customer Mobile App (Single Screen)"
-              subtitle={`${customer.name} • ${customer.phone}`}
-              roleBadge="Customer"
-              roleColor="blue"
-            >
-              <CustomerApp
-                customer={customer}
-                customers={customers}
-                workers={workers}
-                jobs={jobs}
-                activeBooking={activeBooking}
-                language={language}
-                onPostJob={handlePostJob}
-                onBookWorker={handleBookWorker}
-                onBookCategory={handleBookCategory}
-                onRateWorker={handleRateWorker}
-                onAddCustomer={handleAddCustomer}
-                onSelectCustomer={handleSelectCustomer}
-                onAddCustomerAddress={handleAddCustomerAddress}
-                chatMessages={chatMessages}
-                onSendMessage={handleSendMessage}
-                supportTickets={supportTickets}
-                onCreateSupportTicket={handleCreateSupportTicket}
-                onUpdateBookingProgress={handleUpdateBookingProgress}
-                onWorkerArrived={handleReachLocation}
-                onOpenReviews={(w) => {
-                  setSelectedReviewWorker(w);
-                  setIsReviewsModalOpen(true);
-                }}
-                onTriggerSos={() => {
-                  soundManager.playTap();
-                  setIsSosModalOpen(true);
-                }}
-              />
-            </PhoneFrame>
+          <div className="w-full flex-1 flex flex-col h-full overflow-hidden">
+            <CustomerApp
+              customer={customer}
+              customers={customers}
+              workers={workers}
+              jobs={jobs}
+              activeBooking={activeBooking}
+              language={language}
+              onPostJob={handlePostJob}
+              onBookWorker={handleBookWorker}
+              onBookCategory={handleBookCategory}
+              onRateWorker={handleRateWorker}
+              onAddCustomer={handleAddCustomer}
+              onSelectCustomer={handleSelectCustomer}
+              onAddCustomerAddress={handleAddCustomerAddress}
+              chatMessages={chatMessages}
+              onSendMessage={handleSendMessage}
+              supportTickets={supportTickets}
+              onCreateSupportTicket={handleCreateSupportTicket}
+              onUpdateBookingProgress={handleUpdateBookingProgress}
+              onWorkerArrived={handleReachLocation}
+              onOpenReviews={(w) => {
+                setSelectedReviewWorker(w);
+                setIsReviewsModalOpen(true);
+              }}
+              onTriggerSos={() => {
+                soundManager.playTap();
+                setIsSosModalOpen(true);
+              }}
+              onSwitchToWorker={() => {
+                soundManager.playTap();
+                setActiveView('worker');
+              }}
+              onSwitchToOwner={() => {
+                soundManager.playTap();
+                setActiveView('owner');
+              }}
+              onOpenLegalTerms={() => {
+                soundManager.playTap();
+                setIsLegalTermsOpen(true);
+              }}
+              onOpenSecurityShield={() => {
+                soundManager.playTap();
+                setIsSecurityShieldOpen(true);
+              }}
+              onToggleLanguage={(l) => {
+                soundManager.playTap();
+                setLanguage(l);
+              }}
+              onResetData={handleResetData}
+              ownerPin={appOwnerConfig.ownerSecurityPin || '1234'}
+              onUpdateOwnerPin={(newPin) => {
+                setAppOwnerConfig((prev) => ({ ...prev, ownerSecurityPin: newPin }));
+                try {
+                  safeStorage.setItem('smart_india_owner_pin', newPin);
+                } catch {}
+              }}
+            />
           </div>
         )}
 
         {/* VIEW 3: Single Worker Mobile View */}
         {activeView === 'worker' && (
-          <div className="max-w-md mx-auto w-full flex-1 flex flex-col items-center justify-center">
-            <PhoneFrame
-              title="Worker Partner Mobile App"
-              subtitle={`${activeWorker.name} (${activeWorker.category}) • ${activeWorker.age || 34} Yrs`}
-              roleBadge="Worker (Partner)"
-              roleColor="emerald"
-            >
-              <WorkerApp
-                worker={activeWorker}
-                workers={workers}
-                onSelectWorker={handleSelectWorker}
-                onAddWorker={handleAddWorker}
-                jobs={jobs}
-                activeBooking={activeBooking}
-                walletTransactions={walletTransactions}
-                language={language}
-                appOwnerConfig={appOwnerConfig}
-                onPayCommission={handlePayCommission}
-                onOpenAppOwnerEarnings={() => {
-                  soundManager.playTap();
-                  setIsAppOwnerEarningsOpen(true);
-                }}
-                onToggleOnline={handleToggleOnline}
-                onTogglePauseId={handleTogglePauseWorkerId}
-                onAcceptJob={handleAcceptJob}
-                onStartTrip={handleStartTrip}
-                onReachLocation={handleReachLocation}
-                onVerifyOtp={handleVerifyOtp}
-                onVerifyOtpUnpaid={handleVerifyOtpUnpaid}
-                onClearUnpaidFee={handleClearWorkerUnpaidFee}
-                onCompleteJob={handleCompleteJob}
-                onRechargeWallet={handleRechargeWallet}
-                onUpdateKyc={handleUpdateKyc}
-                onAddPortfolio={handleAddPortfolio}
-                chatMessages={chatMessages}
-                onSendMessage={handleSendMessage}
-                onUpdateWorker={handleUpdateWorker}
-                records={workerJobRecords}
-                onAddRecord={handleAddWorkerJobRecord}
-                onDeleteRecord={handleDeleteWorkerJobRecord}
-                onUpdateBookingProgress={handleUpdateBookingProgress}
-                notifications={workerNotifications.filter(
-                  (n) => (!n.workerId || n.workerId === activeWorker.id) && 
-                         (!n.category || n.category.toLowerCase() === activeWorker.category.toLowerCase() || n.category === 'all')
-                )}
-                onMarkNotificationAsRead={handleMarkNotificationAsRead}
-                onMarkAllNotificationsAsRead={handleMarkAllNotificationsAsRead}
-                onClearAllNotifications={handleClearAllNotifications}
-                incomingBookingAlert={
-                  incomingBookingAlert && (
-                    incomingBookingAlert.workerId === activeWorker.id ||
-                    incomingBookingAlert.serviceCategory.toLowerCase() === activeWorker.category.toLowerCase()
-                  ) ? incomingBookingAlert : null
-                }
-                onDismissIncomingBookingAlert={() => setIncomingBookingAlert(null)}
-                onAcceptBooking={handleAcceptIncomingBooking}
-                onDeclineBooking={handleDeclineIncomingBooking}
-                onOpenReviews={(w) => {
-                  setSelectedReviewWorker(w);
-                  setIsReviewsModalOpen(true);
-                }}
-                onTriggerSos={() => {
-                  soundManager.playTap();
-                  setIsSosModalOpen(true);
-                }}
-              />
-            </PhoneFrame>
+          <div className="w-full flex-1 flex flex-col h-full overflow-hidden">
+            <WorkerApp
+              worker={activeWorker}
+              workers={workers}
+              onSelectWorker={handleSelectWorker}
+              onAddWorker={handleAddWorker}
+              jobs={jobs}
+              activeBooking={activeBooking}
+              walletTransactions={walletTransactions}
+              language={language}
+              appOwnerConfig={appOwnerConfig}
+              onPayCommission={handlePayCommission}
+              onOpenAppOwnerEarnings={() => {
+                soundManager.playTap();
+                setIsAppOwnerEarningsOpen(true);
+              }}
+              onToggleOnline={handleToggleOnline}
+              onTogglePauseId={handleTogglePauseWorkerId}
+              onAcceptJob={handleAcceptJob}
+              onStartTrip={handleStartTrip}
+              onReachLocation={handleReachLocation}
+              onVerifyOtp={handleVerifyOtp}
+              onVerifyOtpUnpaid={handleVerifyOtpUnpaid}
+              onClearUnpaidFee={handleClearWorkerUnpaidFee}
+              onCompleteJob={handleCompleteJob}
+              onRechargeWallet={handleRechargeWallet}
+              onUpdateKyc={handleUpdateKyc}
+              onAddPortfolio={handleAddPortfolio}
+              chatMessages={chatMessages}
+              onSendMessage={handleSendMessage}
+              onUpdateWorker={handleUpdateWorker}
+              records={workerJobRecords}
+              onAddRecord={handleAddWorkerJobRecord}
+              onDeleteRecord={handleDeleteWorkerJobRecord}
+              onUpdateBookingProgress={handleUpdateBookingProgress}
+              notifications={workerNotifications.filter(
+                (n) => (!n.workerId || n.workerId === activeWorker.id) && 
+                       (!n.category || n.category.toLowerCase() === activeWorker.category.toLowerCase() || n.category === 'all')
+              )}
+              onMarkNotificationAsRead={handleMarkNotificationAsRead}
+              onMarkAllNotificationsAsRead={handleMarkAllNotificationsAsRead}
+              onClearAllNotifications={handleClearAllNotifications}
+              incomingBookingAlert={
+                incomingBookingAlert && (
+                  incomingBookingAlert.workerId === activeWorker.id ||
+                  incomingBookingAlert.serviceCategory.toLowerCase() === activeWorker.category.toLowerCase()
+                ) ? incomingBookingAlert : null
+              }
+              onDismissIncomingBookingAlert={() => setIncomingBookingAlert(null)}
+              onAcceptBooking={handleAcceptIncomingBooking}
+              onDeclineBooking={handleDeclineIncomingBooking}
+              onOpenReviews={(w) => {
+                setSelectedReviewWorker(w);
+                setIsReviewsModalOpen(true);
+              }}
+              onTriggerSos={() => {
+                soundManager.playTap();
+                setIsSosModalOpen(true);
+              }}
+              onNavigateToCustomer={() => {
+                soundManager.playTap();
+                setActiveView('customer');
+              }}
+            />
           </div>
         )}
 

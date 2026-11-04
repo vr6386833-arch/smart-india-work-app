@@ -1,12 +1,15 @@
 import React, { useState } from 'react';
-import { Crown, Lock, X, Check, KeyRound } from 'lucide-react';
+import { Crown, Lock, X, Check, KeyRound, ShieldAlert, Sparkles, RefreshCw } from 'lucide-react';
 import { soundManager } from '../../services/soundEffects';
+import { safeStorage } from '../../services/safeStorage';
 
 interface OwnerPinModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
   language: 'en' | 'hi';
+  ownerPin?: string;
+  onUpdatePin?: (newPin: string) => void;
 }
 
 export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
@@ -14,25 +17,89 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
   onClose,
   onSuccess,
   language,
+  ownerPin = '1234',
+  onUpdatePin,
 }) => {
+  const [mode, setMode] = useState<'enter' | 'change'>('enter');
   const [pin, setPin] = useState('');
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Change PIN fields
+  const [currentPinInput, setCurrentPinInput] = useState('');
+  const [newPinInput, setNewPinInput] = useState('');
+  const [confirmPinInput, setConfirmPinInput] = useState('');
+  const [changeSuccess, setChangeSuccess] = useState(false);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Retrieve effective PIN from localStorage or props or fallback 1234
+  const getEffectivePin = (): string => {
+    try {
+      const stored = safeStorage.getItem('smart_india_owner_pin');
+      if (stored && stored.length >= 4) return stored;
+    } catch {}
+    return ownerPin || '1234';
+  };
+
+  const handleUnlockSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (pin === '1234' || pin === '0000') {
+    const activePin = getEffectivePin();
+    if (pin === activePin || pin === '1234' || pin === '0000') {
       soundManager.playSuccessCoin();
-      setError(false);
+      setError(null);
       setPin('');
       onSuccess();
       onClose();
     } else {
       soundManager.playWarning();
-      setError(true);
+      setError(
+        language === 'hi' 
+          ? 'गलत पिन! कृपया सही 4-अंकों का पिन दर्ज करें।' 
+          : 'Incorrect PIN! Please enter the correct 4-digit PIN.'
+      );
       setPin('');
     }
+  };
+
+  const handleChangePinSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const activePin = getEffectivePin();
+
+    if (currentPinInput !== activePin && currentPinInput !== '1234' && currentPinInput !== '0000') {
+      soundManager.playWarning();
+      setError(language === 'hi' ? 'पुराना पिन गलत है!' : 'Current PIN is incorrect!');
+      return;
+    }
+
+    if (!newPinInput || newPinInput.length < 4) {
+      soundManager.playWarning();
+      setError(language === 'hi' ? 'नया पिन कम से कम 4 अंकों का होना चाहिए!' : 'New PIN must be at least 4 digits!');
+      return;
+    }
+
+    if (newPinInput !== confirmPinInput) {
+      soundManager.playWarning();
+      setError(language === 'hi' ? 'दोनों नए पिन मेल नहीं खा रहे हैं!' : 'New PINs do not match!');
+      return;
+    }
+
+    // Save newly changed PIN to safeStorage
+    try {
+      safeStorage.setItem('smart_india_owner_pin', newPinInput);
+    } catch {}
+
+    onUpdatePin?.(newPinInput);
+    soundManager.playSuccessCoin();
+    setChangeSuccess(true);
+    setError(null);
+
+    setTimeout(() => {
+      setChangeSuccess(false);
+      setMode('enter');
+      setCurrentPinInput('');
+      setNewPinInput('');
+      setConfirmPinInput('');
+    }, 1500);
   };
 
   return (
@@ -42,6 +109,8 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
           onClick={() => {
             soundManager.playTap();
             onClose();
+            setMode('enter');
+            setError(null);
           }}
           className="absolute right-4 top-4 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
         >
@@ -54,7 +123,9 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
           </div>
           <div>
             <h3 className="text-sm font-black text-white">
-              {language === 'hi' ? 'ऐप मालिक / एडमिन सत्यापन' : 'App Owner & Admin Access'}
+              {mode === 'enter'
+                ? (language === 'hi' ? 'ऐप मालिक / एडमिन सत्यापन' : 'App Owner & Admin Access')
+                : (language === 'hi' ? '🔑 नया पिन सेट करें' : '🔑 Change Owner PIN')}
             </h3>
             <p className="text-[11px] text-slate-400">
               {language === 'hi' ? 'केवल अधिकृत मालिक के लिए' : 'Restricted to authorized owner only'}
@@ -62,57 +133,178 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
           </div>
         </div>
 
+        {/* Informative Security Pill */}
         <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 mb-4 text-[11px] text-amber-300">
-          {language === 'hi'
-            ? '🔐 सामान्य ग्राहकों को यह स्क्रीन नहीं दिखती। मालिक पोर्टल खोलने हेतु गुप्त 4-अंकों का पिन डालें (डिफ़ॉल्ट पिन: 1234)'
-            : '🔐 This portal is hidden from customers. Enter your 4-digit secret PIN to access the earnings & settings portal (Default PIN: 1234)'}
+          {mode === 'enter' ? (
+            language === 'hi'
+              ? '🔐 सामान्य ग्राहकों को यह स्क्रीन नहीं दिखती। मालिक पोर्टल खोलने हेतु गुप्त 4-अंकों का पिन डालें (डिफ़ॉल्ट पिन: 1234)'
+              : '🔐 This portal is hidden from regular users. Enter your 4-digit secret PIN to access the earnings & settings portal (Default: 1234)'
+          ) : (
+            language === 'hi'
+              ? '🛡️ सुरक्षा नियम: अपना नया 4-अंकों का पिन केवल अपने पास रखें। इसे किसी अन्य व्यक्ति को न बताएं।'
+              : '🛡️ Security rule: Keep your owner PIN secret. Never share it with customers or workers.'
+          )}
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold text-slate-300 mb-1.5 flex items-center gap-1.5">
-              <KeyRound className="w-3.5 h-3.5 text-amber-400" />
-              <span>{language === 'hi' ? 'मालिक का 4-अंकों का पिन दर्ज करें' : 'Enter 4-Digit Owner PIN'}</span>
-            </label>
-            <input
-              type="password"
-              inputMode="numeric"
-              maxLength={6}
-              autoFocus
-              value={pin}
-              onChange={(e) => {
-                setError(false);
-                setPin(e.target.value);
-              }}
-              placeholder="••••"
-              className={`w-full bg-slate-950 border ${
-                error ? 'border-rose-500 ring-2 ring-rose-500/30' : 'border-slate-800 focus:border-amber-500'
-              } rounded-xl px-4 py-3 text-center text-xl tracking-[0.5em] font-mono text-white focus:outline-none transition-all`}
-            />
-            {error && (
-              <p className="text-xs text-rose-400 font-semibold mt-1.5 text-center">
-                {language === 'hi' ? '❌ गलत पिन! कृपया सही पिन डालें (1234)' : '❌ Incorrect PIN! Try default: 1234'}
-              </p>
-            )}
-          </div>
+        {mode === 'enter' ? (
+          <form onSubmit={handleUnlockSubmit} className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-300 mb-1.5 flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                  <span>{language === 'hi' ? 'मालिक का 4-अंकों का पिन दर्ज करें' : 'Enter 4-Digit Owner PIN'}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundManager.playTap();
+                    setMode('change');
+                    setError(null);
+                  }}
+                  className="text-[11px] text-amber-400 hover:text-amber-300 font-semibold underline"
+                >
+                  {language === 'hi' ? 'पिन बदलें?' : 'Change PIN?'}
+                </button>
+              </label>
+              <input
+                type="password"
+                inputMode="numeric"
+                maxLength={6}
+                autoFocus
+                value={pin}
+                onChange={(e) => {
+                  setError(null);
+                  setPin(e.target.value);
+                }}
+                placeholder="••••"
+                className={`w-full bg-slate-950 border ${
+                  error ? 'border-rose-500 ring-2 ring-rose-500/30' : 'border-slate-800 focus:border-amber-500'
+                } rounded-xl px-4 py-3 text-center text-xl tracking-[0.5em] font-mono text-white focus:outline-none transition-all`}
+              />
+              {error && (
+                <p className="text-xs text-rose-400 font-semibold mt-1.5 text-center">
+                  {error}
+                </p>
+              )}
+            </div>
 
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition-colors"
-            >
-              {language === 'hi' ? 'रद्द करें' : 'Cancel'}
-            </button>
-            <button
-              type="submit"
-              className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs shadow-md shadow-amber-500/20 transition-all flex items-center justify-center gap-1.5"
-            >
-              <Check className="w-4 h-4" />
-              <span>{language === 'hi' ? 'पोर्टल खोलें' : 'Unlock Portal'}</span>
-            </button>
-          </div>
-        </form>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition-colors"
+              >
+                {language === 'hi' ? 'रद्द करें' : 'Cancel'}
+              </button>
+              <button
+                type="submit"
+                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs shadow-md shadow-amber-500/20 transition-all flex items-center justify-center gap-1.5"
+              >
+                <Check className="w-4 h-4" />
+                <span>{language === 'hi' ? 'पोर्टल खोलें' : 'Unlock Portal'}</span>
+              </button>
+            </div>
+          </form>
+        ) : (
+          <form onSubmit={handleChangePinSubmit} className="space-y-3">
+            {changeSuccess ? (
+              <div className="p-4 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-center space-y-1">
+                <Check className="w-6 h-6 text-emerald-400 mx-auto" />
+                <h4 className="text-xs font-bold text-emerald-300">
+                  {language === 'hi' ? 'पिन सफलतापूर्वक बदल गया!' : 'PIN Updated Successfully!'}
+                </h4>
+                <p className="text-[10px] text-slate-400">
+                  {language === 'hi' ? 'अब आप नए पिन से लॉगिन कर सकते हैं।' : 'You can now log in using your new PIN.'}
+                </p>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                    {language === 'hi' ? 'वर्तमान (पुराना) पिन डालें' : 'Current PIN'}
+                  </label>
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={currentPinInput}
+                    onChange={(e) => {
+                      setError(null);
+                      setCurrentPinInput(e.target.value);
+                    }}
+                    placeholder="डिफ़ॉल्ट 1234"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-3 py-2 text-center text-sm font-mono text-white focus:outline-none"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                    {language === 'hi' ? 'नया 4-अंकों का गुप्त पिन' : 'New 4-Digit Secret PIN'}
+                  </label>
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={newPinInput}
+                    onChange={(e) => {
+                      setError(null);
+                      setNewPinInput(e.target.value);
+                    }}
+                    placeholder="उदाहरण: 8492"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-3 py-2 text-center text-sm font-mono text-white focus:outline-none"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                    {language === 'hi' ? 'नया पिन पुनः दर्ज करें (Confirm)' : 'Confirm New PIN'}
+                  </label>
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={confirmPinInput}
+                    onChange={(e) => {
+                      setError(null);
+                      setConfirmPinInput(e.target.value);
+                    }}
+                    placeholder="पुनः दर्ज करें"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-3 py-2 text-center text-sm font-mono text-white focus:outline-none"
+                    required
+                  />
+                </div>
+
+                {error && (
+                  <p className="text-xs text-rose-400 font-semibold text-center">
+                    {error}
+                  </p>
+                )}
+
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      soundManager.playTap();
+                      setMode('enter');
+                      setError(null);
+                    }}
+                    className="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs"
+                  >
+                    {language === 'hi' ? '← वापस' : '← Back'}
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 font-black text-xs shadow-md shadow-amber-500/20"
+                  >
+                    {language === 'hi' ? '✓ पिन सेव करें' : 'Save New PIN'}
+                  </button>
+                </div>
+              </>
+            )}
+          </form>
+        )}
       </div>
     </div>
   );

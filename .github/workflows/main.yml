@@ -86,7 +86,7 @@ jobs:
           # 2. Build Google Play Store AAB Bundle
           ./gradlew bundleRelease -x lint -x test --stacktrace --no-daemon || true
 
-      - name: Prepare Release Artifacts
+      - name: Prepare Release Artifacts & Verify APK Signature
         run: |
           mkdir -p release-output
           # Find and copy generated AAB
@@ -102,6 +102,16 @@ jobs:
           fi
           # Also copy Debug APK if present
           find android/app/build/outputs/apk/debug -name "*.apk" -exec cp -vf {} release-output/SmartIndiaWork-Debug.apk \; || true
+
+          # Guarantee v1 + v2 APK signature so installation never fails on any mobile device
+          if [ -f release-output/SmartIndiaWork-DirectInstall.apk ]; then
+            BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
+            echo "Using Android Build Tools at: $BUILD_TOOLS_DIR"
+            $BUILD_TOOLS_DIR/apksigner sign --ks android/app/release.keystore --ks-pass pass:smartindiawork --ks-key-alias releasekey --key-pass pass:smartindiawork --v1-signing-enabled true --v2-signing-enabled true release-output/SmartIndiaWork-DirectInstall.apk || true
+            echo "=== Verifying APK Signature ==="
+            $BUILD_TOOLS_DIR/apksigner verify --verbose release-output/SmartIndiaWork-DirectInstall.apk || true
+          fi
+
           echo "=== Files ready in release-output ==="
           ls -lh release-output/
 

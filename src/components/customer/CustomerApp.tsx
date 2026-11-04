@@ -78,6 +78,8 @@ interface CustomerAppProps {
   onOpenSecurityShield?: () => void;
   onToggleLanguage?: (lang: Language) => void;
   onResetData?: () => void;
+  ownerPin?: string;
+  onUpdateOwnerPin?: (newPin: string) => void;
 }
 
 export const CustomerApp: React.FC<CustomerAppProps> = ({
@@ -108,6 +110,8 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
   onOpenSecurityShield,
   onToggleLanguage,
   onResetData,
+  ownerPin,
+  onUpdateOwnerPin,
 }) => {
   // Purge any mock/demo Rameshwar booking (BK_9081) so live customer starts pristine
   const isMockBooking = activeBooking?.id === 'BK_9081' || activeBooking?.workerName?.includes('Rameshwar');
@@ -1597,6 +1601,8 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
           onSwitchToOwner?.();
         }}
         language={language}
+        ownerPin={ownerPin}
+        onUpdatePin={onUpdateOwnerPin}
       />
     </div>
   );

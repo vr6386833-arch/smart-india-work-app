@@ -268,6 +268,7 @@ export interface AppOwnerPaymentConfig {
   accountType?: 'Current' | 'Savings';
   autoSettlementEnabled?: boolean;
   autoSettlementTime?: string;
+  ownerSecurityPin?: string; // 4-digit secret PIN for Owner & Admin access
 }
 
 // Platform Commission & Fee Settlement Record

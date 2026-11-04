@@ -41,7 +41,8 @@ import {
   UserPlus,
   HelpCircle,
   TrendingUp,
-  X
+  X,
+  KeyRound
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import {
@@ -54,6 +55,7 @@ import {
   OwnerPayoutRecord
 } from '../../types';
 import { soundManager } from '../../services/soundEffects';
+import { safeStorage } from '../../services/safeStorage';
 import { PhoneFrame } from '../common/PhoneFrame';
 
 interface OwnerAppProps {
@@ -130,6 +132,8 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
     accountType: appOwnerConfig.accountType || 'Current'
   });
   const [showAccountMask, setShowAccountMask] = useState(true);
+  const [newOwnerPin, setNewOwnerPin] = useState('');
+  const [pinUpdateMsg, setPinUpdateMsg] = useState<string | null>(null);
 
   // Financial Calculations
   const totalEarned = commissionRecords.reduce(
@@ -1220,6 +1224,78 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
 
         {/* Right Column: Registered Bank Account Details & Passbook */}
         <div className="space-y-6">
+          {/* Owner Secret Security PIN Card */}
+          <div className="bg-slate-900/90 border border-amber-500/30 rounded-2xl p-5 shadow-xl space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <KeyRound className="w-4 h-4 text-amber-400" />
+                <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                  {language === 'hi' ? '🔑 ओनर गुप्त सुरक्षा पिन (Security PIN)' : '🔑 Owner Security PIN'}
+                </h4>
+              </div>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                4-Digit PIN
+              </span>
+            </div>
+
+            <p className="text-[11px] text-slate-400">
+              {language === 'hi'
+                ? 'यह पिन ग्राहक ऐप से ओनर पोर्टल खोलने के लिए उपयोग होता है। आप इसे कभी भी बदल सकते हैं।'
+                : 'This PIN is required to open the Owner & Admin portal from the Customer profile. You can change it anytime.'}
+            </p>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!newOwnerPin || newOwnerPin.length < 4) {
+                  soundManager.playWarning();
+                  setPinUpdateMsg(language === 'hi' ? 'पिन कम से कम 4 अंकों का होना चाहिए!' : 'PIN must be at least 4 digits!');
+                  return;
+                }
+                soundManager.playSuccessCoin();
+                onUpdateConfig({
+                  ...appOwnerConfig,
+                  ownerSecurityPin: newOwnerPin
+                });
+                try {
+                  safeStorage.setItem('smart_india_owner_pin', newOwnerPin);
+                } catch {}
+                setPinUpdateMsg(language === 'hi' ? '✓ नया पिन सफलतापूर्वक सेव हो गया!' : '✓ PIN updated successfully!');
+                setNewOwnerPin('');
+                setTimeout(() => setPinUpdateMsg(null), 3000);
+              }}
+              className="space-y-2.5 pt-1"
+            >
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={newOwnerPin}
+                  onChange={(e) => {
+                    setPinUpdateMsg(null);
+                    setNewOwnerPin(e.target.value);
+                  }}
+                  placeholder={language === 'hi' ? 'नया 4-अंकों का पिन डालें' : 'Enter new 4-digit PIN'}
+                  className="flex-1 bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none"
+                  required
+                />
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs shadow-md transition-all whitespace-nowrap active:scale-95"
+                >
+                  {language === 'hi' ? 'पिन बदलें' : 'Save PIN'}
+                </button>
+              </div>
+
+              {pinUpdateMsg && (
+                <p className={`text-[11px] font-bold ${pinUpdateMsg.startsWith('✓') ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {pinUpdateMsg}
+                </p>
+              )}
+            </form>
+          </div>
+
           {/* Registered Bank Account Info Card */}
           <div className="bg-slate-900/90 border border-purple-500/30 rounded-2xl p-5 shadow-xl space-y-4">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -1536,6 +1612,7 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
         </div>
 
         {/* Layout Switcher: Mobile Phone App vs Full Dashboard */}
+        <div className="flex items-center gap-2">
           {onNavigateToView && (
             <button
               onClick={() => {

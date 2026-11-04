@@ -1942,6 +1942,7 @@ export const DEFAULT_APP_OWNER_CONFIG: AppOwnerPaymentConfig = {
   perJobFeeRupees: 10, // Har ek kaam ke ₹10 flat to app owner
   commissionRatePercent: 0, // 0% commission (Strictly flat ₹10 per lead)
   autoDeductFromWallet: true,
+  ownerSecurityPin: '1234',
   totalWithdrawnToBank: 400,
   payoutHistory: [
     {
