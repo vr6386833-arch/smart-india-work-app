@@ -22,31 +22,27 @@ android {
 
     signingConfigs {
         release {
-            storeFile file('release.keystore')
-            storePassword 'smartindiawork'
-            keyAlias 'releasekey'
-            keyPassword 'smartindiawork'
-            v1SigningEnabled true
-            v2SigningEnabled true
-        }
-        debug {
-            storeFile file('release.keystore')
-            storePassword 'smartindiawork'
-            keyAlias 'releasekey'
-            keyPassword 'smartindiawork'
-            v1SigningEnabled true
-            v2SigningEnabled true
+            if (file('release.keystore').exists()) {
+                storeFile file('release.keystore')
+                storePassword 'smartindiawork'
+                keyAlias 'releasekey'
+                keyPassword 'smartindiawork'
+                v1SigningEnabled true
+                v2SigningEnabled true
+            }
         }
     }
 
     buildTypes {
         release {
-            signingConfig signingConfigs.release
+            if (file('release.keystore').exists()) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
         debug {
-            signingConfig signingConfigs.debug
+            // Built-in debug signing ensures debug build never fails
         }
     }
 
