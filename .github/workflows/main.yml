@@ -39,11 +39,11 @@ jobs:
           cp -rf dist/* android/app/src/main/assets/public/
           cp -f capacitor.config.json android/app/src/main/assets/capacitor.config.json 2>/dev/null || true
 
-      - name: Setup Java JDK 21
+      - name: Setup Java JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '17'
 
       - name: Setup Android Release & Debug Keystores
         run: |
@@ -58,7 +58,7 @@ jobs:
           fi
           if [ ! -f android/app/release.keystore ]; then
             echo "Generating fresh release keystore..."
-            keytool -genkeypair -v -keystore android/app/release.keystore -storepass smartindiawork -alias releasekey -keypass smartindiawork -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Smart India Work, O=Smart India Work, C=IN" -noprompt
+            keytool -genkeypair -v -keystore android/app/release.keystore -storepass smartindiawork -alias releasekey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Smart India Work, O=Smart India Work, C=IN" -noprompt
           fi
           chmod 644 android/app/release.keystore
           cp -f android/app/release.keystore android/app/debug.keystore || true

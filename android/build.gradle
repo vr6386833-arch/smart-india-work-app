@@ -20,22 +20,6 @@ allprojects {
     }
 }
 
-subprojects {
-    afterEvaluate { project ->
-        if (project.plugins.hasPlugin("com.android.application") || project.plugins.hasPlugin("com.android.library")) {
-            try {
-                project.android {
-                    lint {
-                        abortOnError = false
-                        checkReleaseBuilds = false
-                        checkDependencies = false
-                    }
-                }
-            } catch (Exception ignored) {}
-        }
-    }
-}
-
 tasks.register('clean', Delete) {
     delete rootProject.layout.buildDirectory
 }
