@@ -11,6 +11,9 @@ permissions:
 jobs:
   build-android:
     runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -66,28 +69,33 @@ jobs:
 
       - name: Setup Android SDK and Local Properties
         run: |
-          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+          SDK_DIR="/usr/local/lib/android/sdk"
+          echo "Using Android SDK at: $SDK_DIR"
+          echo "sdk.dir=$SDK_DIR" > android/local.properties
           cat android/local.properties
-          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools" || true
+          yes | $SDK_DIR/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          $SDK_DIR/cmdline-tools/latest/bin/sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools" || true
 
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
       - name: Build Android AAB and APK (Play Store & Direct Install)
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
         run: |
           cd android
           chmod +x gradlew
           ./gradlew clean --no-daemon
           # 1. Build Direct Install Release APK targeting :app module specifically
           echo "=== 1. Building Direct Install Release APK (:app:assembleRelease) ==="
-          ./gradlew :app:assembleRelease -x lint -x test -x lintVitalAnalyzeRelease -x lintVitalReportRelease --stacktrace --no-daemon || {
+          ./gradlew :app:assembleRelease -x lint -x test -x lintVitalAnalyzeRelease -x lintVitalReportRelease --no-daemon || {
             echo "Release APK build failed, attempting debug APK build..."
-            ./gradlew :app:assembleDebug -x lint -x test --stacktrace --no-daemon
+            ./gradlew :app:assembleDebug -x lint -x test --no-daemon
           }
-          # 2. Build Google Play Store AAB Bundle targeting :app module (libraries don't have bundleRelease)
+          # 2. Build Google Play Store AAB Bundle targeting :app module
           echo "=== 2. Building Google Play Store AAB (:app:bundleRelease) ==="
-          ./gradlew :app:bundleRelease -x lint -x test -x lintVitalAnalyzeRelease -x lintVitalReportRelease --stacktrace --no-daemon || true
+          ./gradlew :app:bundleRelease -x lint -x test -x lintVitalAnalyzeRelease -x lintVitalReportRelease --no-daemon || true
 
       - name: Prepare Release Artifacts & Verify APK Signature
         run: |
