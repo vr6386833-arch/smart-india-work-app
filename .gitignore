@@ -6,3 +6,15 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# AI Studio chat attachments (115MB+ of chat screenshots that exceed GitHub API limits)
+public/assets/aistudio/
+*.zip
+
+# Android build outputs and local config
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/capacitor-cordova-android-plugins/build/
+

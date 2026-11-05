@@ -77,14 +77,17 @@ jobs:
       - name: Build Android AAB and APK (Play Store & Direct Install)
         run: |
           cd android
+          chmod +x gradlew
           ./gradlew clean --no-daemon
-          # 1. Build Direct Install Release APK (Sequential execution guarantees valid task inputs)
-          ./gradlew assembleRelease -x lint -x test --stacktrace --no-daemon || {
-            echo "Fallback to debug APK build..."
-            ./gradlew assembleDebug -x lint -x test --stacktrace --no-daemon || true
+          # 1. Build Direct Install Release APK targeting :app module specifically
+          echo "=== 1. Building Direct Install Release APK (:app:assembleRelease) ==="
+          ./gradlew :app:assembleRelease -x lint -x test -x lintVitalAnalyzeRelease -x lintVitalReportRelease --stacktrace --no-daemon || {
+            echo "Release APK build failed, attempting debug APK build..."
+            ./gradlew :app:assembleDebug -x lint -x test --stacktrace --no-daemon
           }
-          # 2. Build Google Play Store AAB Bundle
-          ./gradlew bundleRelease -x lint -x test --stacktrace --no-daemon || true
+          # 2. Build Google Play Store AAB Bundle targeting :app module (libraries don't have bundleRelease)
+          echo "=== 2. Building Google Play Store AAB (:app:bundleRelease) ==="
+          ./gradlew :app:bundleRelease -x lint -x test -x lintVitalAnalyzeRelease -x lintVitalReportRelease --stacktrace --no-daemon || true
 
       - name: Prepare Release Artifacts & Verify APK Signature
         run: |
@@ -92,56 +95,74 @@ jobs:
           # Find and copy generated AAB
           find android/app/build/outputs/bundle -name "*.aab" -exec cp -vf {} release-output/SmartIndiaWork-PlayStore.aab \; || true
           # Find and copy generated Release APK
-          find android/app/build/outputs/apk/release -name "*.apk" -exec cp -vf {} release-output/SmartIndiaWork-DirectInstall.apk \; || true
-          # Fallback if release apk name pattern differed
-          if [ ! -f release-output/SmartIndiaWork-DirectInstall.apk ]; then
-            find android/app/build/outputs/apk -name "*release*.apk" -exec cp -vf {} release-output/SmartIndiaWork-DirectInstall.apk \; || true
-          fi
+          find android/app/build/outputs/apk -name "*release*.apk" -exec cp -vf {} release-output/SmartIndiaWork-DirectInstall.apk \; || true
+          # Fallback to any generated APK
           if [ ! -f release-output/SmartIndiaWork-DirectInstall.apk ]; then
             find android/app/build/outputs/apk -name "*.apk" -exec cp -vf {} release-output/SmartIndiaWork-DirectInstall.apk \; || true
           fi
+
+          # Fail step if APK was not generated so it is never hidden
+          if [ ! -f release-output/SmartIndiaWork-DirectInstall.apk ]; then
+            echo "❌ CRITICAL ERROR: No APK file was found in android/app/build/outputs/apk!"
+            echo "Listing build output directory contents:"
+            find android/app/build -maxdepth 4 || true
+            exit 1
+          fi
+
+          echo "✅ Found valid APK at release-output/SmartIndiaWork-DirectInstall.apk"
+
           # Also copy Debug APK if present
           find android/app/build/outputs/apk/debug -name "*.apk" -exec cp -vf {} release-output/SmartIndiaWork-Debug.apk \; || true
 
           # Guarantee v1 + v2 APK signature so installation never fails on any mobile device
-          if [ -f release-output/SmartIndiaWork-DirectInstall.apk ]; then
-            BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
-            echo "Using Android Build Tools at: $BUILD_TOOLS_DIR"
-            $BUILD_TOOLS_DIR/apksigner sign --ks android/app/release.keystore --ks-pass pass:smartindiawork --ks-key-alias releasekey --key-pass pass:smartindiawork --v1-signing-enabled true --v2-signing-enabled true release-output/SmartIndiaWork-DirectInstall.apk || true
-            echo "=== Verifying APK Signature ==="
-            $BUILD_TOOLS_DIR/apksigner verify --verbose release-output/SmartIndiaWork-DirectInstall.apk || true
-          fi
+          BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
+          echo "Using Android Build Tools at: $BUILD_TOOLS_DIR"
+          $BUILD_TOOLS_DIR/apksigner sign --ks android/app/release.keystore --ks-pass pass:smartindiawork --ks-key-alias releasekey --key-pass pass:smartindiawork --v1-signing-enabled true --v2-signing-enabled true release-output/SmartIndiaWork-DirectInstall.apk || true
+          echo "=== Verifying APK Signature ==="
+          $BUILD_TOOLS_DIR/apksigner verify --verbose release-output/SmartIndiaWork-DirectInstall.apk || true
 
           echo "=== Files ready in release-output ==="
           ls -lh release-output/
 
-      - name: Upload AAB (Google Play Store Bundle)
-        uses: actions/upload-artifact@v4
-        with:
-          name: SmartIndiaWork-PlayStore-AAB
-          path: release-output/SmartIndiaWork-PlayStore.aab
-          if-no-files-found: warn
-
       - name: Upload APK (Direct Mobile Install)
         uses: actions/upload-artifact@v4
         with:
-          name: SmartIndiaWork-APK
+          name: SmartIndiaWork-APK-v1.1
           path: release-output/SmartIndiaWork-DirectInstall.apk
+          if-no-files-found: error
+
+      - name: Upload AAB (Google Play Store Bundle)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: SmartIndiaWork-PlayStore-AAB-v1.1
+          path: release-output/SmartIndiaWork-PlayStore.aab
           if-no-files-found: warn
 
       - name: Publish Direct Release (Play Store AAB & APK)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest-release
-          name: "Smart India Work - Play Store Ready AAB & APK"
+          tag_name: v1.1
+          name: "Smart India Work v1.1 (Production Release)"
           body: |
-            ## Smart India Work - Production Release
-            - **Google Play Store**: `SmartIndiaWork-PlayStore.aab`
-            - **Direct Phone Install**: `SmartIndiaWork-DirectInstall.apk`
+            ## 🇮🇳 Smart India Work - Production Release v1.1
+            
+            ✅ **Play Store Ready AAB & Direct Install APK Updated**
+            
+            ### 📱 Direct Downloads:
+            - **Direct Phone Install (APK)**: `SmartIndiaWork-DirectInstall.apk` (Recommended - instant install on Android phone)
+            - **Google Play Store (AAB)**: `SmartIndiaWork-PlayStore.aab`
+            
+            ### 🌟 Features in v1.1:
+            - 🌟 3D Golden App Icon & High-Resolution Adaptive Icons
+            - 🔒 Secured Owner Portal (Protected with 4-digit PIN)
+            - 📱 Clean Mobile UI with instant service booking & direct call support
+            - 🚀 Full offline caching & optimized performance
           draft: false
           prerelease: false
+          make_latest: true
           files: |
-            release-output/SmartIndiaWork-PlayStore.aab
             release-output/SmartIndiaWork-DirectInstall.apk
+            release-output/SmartIndiaWork-PlayStore.aab
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
