@@ -18,6 +18,15 @@ allprojects {
         google()
         mavenCentral()
     }
+    configurations.all {
+        resolutionStrategy {
+            eachDependency { DependencyResolveDetails details ->
+                if (details.requested.group == 'org.jetbrains.kotlin' && details.requested.name.startsWith('kotlin-stdlib-jdk')) {
+                    details.useTarget("org.jetbrains.kotlin:kotlin-stdlib:${details.requested.version}")
+                }
+            }
+        }
+    }
 }
 
 tasks.register('clean', Delete) {
