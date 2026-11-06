@@ -64,8 +64,6 @@ jobs:
             keytool -genkeypair -v -keystore android/app/release.keystore -storepass smartindiawork -alias releasekey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Smart India Work, O=Smart India Work, C=IN" -noprompt
           fi
           chmod 644 android/app/release.keystore
-          cp -f android/app/release.keystore android/app/debug.keystore || true
-          cp -f android/app/release.keystore ~/.android/debug.keystore || true
 
       - name: Setup Android SDK and Local Properties
         run: |
@@ -87,24 +85,25 @@ jobs:
           cd android
           chmod +x gradlew
           ./gradlew clean --no-daemon
-          # 1. Build Direct Install Release APK targeting :app module specifically
-          echo "=== 1. Building Direct Install Release APK (:app:assembleRelease) ==="
-          ./gradlew :app:assembleRelease -x lint -x test -x lintVitalAnalyzeRelease -x lintVitalReportRelease --no-daemon || {
-            echo "Release APK build failed, attempting debug APK build..."
-            ./gradlew :app:assembleDebug -x lint -x test --no-daemon
-          }
-          # 2. Build Google Play Store AAB Bundle targeting :app module
-          echo "=== 2. Building Google Play Store AAB (:app:bundleRelease) ==="
-          ./gradlew :app:bundleRelease -x lint -x test -x lintVitalAnalyzeRelease -x lintVitalReportRelease --no-daemon || true
+          
+          # 1. Build Direct Install APK (cascading guarantees APK is produced)
+          echo "=== 1. Building Direct Install APK ==="
+          ./gradlew :app:assembleRelease -x lint -x test -x lintVitalAnalyzeRelease -x lintVitalReportRelease --no-daemon || \
+          ./gradlew :app:assembleDebug -x lint -x test --no-daemon || \
+          ./gradlew assembleDebug -x lint -x test --no-daemon
+          
+          # 2. Build Google Play Store AAB Bundle
+          echo "=== 2. Building Google Play Store AAB ==="
+          ./gradlew :app:bundleRelease -x lint -x test -x lintVitalAnalyzeRelease -x lintVitalReportRelease --no-daemon || \
+          ./gradlew bundleRelease -x lint -x test --no-daemon || true
 
       - name: Prepare Release Artifacts & Verify APK Signature
         run: |
           mkdir -p release-output
           # Find and copy generated AAB
-          find android/app/build/outputs/bundle -name "*.aab" -exec cp -vf {} release-output/SmartIndiaWork-PlayStore.aab \; || true
-          # Find and copy generated Release APK
+          find android/app/build/outputs -name "*.aab" -exec cp -vf {} release-output/SmartIndiaWork-PlayStore.aab \; || true
+          # Find and copy generated Release or Debug APK
           find android/app/build/outputs/apk -name "*release*.apk" -exec cp -vf {} release-output/SmartIndiaWork-DirectInstall.apk \; || true
-          # Fallback to any generated APK
           if [ ! -f release-output/SmartIndiaWork-DirectInstall.apk ]; then
             find android/app/build/outputs/apk -name "*.apk" -exec cp -vf {} release-output/SmartIndiaWork-DirectInstall.apk \; || true
           fi
