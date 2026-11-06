@@ -40,15 +40,9 @@ interface GlobalAuthModalProps {
 const GOOGLE_ACCOUNTS = [
   {
     email: 'vr6386833@gmail.com',
-    name: 'Vipin Rajput',
+    name: 'Vipin Rajput (Owner & Customer)',
     avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80',
     locality: 'Sector 62, Noida'
-  },
-  {
-    email: 'priya.sharma@gmail.com',
-    name: 'Priya Sharma',
-    avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=400&q=80',
-    locality: 'Sector 44, Noida'
   },
   {
     email: 'rajesh.mehta@gmail.com',

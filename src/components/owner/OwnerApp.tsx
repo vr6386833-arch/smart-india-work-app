@@ -749,7 +749,7 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
             {[
               {
                 time: 'Just now',
-                user: 'Priya Sharma (Noida Sector 44)',
+                user: 'Vipin Rajput (Noida Sector 62)',
                 role: 'Customer',
                 action: 'Opened app and searched for Electrician & AC Technician',
                 tag: 'App Opened'

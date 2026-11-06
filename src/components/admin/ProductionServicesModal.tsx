@@ -121,7 +121,7 @@ export const ProductionServicesModal: React.FC<ProductionServicesModalProps> = (
     soundManager.playTap();
 
     await PushNotificationService.triggerJobPushAlert({
-      customerName: 'Priya Verma',
+      customerName: 'Vipin Rajput',
       category: worker.category,
       locality: 'Indirapuram, Ghaziabad',
       amount: worker.dailyRate,

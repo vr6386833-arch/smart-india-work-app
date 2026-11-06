@@ -60,10 +60,10 @@ export const BackendFlutterStudio: React.FC = () => {
             bookingId: "BK_9081",
             status: "otp_verified",
             customerDetails: {
-              fullName: "Priya Sharma",
-              phone: "+91 98711 00223",
-              unmaskedAddress: "Flat 704, Tower B, Express Green Apartments, Sector 44, Noida - 201301",
-              location: { lat: 28.5630, lng: 77.3380 }
+              fullName: "Vipin Rajput",
+              phone: "+91 98765 43210",
+              unmaskedAddress: "Sector 62, Noida, Uttar Pradesh - 201309",
+              location: { lat: 28.6280, lng: 77.3649 }
             },
             walletTransaction: {
               transactionId: "TX_LEAD_849201",

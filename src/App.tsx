@@ -97,13 +97,26 @@ export default function App() {
     PushNotificationService.init();
     IndexedDbSyncService.init();
 
-    // Purge legacy demo booking cache from previous builds
+    // Purge legacy demo booking cache and scrub any Priya Sharma mentions from previous builds
     try {
       safeStorage.removeItem('smart_india_active_booking');
       const saved = safeStorage.getItem('smart_india_active_booking_v2');
-      if (saved && (saved.includes('BK_9081') || saved.includes('Rameshwar'))) {
+      if (saved && (saved.includes('BK_9081') || saved.includes('Rameshwar') || saved.includes('Priya'))) {
         safeStorage.removeItem('smart_india_active_booking_v2');
         setActiveBooking(null);
+      }
+      const savedJobs = safeStorage.getItem('smart_india_jobs_v2');
+      if (savedJobs && savedJobs.includes('Priya')) {
+        const cleanedJobs = savedJobs
+          .replaceAll('Priya Sharma (Site Owner)', 'Vipin Rajput (Site Owner)')
+          .replaceAll('Priya Sharma', 'Vipin Rajput')
+          .replaceAll('+91 98711 00223', '+91 98765 43210')
+          .replaceAll('Sector 44, Noida', 'Sector 62, Noida');
+        safeStorage.setItem('smart_india_jobs_v2', cleanedJobs);
+      }
+      const savedNotifs = safeStorage.getItem('smart_india_worker_notifs_v2');
+      if (savedNotifs && savedNotifs.includes('Priya')) {
+        safeStorage.removeItem('smart_india_worker_notifs_v2');
       }
     } catch {}
 
@@ -202,7 +215,15 @@ export default function App() {
       const saved = safeStorage.getItem('smart_india_jobs_v2');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((j: JobPost) => ({
+            ...j,
+            customerName: j.customerName?.includes('Priya') ? 'Vipin Rajput' : j.customerName,
+            customerPhone: j.customerPhone === '+91 98711 00223' ? '+91 98765 43210' : j.customerPhone,
+            customerAddress: j.customerAddress?.includes('Express Green') ? 'Sector 62, Noida, Uttar Pradesh - 201309' : j.customerAddress,
+            customerLocality: j.customerLocality?.includes('Sector 44') ? 'Sector 62, Noida' : j.customerLocality,
+          }));
+        }
       }
     } catch (e) {
       console.warn('Failed to parse local jobs', e);
@@ -216,7 +237,7 @@ export default function App() {
       const saved = safeStorage.getItem('smart_india_active_booking_v2');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed?.id === 'BK_9081' || parsed?.workerName?.includes('Rameshwar') || (parsed?.customerId === 'c1' && parsed?.workerId === 'w1')) {
+        if (parsed?.id === 'BK_9081' || parsed?.customerName?.includes('Priya') || parsed?.workerName?.includes('Rameshwar') || (parsed?.customerId === 'c1' && parsed?.workerId === 'w1')) {
           safeStorage.removeItem('smart_india_active_booking_v2');
           return null;
         }
@@ -235,7 +256,13 @@ export default function App() {
   const [workerNotifications, setWorkerNotifications] = useState<WorkerNotification[]>(() => {
     try {
       const saved = safeStorage.getItem('smart_india_worker_notifs_v2');
-      return saved ? JSON.parse(saved) : [];
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((n: WorkerNotification) => !n.customerName?.includes('Priya') && !n.title?.includes('Priya') && !n.message?.includes('Priya'));
+        }
+      }
+      return [];
     } catch {
       return [];
     }
@@ -322,25 +349,8 @@ export default function App() {
     setWorkerJobRecords(updated);
   };
   
-  // Real-time synced chat stream
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    {
-      id: 'm1',
-      bookingId: 'BK_9081',
-      senderRole: 'worker',
-      senderName: 'Rameshwar Kumar',
-      text: 'Namaste Priya ji, I have accepted your job and am on motorcycle coming towards Sector 44.',
-      timestamp: '10:40 AM'
-    },
-    {
-      id: 'm2',
-      bookingId: 'BK_9081',
-      senderRole: 'customer',
-      senderName: 'Priya Sharma',
-      text: 'Great, please come to Tower B, 7th floor. I have the arrival OTP ready for you.',
-      timestamp: '10:42 AM'
-    }
-  ]);
+  // Real-time synced chat stream (starts fresh for active real bookings)
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   // 1. Post a new Job Broadcast Requirement (Smart Trade-Targeted Routing)
   const handlePostJob = (newJobData: Partial<JobPost>) => {
