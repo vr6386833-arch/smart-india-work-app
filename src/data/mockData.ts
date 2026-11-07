@@ -14,9 +14,9 @@ export const CATEGORIES: Category[] = [
     subcategoriesHi: ['ईंट चिनाई', 'प्लास्टर', 'नींव का काम', 'बाउंड्री वॉल', 'मरम्मत व नवीनीकरण'],
     basePriceEstimate: '₹850 - ₹1200 / day',
     popular: true,
-    imageUrl: 'https://images.unsplash.com/photo-1541888946425-d0fbb18086f6?auto=format&fit=crop&w=600&q=80',
+    imageUrl: 'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=600&q=80',
     workPhotos: [
-      'https://images.unsplash.com/photo-1541888946425-d0fbb18086f6?auto=format&fit=crop&w=800&q=80',
+      'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80',
       'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?auto=format&fit=crop&w=800&q=80',
       'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80'
     ]
@@ -65,9 +65,9 @@ export const CATEGORIES: Category[] = [
     ],
     basePriceEstimate: '₹850 - ₹1,200 / day or ₹4 - ₹7 / sq.ft',
     popular: true,
-    imageUrl: 'https://images.unsplash.com/photo-1541888946425-d0fbb18086f6?auto=format&fit=crop&w=600&q=80',
+    imageUrl: 'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=600&q=80',
     workPhotos: [
-      'https://images.unsplash.com/photo-1541888946425-d0fbb18086f6?auto=format&fit=crop&w=800&q=80',
+      'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80',
       'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?auto=format&fit=crop&w=800&q=80',
       'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=800&q=80'
     ]
@@ -115,7 +115,7 @@ export const CATEGORIES: Category[] = [
     imageUrl: 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=600&q=80',
     workPhotos: [
       'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=800&q=80',
-      'https://images.unsplash.com/photo-1541888946425-d0fbb18086f6?auto=format&fit=crop&w=800&q=80',
+      'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80',
       'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?auto=format&fit=crop&w=800&q=80'
     ]
   },
@@ -130,9 +130,9 @@ export const CATEGORIES: Category[] = [
     subcategories: ['Main Gate & Grill Welding', 'Iron Shed Construction', 'Railing Installation', 'Arc & Gas Repair'],
     subcategoriesHi: ['मेन गेट व ग्रिल', 'टीन शेड निर्माण', 'सीढ़ी रेलिंग', 'आर्क व गैस वेल्डिंग'],
     basePriceEstimate: '₹450 / visit or ₹900 / day',
-    imageUrl: 'https://images.unsplash.com/photo-1504917599217-d4dc5ebe6122?auto=format&fit=crop&w=600&q=80',
+    imageUrl: 'https://images.unsplash.com/photo-1504328345606-18bbc8c9d7d1?auto=format&fit=crop&w=600&q=80',
     workPhotos: [
-      'https://images.unsplash.com/photo-1504917599217-d4dc5ebe6122?auto=format&fit=crop&w=800&q=80'
+      'https://images.unsplash.com/photo-1504328345606-18bbc8c9d7d1?auto=format&fit=crop&w=800&q=80'
     ]
   },
   {
@@ -371,9 +371,9 @@ export const CATEGORIES: Category[] = [
     subcategoriesHi: ['मेम्ब्रेन व फिल्टर बदलाव', 'बूस्टर पंप रिपेयर', 'कम पानी बहाव ठीक करें', 'नया आरओ इंस्टॉलेशन'],
     basePriceEstimate: '₹249 inspection',
     popular: true,
-    imageUrl: 'https://images.unsplash.com/photo-1548839140-29a749e1bc4e?auto=format&fit=crop&w=600&q=80',
+    imageUrl: 'https://images.unsplash.com/photo-1585837575652-267c041d77d4?auto=format&fit=crop&w=600&q=80',
     workPhotos: [
-      'https://images.unsplash.com/photo-1548839140-29a749e1bc4e?auto=format&fit=crop&w=800&q=80'
+      'https://images.unsplash.com/photo-1585837575652-267c041d77d4?auto=format&fit=crop&w=800&q=80'
     ]
   },
   {
@@ -643,9 +643,9 @@ export const CATEGORIES: Category[] = [
     subcategories: ['Overhead Sintex Tank High Pressure Wash', 'Underground RCC Sump Sludge Vacuum', 'Anti-Bacterial UV & Chlorine Sanitization'],
     subcategoriesHi: ['छत सिंटेक्स टंकी प्रेशर वॉश', 'अंडरग्राउंड हौद कीचड़ वैक्यूम', 'एंटी-बैक्टीरियल यूवी सैनिटाइज'],
     basePriceEstimate: '₹399 - ₹899 / tank',
-    imageUrl: 'https://images.unsplash.com/photo-1548839140-29a749e1bc4e?auto=format&fit=crop&w=600&q=80',
+    imageUrl: 'https://images.unsplash.com/photo-1585837575652-267c041d77d4?auto=format&fit=crop&w=600&q=80',
     workPhotos: [
-      'https://images.unsplash.com/photo-1548839140-29a749e1bc4e?auto=format&fit=crop&w=800&q=80'
+      'https://images.unsplash.com/photo-1585837575652-267c041d77d4?auto=format&fit=crop&w=800&q=80'
     ]
   },
   {
@@ -758,9 +758,9 @@ export const CATEGORIES: Category[] = [
     subcategories: ['Rooftop Solar Glass Dust Soft Wash', 'Inverter Generation Check & MC4 Wiring', 'Solar Battery Distilled Water Refill'],
     subcategoriesHi: ['रूफटॉप सोलर पैनल सॉफ्ट वॉश', 'इन्वर्टर व जनरेशन जांच', 'सोलर बैटरी डिस्टिल्ड वाटर टॉपअप'],
     basePriceEstimate: '₹299 - ₹699',
-    imageUrl: 'https://images.unsplash.com/photo-1508873696983-2df5293cb32f?auto=format&fit=crop&w=600&q=80',
+    imageUrl: 'https://images.unsplash.com/photo-1559302504-64aae6ca6b6d?auto=format&fit=crop&w=600&q=80',
     workPhotos: [
-      'https://images.unsplash.com/photo-1508873696983-2df5293cb32f?auto=format&fit=crop&w=800&q=80'
+      'https://images.unsplash.com/photo-1559302504-64aae6ca6b6d?auto=format&fit=crop&w=800&q=80'
     ]
   },
   {
@@ -819,7 +819,7 @@ export const INITIAL_WORKERS: WorkerProfile[] = [
     nameHi: 'बृजेश यादव (छत ढलाई मशीन व लिफ्ट ऑपरेटर)',
     age: 41,
     phone: '+91 98114 77881',
-    avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=400&q=80',
+    avatar: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=400&q=80',
     rating: 4.96,
     reviewsCount: 215,
     experienceYears: 15,
@@ -856,7 +856,7 @@ export const INITIAL_WORKERS: WorkerProfile[] = [
       {
         id: 'pd2',
         title: 'Heavy Column & Raft Footing Casting',
-        imageUrl: 'https://images.unsplash.com/photo-1541888946425-d0fbb18086f6?auto=format&fit=crop&w=600&q=80',
+        imageUrl: 'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=600&q=80',
         description: 'M25 design mix foundation casting using mobile diesel mixer and hopper trolley.',
         tag: 'कंक्रीट मिक्सर',
       }
@@ -906,7 +906,7 @@ export const INITIAL_WORKERS: WorkerProfile[] = [
       {
         id: 'pse2',
         title: 'Apartment Main Latrine Drainage Line De-choking',
-        imageUrl: 'https://images.unsplash.com/photo-1584622650111-993a426fbf0a?auto=format&fit=crop&w=600&q=80',
+        imageUrl: 'https://images.unsplash.com/photo-1607472586893-edb57bdc0e39?auto=format&fit=crop&w=600&q=80',
         description: 'High pressure water jetting cleared jammed 6-inch underground sewer chamber line without breaking tiles.',
         tag: 'पाइपलाइन जेटिंग',
       }
@@ -950,7 +950,7 @@ export const INITIAL_WORKERS: WorkerProfile[] = [
       {
         id: 'ps1',
         title: '2400 sq.ft Double Mesh Roof Slab Sariya Jaal',
-        imageUrl: 'https://images.unsplash.com/photo-1541888946425-d0fbb18086f6?auto=format&fit=crop&w=600&q=80',
+        imageUrl: 'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=600&q=80',
         description: 'Complete 10mm & 8mm Fe550D TMT bar double jaal binding with beam cages and cover blocks ready for RMC pouring.',
         tag: 'छत सरिया जाल',
       },
@@ -1126,7 +1126,7 @@ export const INITIAL_WORKERS: WorkerProfile[] = [
     nameHi: 'रामेश्वर "रमेश" कुमार',
     age: 34,
     phone: '+91 98765 43210',
-    avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=400&q=80',
+    avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=400&q=80',
     rating: 4.88,
     reviewsCount: 142,
     experienceYears: 9,
@@ -1158,7 +1158,7 @@ export const INITIAL_WORKERS: WorkerProfile[] = [
       {
         id: 'p2',
         title: 'Boundary Wall & Pillar Foundation',
-        imageUrl: 'https://images.unsplash.com/photo-1541888946425-d0fbb18086f6?auto=format&fit=crop&w=600&q=80',
+        imageUrl: 'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=600&q=80',
         description: '9-inch reinforced boundary wall with RCC column tie-in.',
         tag: 'Brickwork',
       }
@@ -1653,7 +1653,7 @@ export const INITIAL_JOBS: JobPost[] = [
     urgency: 'urgent',
     photos: [
       'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=800&q=80',
-      'https://images.unsplash.com/photo-1541888946425-d0fbb18086f6?auto=format&fit=crop&w=800&q=80'
+      'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80'
     ],
     createdAt: '5 mins ago',
     status: 'open',
@@ -1692,7 +1692,7 @@ export const INITIAL_JOBS: JobPost[] = [
     budget: 9500,
     urgency: 'urgent',
     photos: [
-      'https://images.unsplash.com/photo-1541888946425-d0fbb18086f6?auto=format&fit=crop&w=800&q=80',
+      'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80',
       'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?auto=format&fit=crop&w=800&q=80',
       'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=800&q=80'
     ],
@@ -1774,7 +1774,7 @@ export const INITIAL_JOBS: JobPost[] = [
     urgency: 'urgent',
     photos: [
       'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80',
-      'https://images.unsplash.com/photo-1541888946425-d0fbb18086f6?auto=format&fit=crop&w=800&q=80'
+      'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80'
     ],
     createdAt: '15 mins ago',
     status: 'open',
@@ -1852,7 +1852,7 @@ export const INITIAL_BOOKING: Booking = {
   workerId: 'w1',
   workerName: 'Rameshwar "Ramesh" Kumar',
   workerPhone: '+91 98765 43210',
-  workerAvatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=400&q=80',
+  workerAvatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=400&q=80',
   workerRating: 4.88,
   serviceCategory: 'Mistry (Mason / राजमिस्त्री)',
   serviceSubCategory: 'Plastering & Water Leakage Fix',
@@ -1869,7 +1869,7 @@ export const INITIAL_BOOKING: Booking = {
   workerLocationProgress: 45, // 45% towards destination
   jobPhotos: [
     'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80',
-    'https://images.unsplash.com/photo-1541888946425-d0fbb18086f6?auto=format&fit=crop&w=800&q=80'
+    'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80'
   ],
   completedWorkPhotos: [
     'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?auto=format&fit=crop&w=800&q=80'

@@ -1406,6 +1406,8 @@ export default function App() {
                   onCreateSupportTicket={handleCreateSupportTicket}
                   onUpdateBookingProgress={handleUpdateBookingProgress}
                   onWorkerArrived={handleReachLocation}
+                  onVerifyOtp={() => handleVerifyOtp()}
+                  onCompleteJob={() => handleCompleteJob()}
                   onOpenReviews={(w) => {
                     setSelectedReviewWorker(w);
                     setIsReviewsModalOpen(true);
@@ -1519,6 +1521,8 @@ export default function App() {
               onCreateSupportTicket={handleCreateSupportTicket}
               onUpdateBookingProgress={handleUpdateBookingProgress}
               onWorkerArrived={handleReachLocation}
+              onVerifyOtp={() => handleVerifyOtp()}
+              onCompleteJob={() => handleCompleteJob()}
               onOpenReviews={(w) => {
                 setSelectedReviewWorker(w);
                 setIsReviewsModalOpen(true);

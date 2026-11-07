@@ -238,7 +238,10 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
   return (
     <div className="flex-1 flex flex-col h-full bg-slate-950 text-slate-100 overflow-hidden select-none">
       {/* Top Worker App Bar */}
-      <div className="bg-slate-900/90 border-b border-slate-800/80 px-4 pt-3.5 pb-2.5 flex items-center justify-between z-10 shrink-0">
+      <div 
+        className="bg-slate-900/90 border-b border-slate-800/80 px-4 pt-9 sm:pt-3.5 pb-2.5 flex items-center justify-between z-10 shrink-0"
+        style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), 2.25rem)' }}
+      >
         <div 
           onClick={() => {
             soundManager.playTap();

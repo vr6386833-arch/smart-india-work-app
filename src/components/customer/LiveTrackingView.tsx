@@ -20,7 +20,9 @@ import {
   Sparkles,
   UserCheck,
   FileCheck,
-  CheckCircle
+  CheckCircle,
+  HardHat,
+  Navigation
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Booking, Language } from '../../types';
@@ -35,6 +37,9 @@ interface LiveTrackingViewProps {
   onProgressChange?: (progress: number) => void;
   onWorkerArrived?: () => void;
   onTriggerSos?: () => void;
+  onSwitchToWorker?: () => void;
+  onVerifyOtpDirect?: () => void;
+  onCompleteJobDirect?: () => void;
 }
 
 export const LiveTrackingView: React.FC<LiveTrackingViewProps> = ({
@@ -46,6 +51,9 @@ export const LiveTrackingView: React.FC<LiveTrackingViewProps> = ({
   onProgressChange,
   onWorkerArrived,
   onTriggerSos,
+  onSwitchToWorker,
+  onVerifyOtpDirect,
+  onCompleteJobDirect,
 }) => {
   const [showQrForCustomer, setShowQrForCustomer] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
@@ -271,6 +279,100 @@ export const LiveTrackingView: React.FC<LiveTrackingViewProps> = ({
                 </span>
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* 4b. Interactive Real Live Action Controller */}
+        <div className="bg-gradient-to-r from-blue-950/80 via-slate-900 to-indigo-950/80 rounded-2xl p-4 border border-blue-500/40 shadow-lg space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+              <span className="text-xs font-bold text-white uppercase tracking-wider">
+                {language === 'hi' ? 'लाइव कार्य संचालन (Live Actions)' : 'Live Action Controller'}
+              </span>
+            </div>
+            {onSwitchToWorker && (
+              <button
+                type="button"
+                onClick={() => {
+                  soundManager.playTap();
+                  onSwitchToWorker();
+                }}
+                className="px-2.5 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] flex items-center gap-1 shadow-sm transition-all"
+                title={language === 'hi' ? 'कारीगर ऐप में यह बुकिंग देखें' : 'View in Worker App'}
+              >
+                <HardHat className="w-3.5 h-3.5" />
+                <span>{language === 'hi' ? '👷 कारीगर ऐप देखें' : '👷 Open Worker App'}</span>
+              </button>
+            )}
+          </div>
+
+          <p className="text-[11px] text-slate-300">
+            {language === 'hi'
+              ? 'आप सीधे यहीं से भी कारीगर का अगला कदम टेस्ट कर सकते हैं:'
+              : 'Advance the real booking lifecycle steps right here:'}
+          </p>
+
+          <div className="space-y-2 pt-1">
+            {/* Step 1: Dispatch */}
+            {(!isEnRoute || booking.status === 'accepted') && (
+              <button
+                type="button"
+                onClick={() => {
+                  soundManager.playTap();
+                  onProgressChange?.(35);
+                }}
+                className="w-full py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all"
+              >
+                <Navigation className="w-4 h-4" />
+                <span>{language === 'hi' ? '🚗 कारीगर को रवाना करें (Start En Route)' : '🚗 Start Worker En Route'}</span>
+              </button>
+            )}
+
+            {/* Step 2: Arrived */}
+            {isEnRoute && !isArrived && (
+              <button
+                type="button"
+                onClick={() => {
+                  soundManager.playTap();
+                  onWorkerArrived?.();
+                }}
+                className="w-full py-2.5 px-3 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all"
+              >
+                <UserCheck className="w-4 h-4" />
+                <span>{language === 'hi' ? '📍 कारीगर का आगमन दर्ज करें (Mark Arrived)' : '📍 Mark Worker Arrived at Door'}</span>
+              </button>
+            )}
+
+            {/* Step 3: Verify OTP */}
+            {isArrived && !isOtpVerified && (
+              <button
+                type="button"
+                onClick={() => {
+                  soundManager.playTap();
+                  onVerifyOtpDirect?.();
+                }}
+                className="w-full py-2.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all"
+              >
+                <KeyRound className="w-4 h-4" />
+                <span>{language === 'hi' ? `🔑 सुरक्षा OTP (${booking.arrivalOtp}) सत्यापित करें` : `🔑 Verify OTP (${booking.arrivalOtp})`}</span>
+              </button>
+            )}
+
+            {/* Step 4: Complete Job & Pay */}
+            {isOtpVerified && !isCompleted && (
+              <button
+                type="button"
+                onClick={() => {
+                  soundManager.playTap();
+                  onCompleteJobDirect?.();
+                }}
+                className="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>{language === 'hi' ? '✅ कार्य पूर्ण करें व बिल QR देखें' : '✅ Complete Work & Generate Bill'}</span>
+              </button>
+            )}
           </div>
         </div>
 

@@ -70,6 +70,8 @@ interface CustomerAppProps {
   onCreateSupportTicket: (subject: string, category: 'wallet_payment' | 'worker_conduct' | 'job_quality' | 'technical_app') => void;
   onUpdateBookingProgress?: (progress: number) => void;
   onWorkerArrived?: () => void;
+  onVerifyOtp?: () => void;
+  onCompleteJob?: () => void;
   onOpenReviews?: (worker: WorkerProfile) => void;
   onTriggerSos?: () => void;
   onSwitchToWorker?: () => void;
@@ -102,6 +104,8 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
   onCreateSupportTicket,
   onUpdateBookingProgress,
   onWorkerArrived,
+  onVerifyOtp,
+  onCompleteJob,
   onOpenReviews,
   onTriggerSos,
   onSwitchToWorker,
@@ -222,7 +226,10 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
   return (
     <div className="flex-1 flex flex-col h-full bg-slate-950 text-slate-100 overflow-hidden select-none">
       {/* Top Customer App Bar */}
-      <div className="bg-slate-900/90 border-b border-slate-800/80 px-4 pt-3.5 pb-2.5 flex items-center justify-between z-10 shrink-0">
+      <div 
+        className="bg-slate-900/90 border-b border-slate-800/80 px-4 pt-9 sm:pt-3.5 pb-2.5 flex items-center justify-between z-10 shrink-0"
+        style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), 2.25rem)' }}
+      >
         <div className="flex items-center gap-2">
           {/* Brand Logo & Customer Switcher trigger */}
           <div 
@@ -258,19 +265,21 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
           </div>
         </div>
 
-        {/* Action Buttons: Add Customer & Post Requirement */}
+        {/* Action Buttons: Switch to Worker & Post Requirement */}
         <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => {
-              soundManager.playTap();
-              setIsAddCustomerOpen(true);
-            }}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-blue-950/70 border border-blue-500/40 hover:border-blue-400 text-xs font-bold text-blue-300 shadow-sm transition-all"
-            title={language === 'hi' ? 'नया ग्राहक जोड़ें' : 'Add New Customer Profile'}
-          >
-            <UserPlus className="w-3.5 h-3.5 text-blue-400" />
-            <span className="hidden sm:inline">{language === 'hi' ? '+ ग्राहक' : '+ Customer'}</span>
-          </button>
+          {onSwitchToWorker && (
+            <button
+              onClick={() => {
+                soundManager.playTap();
+                onSwitchToWorker();
+              }}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-950/80 border border-emerald-500/40 hover:border-emerald-400 text-xs font-bold text-emerald-300 shadow-sm transition-all"
+              title="कारीगर / पार्टनर ऐप मोड में बदलें"
+            >
+              <HardHat className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{language === 'hi' ? 'कारीगर' : 'Worker'}</span>
+            </button>
+          )}
 
           <button
             onClick={() => {
@@ -525,12 +534,16 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                     className="rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-blue-500/50 hover:bg-slate-850 cursor-pointer transition-all flex flex-col overflow-hidden group shadow-md"
                   >
                     {/* Work Photo Banner with Gradient Overlay */}
-                    <div className="relative h-24 w-full overflow-hidden bg-slate-950">
+                    <div className="relative h-24 w-full overflow-hidden bg-slate-900">
                       <img
-                        src={cat.imageUrl || (cat.workPhotos && cat.workPhotos[0]) || 'https://images.unsplash.com/photo-1581578731548-c64695cc6952?auto=format&fit=crop&w=400&q=80'}
-                        alt={cat.name}
+                        src={cat.imageUrl || (cat.workPhotos && cat.workPhotos[0]) || 'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=400&q=80'}
+                        alt=""
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         loading="lazy"
+                        onError={(e) => {
+                          const target = e.currentTarget as HTMLImageElement;
+                          target.src = 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=400&q=80';
+                        }}
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
                       
@@ -771,8 +784,12 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                           >
                             <img
                               src={p.imageUrl}
-                              alt={p.title}
+                              alt=""
                               className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                              onError={(e) => {
+                                const target = e.currentTarget as HTMLImageElement;
+                                target.src = 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=400&q=80';
+                              }}
                             />
                             <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                               <ZoomIn className="w-3.5 h-3.5 text-white" />
@@ -859,6 +876,9 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
               onProgressChange={onUpdateBookingProgress}
               onWorkerArrived={onWorkerArrived}
               onTriggerSos={onTriggerSos}
+              onSwitchToWorker={onSwitchToWorker}
+              onVerifyOtpDirect={onVerifyOtp}
+              onCompleteJobDirect={onCompleteJob}
             />
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-slate-400">

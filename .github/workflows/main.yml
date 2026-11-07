@@ -148,11 +148,12 @@ jobs:
 
       - name: Publish Direct Release (Play Store AAB & APK)
         uses: softprops/action-gh-release@v2
+        if: success()
         with:
-          tag_name: v1.1
-          name: "Smart India Work v1.1 (Production Release)"
+          tag_name: "v1.1-build-${{ github.run_number }}"
+          name: "Smart India Work v1.1 (Build #${{ github.run_number }})"
           body: |
-            ## 🇮🇳 Smart India Work - Production Release v1.1
+            ## 🇮🇳 Smart India Work - Production Release v1.1 (Build #${{ github.run_number }})
             
             ✅ **Play Store Ready AAB & Direct Install APK Updated**
             
