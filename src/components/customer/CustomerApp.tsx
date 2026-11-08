@@ -36,7 +36,8 @@ import {
   Crown,
   Globe,
   RotateCcw,
-  ShieldAlert
+  ShieldAlert,
+  X
 } from 'lucide-react';
 import { CATEGORIES } from '../../data/mockData';
 import { WorkerProfile, CustomerProfile, JobPost, Booking, Language, ChatMessage, SupportTicket } from '../../types';
@@ -48,6 +49,7 @@ import { RatingModal } from './RatingModal';
 import { AddCustomerModal } from './AddCustomerModal';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
 import { OwnerPinModal } from '../common/OwnerPinModal';
+import { CustomerAccountModal } from './CustomerAccountModal';
 import { soundManager } from '../../services/soundEffects';
 
 interface CustomerAppProps {
@@ -64,6 +66,8 @@ interface CustomerAppProps {
   onAddCustomer?: (customer: Omit<CustomerProfile, 'id'>) => void;
   onSelectCustomer?: (customerId: string) => void;
   onAddCustomerAddress?: (label: string, address: string) => void;
+  onUpdateCustomerProfile?: (updated: Partial<CustomerProfile>) => void;
+  onCancelBooking?: () => void;
   chatMessages: ChatMessage[];
   onSendMessage: (text: string) => void;
   supportTickets: SupportTicket[];
@@ -98,6 +102,8 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
   onAddCustomer,
   onSelectCustomer,
   onAddCustomerAddress,
+  onUpdateCustomerProfile,
+  onCancelBooking,
   chatMessages,
   onSendMessage,
   supportTickets,
@@ -138,6 +144,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
   const [isNewTicketOpen, setIsNewTicketOpen] = useState(false);
   const [isAddCustomerOpen, setIsAddCustomerOpen] = useState(false);
   const [isCustomerSelectorOpen, setIsCustomerSelectorOpen] = useState(false);
+  const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
   const [isAddAddressOpen, setIsAddAddressOpen] = useState(false);
   const [newAddressLabel, setNewAddressLabel] = useState<'Home' | 'Office' | 'Shop'>('Home');
   const [newAddressText, setNewAddressText] = useState('');
@@ -231,14 +238,14 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
         style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), 2.25rem)' }}
       >
         <div className="flex items-center gap-2">
-          {/* Brand Logo & Customer Switcher trigger */}
+          {/* Brand Logo & Customer Account trigger */}
           <div 
             onClick={() => {
               soundManager.playTap();
-              setIsCustomerSelectorOpen(true);
+              setIsAccountModalOpen(true);
             }}
             className="flex items-center gap-2 cursor-pointer hover:bg-slate-800/80 p-1 pr-2 rounded-xl transition-all border border-transparent hover:border-slate-700/80 group"
-            title="Switch Customer Profile / Add New Customer"
+            title={language === 'hi' ? 'मेरा खाता और प्रोफ़ाइल देखें' : 'My Account & Profile'}
           >
             <div className="relative shrink-0">
               <img 
@@ -424,6 +431,20 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                   >
                     <MessageSquare className="w-3.5 h-3.5" />
                   </button>
+                  {onCancelBooking && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        soundManager.playTap();
+                        onCancelBooking();
+                      }}
+                      className="p-2 rounded-xl bg-slate-800 hover:bg-rose-950/60 text-slate-400 hover:text-rose-400 border border-slate-700 hover:border-rose-500/40 transition-colors"
+                      title={language === 'hi' ? 'बुकिंग हटाएं / रद्द करें' : 'Cancel / Dismiss Booking'}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -536,7 +557,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                     {/* Work Photo Banner with Gradient Overlay */}
                     <div className="relative h-24 w-full overflow-hidden bg-slate-900">
                       <img
-                        src={cat.imageUrl || (cat.workPhotos && cat.workPhotos[0]) || 'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=400&q=80'}
+                        src={cat.imageUrl || (cat.workPhotos && cat.workPhotos[0]) || 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=400&q=80'}
                         alt=""
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         loading="lazy"
@@ -879,6 +900,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
               onSwitchToWorker={onSwitchToWorker}
               onVerifyOtpDirect={onVerifyOtp}
               onCompleteJobDirect={onCompleteJob}
+              onCancelBooking={onCancelBooking}
             />
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-slate-400">
@@ -1406,108 +1428,20 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
         }}
       />
 
-      {/* Customer Quick Selector Drawer / Modal */}
-      {isCustomerSelectorOpen && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl space-y-4 max-h-[85vh] flex flex-col">
-            <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
-                  <Users className="w-4 h-4" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-bold text-white">
-                    {language === 'hi' ? 'ग्राहक प्रोफ़ाइल चुनें' : 'Select Customer Profile'}
-                  </h4>
-                  <p className="text-[10px] text-slate-400">
-                    {language === 'hi' ? 'किस ग्राहक के रूप में काम करना है?' : 'Switch active customer or add new'}
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsCustomerSelectorOpen(false)}
-                className="w-8 h-8 rounded-full bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center text-xs"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* List of Customers */}
-            <div className="space-y-2 overflow-y-auto pr-1 flex-1">
-              {customers.map((c) => {
-                const isSelected = c.id === customer.id;
-                return (
-                  <div
-                    key={c.id}
-                    onClick={() => {
-                      soundManager.playSuccess();
-                      onSelectCustomer?.(c.id);
-                      setIsCustomerSelectorOpen(false);
-                    }}
-                    className={`p-3 rounded-2xl border transition-all flex items-center justify-between cursor-pointer ${
-                      isSelected
-                        ? 'bg-blue-950/50 border-blue-500/60 ring-2 ring-blue-500/30'
-                        : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <img
-                        src={c.avatar}
-                        alt={c.name}
-                        className="w-10 h-10 rounded-xl object-cover ring-1 ring-slate-700 shrink-0"
-                      />
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-white text-xs truncate">{c.name}</span>
-                          {isSelected && (
-                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-300 font-semibold border border-blue-500/30">
-                              Active
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[10px] text-slate-400">{c.phone}</p>
-                        <div className="flex items-center gap-1 text-[10px] text-slate-300 mt-0.5">
-                          <MapPin className="w-2.5 h-2.5 text-orange-400 shrink-0" />
-                          <span className="truncate">{c.locality}, {c.city}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {isSelected ? (
-                      <div className="w-7 h-7 rounded-full bg-blue-500/20 border border-blue-400/40 flex items-center justify-center text-blue-400 shrink-0">
-                        <Check className="w-4 h-4" />
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-[10px] border border-slate-700 shrink-0"
-                      >
-                        Select
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Quick Add Button */}
-            <div className="pt-2 border-t border-slate-800/80">
-              <button
-                type="button"
-                onClick={() => {
-                  soundManager.playTap();
-                  setIsCustomerSelectorOpen(false);
-                  setIsAddCustomerOpen(true);
-                }}
-                className="w-full py-2.5 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs shadow-md shadow-blue-500/20 flex items-center justify-center gap-2 transition-all active:scale-98"
-              >
-                <UserPlus className="w-4 h-4" />
-                <span>{language === 'hi' ? '+ नया ग्राहक जोड़ें (Add Customer)' : '+ Register New Customer'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Real Customer Account & Profile Management Modal */}
+      <CustomerAccountModal
+        isOpen={isAccountModalOpen}
+        onClose={() => setIsAccountModalOpen(false)}
+        customer={customer}
+        language={language}
+        activeBooking={safeActiveBooking}
+        onUpdateProfile={(updated) => onUpdateCustomerProfile?.(updated)}
+        onAddAddress={(label, addr) => onAddCustomerAddress?.(label, addr)}
+        onCancelActiveBooking={() => onCancelBooking?.()}
+        onCompleteActiveBooking={() => onCompleteJob?.()}
+        onClearAllDemoData={() => onResetData?.()}
+        onSwitchToWorker={onSwitchToWorker}
+      />
 
       {/* Universal Customer Call & Chat System */}
       <ChatCallModal

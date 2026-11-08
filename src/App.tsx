@@ -1260,6 +1260,7 @@ export default function App() {
     setWorkerNotifications([]);
     safeStorage.removeItem('smart_india_active_booking_v2');
     safeStorage.removeItem('smart_india_worker_notifs_v2');
+    safeStorage.removeItem('smart_india_jobs_v2');
     setWorkers(INITIAL_WORKERS);
     setActiveWorkerId(INITIAL_WORKERS[0].id);
     setCustomers(INITIAL_CUSTOMERS);
@@ -1267,6 +1268,21 @@ export default function App() {
     setJobs(INITIAL_JOBS);
     setWalletTransactions(INITIAL_WALLET_TRANSACTIONS);
     setSupportTickets(INITIAL_TICKETS);
+  };
+
+  // Cancel / Dismiss Active Booking
+  const handleCancelBooking = () => {
+    soundManager.playTap();
+    setActiveBooking(null);
+    safeStorage.removeItem('smart_india_active_booking_v2');
+  };
+
+  // Update Customer Profile
+  const handleUpdateCustomerProfile = (updated: Partial<CustomerProfile>) => {
+    setCustomers((prev) =>
+      prev.map((c) => (c.id === customer.id ? { ...c, ...updated } : c))
+    );
+    soundManager.playSuccess();
   };
 
   // Quick Testing Action Handlers
@@ -1400,6 +1416,8 @@ export default function App() {
                   onAddCustomer={handleAddCustomer}
                   onSelectCustomer={handleSelectCustomer}
                   onAddCustomerAddress={handleAddCustomerAddress}
+                  onUpdateCustomerProfile={handleUpdateCustomerProfile}
+                  onCancelBooking={handleCancelBooking}
                   chatMessages={chatMessages}
                   onSendMessage={handleSendMessage}
                   supportTickets={supportTickets}
@@ -1515,6 +1533,8 @@ export default function App() {
               onAddCustomer={handleAddCustomer}
               onSelectCustomer={handleSelectCustomer}
               onAddCustomerAddress={handleAddCustomerAddress}
+              onUpdateCustomerProfile={handleUpdateCustomerProfile}
+              onCancelBooking={handleCancelBooking}
               chatMessages={chatMessages}
               onSendMessage={handleSendMessage}
               supportTickets={supportTickets}

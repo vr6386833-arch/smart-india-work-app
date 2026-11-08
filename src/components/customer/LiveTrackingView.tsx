@@ -22,7 +22,9 @@ import {
   FileCheck,
   CheckCircle,
   HardHat,
-  Navigation
+  Navigation,
+  X,
+  RotateCcw
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Booking, Language } from '../../types';
@@ -40,6 +42,7 @@ interface LiveTrackingViewProps {
   onSwitchToWorker?: () => void;
   onVerifyOtpDirect?: () => void;
   onCompleteJobDirect?: () => void;
+  onCancelBooking?: () => void;
 }
 
 export const LiveTrackingView: React.FC<LiveTrackingViewProps> = ({
@@ -54,6 +57,7 @@ export const LiveTrackingView: React.FC<LiveTrackingViewProps> = ({
   onSwitchToWorker,
   onVerifyOtpDirect,
   onCompleteJobDirect,
+  onCancelBooking,
 }) => {
   const [showQrForCustomer, setShowQrForCustomer] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
@@ -371,6 +375,21 @@ export const LiveTrackingView: React.FC<LiveTrackingViewProps> = ({
               >
                 <CheckCircle2 className="w-4 h-4" />
                 <span>{language === 'hi' ? '✅ कार्य पूर्ण करें व बिल QR देखें' : '✅ Complete Work & Generate Bill'}</span>
+              </button>
+            )}
+
+            {/* Cancel / Dismiss Booking Option */}
+            {onCancelBooking && !isCompleted && (
+              <button
+                type="button"
+                onClick={() => {
+                  soundManager.playTap();
+                  onCancelBooking();
+                }}
+                className="w-full py-2 px-3 rounded-xl bg-slate-800/80 hover:bg-rose-950/40 text-slate-400 hover:text-rose-300 border border-slate-700/60 hover:border-rose-500/40 font-semibold text-xs flex items-center justify-center gap-1.5 transition-all mt-1"
+              >
+                <X className="w-3.5 h-3.5 text-rose-400" />
+                <span>{language === 'hi' ? '❌ बुकिंग रद्द करें (Cancel Booking)' : '❌ Cancel Booking & Remove'}</span>
               </button>
             )}
           </div>

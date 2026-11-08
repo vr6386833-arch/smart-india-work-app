@@ -705,7 +705,7 @@ export const WorkerJobRecordsModal: React.FC<WorkerJobRecordsModalProps> = ({
                     <div className="flex gap-2">
                       <button
                         type="button"
-                        onClick={() => setFormPhoto('https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=600&q=80')}
+                        onClick={() => setFormPhoto('https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=600&q=80')}
                         className="text-[10px] text-slate-400 hover:text-emerald-400"
                       >
                         Sample 1

@@ -14,11 +14,11 @@ export const CATEGORIES: Category[] = [
     subcategoriesHi: ['ईंट चिनाई', 'प्लास्टर', 'नींव का काम', 'बाउंड्री वॉल', 'मरम्मत व नवीनीकरण'],
     basePriceEstimate: '₹850 - ₹1200 / day',
     popular: true,
-    imageUrl: 'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=600&q=80',
+    imageUrl: 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=600&q=80',
     workPhotos: [
-      'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80',
+      'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=800&q=80',
       'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?auto=format&fit=crop&w=800&q=80',
-      'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80'
+      'https://images.unsplash.com/photo-1581092160607-ee22621dd758?auto=format&fit=crop&w=800&q=80'
     ]
   },
   {
@@ -65,11 +65,11 @@ export const CATEGORIES: Category[] = [
     ],
     basePriceEstimate: '₹850 - ₹1,200 / day or ₹4 - ₹7 / sq.ft',
     popular: true,
-    imageUrl: 'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=600&q=80',
+    imageUrl: 'https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&w=600&q=80',
     workPhotos: [
-      'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80',
+      'https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&w=800&q=80',
       'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?auto=format&fit=crop&w=800&q=80',
-      'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=800&q=80'
+      'https://images.unsplash.com/photo-1541976590-713941681591?auto=format&fit=crop&w=800&q=80'
     ]
   },
   {
@@ -115,7 +115,7 @@ export const CATEGORIES: Category[] = [
     imageUrl: 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=600&q=80',
     workPhotos: [
       'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=800&q=80',
-      'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80',
+      'https://images.unsplash.com/photo-1541976590-713941681591?auto=format&fit=crop&w=800&q=80',
       'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?auto=format&fit=crop&w=800&q=80'
     ]
   },
@@ -856,7 +856,7 @@ export const INITIAL_WORKERS: WorkerProfile[] = [
       {
         id: 'pd2',
         title: 'Heavy Column & Raft Footing Casting',
-        imageUrl: 'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=600&q=80',
+        imageUrl: 'https://images.unsplash.com/photo-1541976590-713941681591?auto=format&fit=crop&w=600&q=80',
         description: 'M25 design mix foundation casting using mobile diesel mixer and hopper trolley.',
         tag: 'कंक्रीट मिक्सर',
       }
@@ -950,7 +950,7 @@ export const INITIAL_WORKERS: WorkerProfile[] = [
       {
         id: 'ps1',
         title: '2400 sq.ft Double Mesh Roof Slab Sariya Jaal',
-        imageUrl: 'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=600&q=80',
+        imageUrl: 'https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&w=600&q=80',
         description: 'Complete 10mm & 8mm Fe550D TMT bar double jaal binding with beam cages and cover blocks ready for RMC pouring.',
         tag: 'छत सरिया जाल',
       },
@@ -1158,7 +1158,7 @@ export const INITIAL_WORKERS: WorkerProfile[] = [
       {
         id: 'p2',
         title: 'Boundary Wall & Pillar Foundation',
-        imageUrl: 'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=600&q=80',
+        imageUrl: 'https://images.unsplash.com/photo-1541976590-713941681591?auto=format&fit=crop&w=600&q=80',
         description: '9-inch reinforced boundary wall with RCC column tie-in.',
         tag: 'Brickwork',
       }
@@ -1653,7 +1653,7 @@ export const INITIAL_JOBS: JobPost[] = [
     urgency: 'urgent',
     photos: [
       'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=800&q=80',
-      'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80'
+      'https://images.unsplash.com/photo-1541976590-713941681591?auto=format&fit=crop&w=800&q=80'
     ],
     createdAt: '5 mins ago',
     status: 'open',
@@ -1692,7 +1692,7 @@ export const INITIAL_JOBS: JobPost[] = [
     budget: 9500,
     urgency: 'urgent',
     photos: [
-      'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80',
+      'https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&w=800&q=80',
       'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?auto=format&fit=crop&w=800&q=80',
       'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=800&q=80'
     ],
@@ -1773,8 +1773,8 @@ export const INITIAL_JOBS: JobPost[] = [
     budget: 1200,
     urgency: 'urgent',
     photos: [
-      'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80',
-      'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80'
+      'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=800&q=80',
+      'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?auto=format&fit=crop&w=800&q=80'
     ],
     createdAt: '15 mins ago',
     status: 'open',
@@ -1868,8 +1868,8 @@ export const INITIAL_BOOKING: Booking = {
   scheduledTime: 'Today, Immediate Arrival (ETA 8 mins)',
   workerLocationProgress: 45, // 45% towards destination
   jobPhotos: [
-    'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80',
-    'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80'
+    'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=800&q=80',
+    'https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&w=800&q=80'
   ],
   completedWorkPhotos: [
     'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?auto=format&fit=crop&w=800&q=80'

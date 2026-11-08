@@ -39,7 +39,7 @@ export const PostJobModal: React.FC<PostJobModalProps> = ({
   const [budget, setBudget] = useState('800');
   const [urgency, setUrgency] = useState<'urgent' | 'today' | 'flexible'>('urgent');
   const [photos, setPhotos] = useState<string[]>([
-    'https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80',
+    'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=800&q=80',
     'https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&w=800&q=80'
   ]);
   const [locality, setLocality] = useState(defaultLocality || 'Sector 62, Noida');
@@ -110,7 +110,7 @@ export const PostJobModal: React.FC<PostJobModalProps> = ({
       description: description.trim(),
       budget: Number(budget) || 500,
       urgency,
-      photos: photos.length > 0 ? photos : ['https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=800&q=80'],
+      photos: photos.length > 0 ? photos : ['https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=800&q=80'],
       customerLocality: locality,
       createdAt: 'Just now',
       status: 'open',

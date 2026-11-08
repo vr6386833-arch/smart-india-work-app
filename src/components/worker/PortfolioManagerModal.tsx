@@ -29,7 +29,7 @@ export const PortfolioManagerModal: React.FC<PortfolioManagerModalProps> = ({
   const [title, setTitle] = useState('');
   const [tag, setTag] = useState('Plastering');
   const [description, setDescription] = useState('');
-  const [imageUrl, setImageUrl] = useState('https://images.unsplash.com/photo-1590381105924-c72589b9ef3f?auto=format&fit=crop&w=600&q=80');
+  const [imageUrl, setImageUrl] = useState('https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=600&q=80');
 
   if (!isOpen) return null;
 
