@@ -48,14 +48,8 @@ const GOOGLE_ACCOUNTS = [
   {
     email: 'vr6386833@gmail.com',
     name: 'Vipin Rajput (Owner & Customer)',
-    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80',
+    avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=400&q=80',
     locality: 'Sector 62, Noida'
-  },
-  {
-    email: 'rajesh.mehta@gmail.com',
-    name: 'Rajesh Kumar Mehta',
-    avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=400&q=80',
-    locality: 'Indirapuram, Ghaziabad'
   }
 ];
 

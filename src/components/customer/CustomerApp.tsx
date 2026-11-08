@@ -123,8 +123,11 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
   ownerPin,
   onUpdateOwnerPin,
 }) => {
-  // Purge any mock/demo Rameshwar booking (BK_9081) so live customer starts pristine
-  const isMockBooking = activeBooking?.id === 'BK_9081' || activeBooking?.workerName?.includes('Rameshwar');
+  // Purge any legacy demo booking so customer view starts completely pristine
+  const isMockBooking = activeBooking?.id === 'BK_9081' || 
+                        activeBooking?.id?.startsWith('BK_88') ||
+                        activeBooking?.workerName?.includes('Rameshwar') ||
+                        activeBooking?.workerName?.includes('Mukesh');
   const safeActiveBooking = isMockBooking ? null : activeBooking;
   const [isOwnerPinOpen, setIsOwnerPinOpen] = useState(false);
 
@@ -872,6 +875,46 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                   </div>
                 </div>
               ))}
+
+              {filteredWorkers.length === 0 && (
+                <div className="p-6 rounded-3xl bg-slate-900/90 border border-slate-800 text-center space-y-3.5 shadow-xl">
+                  <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-600/20 to-indigo-600/20 border border-blue-500/30 text-blue-400 mx-auto flex items-center justify-center shadow-lg">
+                    <HardHat className="w-7 h-7" />
+                  </div>
+                  <div>
+                    <h4 className="text-white font-black text-sm">
+                      {language === 'hi' ? '🟢 लाइव नेटवर्क सक्रिय है' : '🟢 Live Network Active'}
+                    </h4>
+                    <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto leading-relaxed">
+                      {language === 'hi'
+                        ? 'सभी पुराने व डमी कारीगर हटा दिए गए हैं। जैसे ही आपके क्षेत्र के असली कारीगर जुड़ेंगे, वे यहाँ दिखेंगे। आप अभी नया काम पोस्ट कर सकते हैं!'
+                        : 'Database cleaned. When real verified workers register, they will appear here. Post your job requirement now to get quotes!'}
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-center gap-2 pt-1">
+                    <button
+                      onClick={() => {
+                        soundManager.playTap();
+                        setIsPostJobOpen(true);
+                      }}
+                      className="px-4 py-2 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 text-white font-bold text-xs shadow-md shadow-orange-500/20 active:scale-95 transition-all"
+                    >
+                      {language === 'hi' ? '+ नया काम पोस्ट करें' : '+ Post Requirement'}
+                    </button>
+                    {onSwitchToWorker && (
+                      <button
+                        onClick={() => {
+                          soundManager.playTap();
+                          onSwitchToWorker();
+                        }}
+                        className="px-3.5 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 font-bold text-xs active:scale-95 transition-all"
+                      >
+                        {language === 'hi' ? 'कारीगर जोड़ें' : 'Register Worker'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1221,7 +1264,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                         <Lock className="w-3 h-3 text-amber-400" />
                       </div>
                       <p className="text-[10px] text-slate-400">
-                        {language === 'hi' ? 'कमाई, बैंक ट्रांसफर व सेटिंग्स (PIN सुरक्षित: 1234)' : 'Revenue, Bank Payout & Admin (PIN protected)'}
+                        {language === 'hi' ? 'कमाई, बैंक ट्रांसफर व कमीशन सेटिंग्स (ओनर सुरक्षित)' : 'Revenue, Bank Payout & Admin Portal (PIN protected)'}
                       </p>
                     </div>
                   </div>

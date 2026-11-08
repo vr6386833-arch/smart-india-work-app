@@ -747,47 +747,19 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
 
           <div className="space-y-3">
             {[
+              ...(commissionRecords && commissionRecords.length > 0 ? commissionRecords.map((c) => ({
+                time: c.paidAt || 'अभी (Live)',
+                user: `${c.workerName} ➔ ${c.customerName}`,
+                role: 'Worker ➔ Customer',
+                action: `₹${c.commissionAmount} प्लेटफॉर्म फीस भुगतान (${c.paymentMethod === 'upi_direct' ? 'कंपनी QR UPI' : 'वॉलेट'})`,
+                tag: '₹10 Fee'
+              })) : []),
               {
-                time: 'Just now',
-                user: 'Vipin Rajput (Noida Sector 62)',
-                role: 'Customer',
-                action: 'Opened app and searched for Electrician & AC Technician',
-                tag: 'App Opened'
-              },
-              {
-                time: '12 mins ago',
-                user: 'Rameshwar Kumar (Mason)',
-                role: 'Worker',
-                action: 'Arrived at site and OTP 8492 verified by site owner',
-                tag: 'OTP Verified'
-              },
-              {
-                time: '34 mins ago',
-                user: 'Sunil Sharma (Electrician)',
-                role: 'Worker',
-                action: 'Paid ₹10 Platform Fee to App Owner via Company QR Code (Txn: UPI/FEE/2026/849102)',
-                tag: '₹10 Fee Paid'
-              },
-              {
-                time: '1 hour ago',
-                user: 'Vikram Malhotra (DLF Gurugram)',
-                role: 'Customer',
-                action: 'Booked False Ceiling Contractor (1200 sq.ft hall)',
-                tag: 'Job Booked'
-              },
-              {
-                time: '2 hours ago',
-                user: 'Anil Gupta (Sector 62)',
-                role: 'Customer',
-                action: 'Completed payment of ₹850 to Mohammed Arif Plumber and rated 5 stars',
-                tag: 'Payment & Rating'
-              },
-              {
-                time: 'Yesterday',
-                user: 'App Owner (You)',
-                role: 'Owner',
-                action: `Transferred ₹400 earnings to ICICI Bank Account (${appOwnerConfig.bankAccountNumber})`,
-                tag: 'Bank Transfer'
+                time: 'अभी (Live)',
+                user: 'स्मार्ट इंडिया वर्क (Vipin Rajput)',
+                role: 'Admin / Owner',
+                action: 'लाइव उत्पादन सर्वर सक्रिय है - नए काम व कारीगर पंजीकरण की प्रतीक्षा है',
+                tag: 'System Live'
               }
             ].map((log, idx) => (
               <div

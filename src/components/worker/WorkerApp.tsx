@@ -969,8 +969,28 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                   ))}
                 </div>
               ) : (
-                <div className="p-6 text-center text-slate-500 text-xs bg-slate-900/50 rounded-2xl border border-slate-800">
-                  No new leads right now. Keep your GPS active to receive instant lead broadcasts!
+                <div className="p-6 rounded-3xl bg-slate-900/90 border border-slate-800 text-center space-y-3.5 shadow-xl">
+                  <div className="relative w-14 h-14 mx-auto flex items-center justify-center">
+                    <span className="w-14 h-14 rounded-full bg-emerald-500/10 border border-emerald-500/20 absolute animate-ping" />
+                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-slate-950 flex items-center justify-center shadow-lg relative z-10">
+                      <Radar className="w-6 h-6 animate-pulse" />
+                    </div>
+                  </div>
+                  <div>
+                    <h5 className="text-sm font-black text-white flex items-center justify-center gap-1.5">
+                      <span>{language === 'hi' ? '📡 लाइव GPS रडार चालू है' : '📡 Live GPS Lead Radar Active'}</span>
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                    </h5>
+                    <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto leading-relaxed">
+                      {language === 'hi' 
+                        ? 'सभी पुराने व डमी काम हटा दिए गए हैं। जैसे ही कोई ग्राहक आपके आसपास नया काम पोस्ट करेगा, आपको तुरंत सूचना व सायरन मिलेगा!'
+                        : 'Old demo leads purged. Scanning your local area in real time for live incoming job requirements.'}
+                    </p>
+                  </div>
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 text-[11px] font-semibold">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <span>{language === 'hi' ? 'स्कैनिंग: Sector 62 & 10 किमी दायरा' : 'Scanning 10 km radius around you'}</span>
+                  </div>
                 </div>
               )}
             </div>

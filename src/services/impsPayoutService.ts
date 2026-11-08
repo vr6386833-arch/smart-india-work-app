@@ -52,11 +52,11 @@ export class ImpsPayoutService {
     } catch (e) {}
 
     return {
-      beneficiaryName: workerName || 'Rameshwar Kumar',
-      accountNumber: '50100482910482',
-      ifscCode: 'SBIN0004521',
-      bankName: 'State Bank of India (SBI)',
-      upiId: 'ramesh.kumar98@sbi',
+      beneficiaryName: workerName || 'पंजीकृत कारीगर',
+      accountNumber: '',
+      ifscCode: '',
+      bankName: 'बैंक खाता दर्ज करें',
+      upiId: '',
     };
   }
 

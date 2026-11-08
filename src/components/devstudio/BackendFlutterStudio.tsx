@@ -79,22 +79,12 @@ export const BackendFlutterStudio: React.FC = () => {
           count: 2,
           workers: [
             {
-              id: "w1",
-              name: "Rameshwar Kumar",
+              id: "w_live_01",
+              name: "Verified Local Partner",
               category: "mistry",
-              distanceKm: 1.4,
-              dailyRate: 950,
-              rating: 4.88,
-              isAadhaarVerified: true,
-              isOnline: true
-            },
-            {
-              id: "w2",
-              name: "Sunil Verma",
-              category: "electrician",
-              distanceKm: 2.1,
-              dailyRate: 1100,
-              rating: 4.95,
+              distanceKm: 1.2,
+              dailyRate: 850,
+              rating: 5.0,
               isAadhaarVerified: true,
               isOnline: true
             }
@@ -106,14 +96,14 @@ export const BackendFlutterStudio: React.FC = () => {
           code: 200,
           message: "Dynamic Bharat UPI QR code generated with itemized invoice payload.",
           data: {
-            bookingId: "BK_9081",
-            workerVpa: "rameshwar.kumar@okicici",
-            merchantName: "Rameshwar Kumar",
+            bookingId: "BK_LIVE_001",
+            workerVpa: "smartindia.partner@okicici",
+            merchantName: "Smart India Verified Partner",
             currency: "INR",
-            baseLaborAmount: 950.00,
-            materialsAmount: 250.00,
-            totalPayable: 1200.00,
-            upiIntentUrl: "upi://pay?pa=rameshwar.kumar@okicici&pn=Rameshwar%20Kumar&am=1200.00&cu=INR&tn=SmartIndia%20Work%20BK_9081",
+            baseLaborAmount: 850.00,
+            materialsAmount: 150.00,
+            totalPayable: 1000.00,
+            upiIntentUrl: "upi://pay?pa=smartindia.partner@okicici&pn=SmartIndia%20Partner&am=1000.00&cu=INR&tn=SmartIndia%20Work",
             supportedApps: ["PhonePe", "GooglePay", "Paytm", "BHIM", "CRED"],
             soundboxVoiceEnabled: true,
             settlementType: "P2P_DIRECT_BANK_0_PERCENT_COMMISSION"

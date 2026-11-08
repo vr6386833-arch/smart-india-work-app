@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { 
+  DEFAULT_STANDBY_WORKER,
   INITIAL_WORKERS, 
   INITIAL_CUSTOMER,
   INITIAL_CUSTOMERS,
@@ -97,26 +98,27 @@ export default function App() {
     PushNotificationService.init();
     IndexedDbSyncService.init();
 
-    // Purge legacy demo booking cache and scrub any Priya Sharma mentions from previous builds
+    // Comprehensive purge: Clear ALL old legacy mock data (dummy workers, fake customers, stuck bookings)
     try {
-      safeStorage.removeItem('smart_india_active_booking');
-      const saved = safeStorage.getItem('smart_india_active_booking_v2');
-      if (saved && (saved.includes('BK_9081') || saved.includes('Rameshwar') || saved.includes('Priya'))) {
-        safeStorage.removeItem('smart_india_active_booking_v2');
-        setActiveBooking(null);
-      }
-      const savedJobs = safeStorage.getItem('smart_india_jobs_v2');
-      if (savedJobs && savedJobs.includes('Priya')) {
-        const cleanedJobs = savedJobs
-          .replaceAll('Priya Sharma (Site Owner)', 'Vipin Rajput (Site Owner)')
-          .replaceAll('Priya Sharma', 'Vipin Rajput')
-          .replaceAll('+91 98711 00223', '+91 98765 43210')
-          .replaceAll('Sector 44, Noida', 'Sector 62, Noida');
-        safeStorage.setItem('smart_india_jobs_v2', cleanedJobs);
-      }
-      const savedNotifs = safeStorage.getItem('smart_india_worker_notifs_v2');
-      if (savedNotifs && savedNotifs.includes('Priya')) {
-        safeStorage.removeItem('smart_india_worker_notifs_v2');
+      const legacyStorageKeys = [
+        'smart_india_active_booking',
+        'smart_india_active_booking_v2',
+        'smart_india_workers',
+        'smart_india_workers_v2',
+        'smart_india_jobs',
+        'smart_india_jobs_v2',
+        'smart_india_customers',
+        'smart_india_customers_v2',
+        'smart_india_worker_notifs',
+        'smart_india_worker_notifs_v2',
+        'smart_india_transactions',
+        'smart_india_tickets',
+        'smart_india_commission_records',
+        'smart_india_owner_payouts'
+      ];
+      if (!safeStorage.getItem('smart_india_live_fresh_v3_ready')) {
+        legacyStorageKeys.forEach((key) => safeStorage.removeItem(key));
+        safeStorage.setItem('smart_india_live_fresh_v3_ready', 'true');
       }
     } catch {}
 
@@ -162,8 +164,8 @@ export default function App() {
         return;
       }
 
-      if (activeView !== 'dual') {
-        setActiveView('dual');
+      if (activeView === 'worker' || activeView === 'owner' || activeView === 'admin' || activeView === 'studio') {
+        setActiveView('customer');
       }
     };
 
@@ -189,13 +191,35 @@ export default function App() {
   const [commissionRecords, setCommissionRecords] = useState<CommissionRecord[]>(INITIAL_COMMISSION_RECORDS);
   const [ownerPayouts, setOwnerPayouts] = useState<OwnerPayoutRecord[]>(INITIAL_APP_OWNER_PAYOUTS);
 
-  // Shared synchronized application state with persistent local & cloud sync
+  // Shared synchronized application state with persistent local & cloud sync (v3 live)
   const [workers, setWorkers] = useState<WorkerProfile[]>(() => {
     try {
-      const saved = safeStorage.getItem('smart_india_workers_v2');
+      const saved = safeStorage.getItem('smart_india_workers_v3');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Filter out any legacy dummy workers (Brijesh, Rameshwar, etc.)
+          const clean = parsed.filter((w: WorkerProfile) => 
+            !w.name?.includes('Brijesh') && 
+            !w.name?.includes('Rameshwar') && 
+            !w.name?.includes('Dharmendra') && 
+            !w.name?.includes('Sunil Sharma') &&
+            !w.name?.includes('Mohammed Arif') &&
+            !w.name?.includes('Balwant Singh') &&
+            !w.name?.includes('Radhe Shyam') &&
+            !w.name?.includes('Chandan Kumar') &&
+            !w.name?.includes('Santosh Tiles') &&
+            !w.name?.includes('Suresh Kumar AC') &&
+            !w.name?.includes('Jagdish Halwai') &&
+            !w.name?.includes('Kallu DJ') &&
+            !w.name?.includes('Lalji Vishwakarma') &&
+            !w.name?.includes('Munna Bhai') &&
+            !w.name?.includes('Aslam POP') &&
+            !w.name?.includes('Surendra Waterproofing') &&
+            !w.name?.includes('Subhash Rawat')
+          );
+          if (clean.length > 0) return clean;
+        }
       }
     } catch (e) {
       console.warn('Failed to parse local workers', e);
@@ -203,26 +227,45 @@ export default function App() {
     return INITIAL_WORKERS;
   });
 
-  const [activeWorkerId, setActiveWorkerId] = useState<string>(() => workers[0]?.id || INITIAL_WORKERS[0].id);
-  const activeWorker = workers.find((w) => w.id === activeWorkerId) || workers[0];
+  const [activeWorkerId, setActiveWorkerId] = useState<string>(() => workers[0]?.id || DEFAULT_STANDBY_WORKER.id);
+  const activeWorker = workers.find((w) => w.id === activeWorkerId) || workers[0] || DEFAULT_STANDBY_WORKER;
 
-  const [customers, setCustomers] = useState<CustomerProfile[]>(INITIAL_CUSTOMERS);
-  const [activeCustomerId, setActiveCustomerId] = useState<string>(INITIAL_CUSTOMERS[0].id);
-  const customer = customers.find((c) => c.id === activeCustomerId) || customers[0];
-
-  const [jobs, setJobs] = useState<JobPost[]>(() => {
+  const [customers, setCustomers] = useState<CustomerProfile[]>(() => {
     try {
-      const saved = safeStorage.getItem('smart_india_jobs_v2');
+      const saved = safeStorage.getItem('smart_india_customers_v3');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((j: JobPost) => ({
-            ...j,
-            customerName: j.customerName?.includes('Priya') ? 'Vipin Rajput' : j.customerName,
-            customerPhone: j.customerPhone === '+91 98711 00223' ? '+91 98765 43210' : j.customerPhone,
-            customerAddress: j.customerAddress?.includes('Express Green') ? 'Sector 62, Noida, Uttar Pradesh - 201309' : j.customerAddress,
-            customerLocality: j.customerLocality?.includes('Sector 44') ? 'Sector 62, Noida' : j.customerLocality,
-          }));
+          // Keep only Vipin Rajput and newly registered users; filter out dummy customer seeds
+          const clean = parsed.filter((c: CustomerProfile) => 
+            !c.name?.includes('Anil Gupta') &&
+            !c.name?.includes('Rajesh Kumar') &&
+            !c.name?.includes('Sunita Devi') &&
+            !c.name?.includes('Vikram Malhotra') &&
+            !c.name?.includes('Kavita Verma') &&
+            !c.name?.includes('Manoj Tiwari') &&
+            !c.name?.includes('Deepika Joshi')
+          );
+          if (clean.length > 0) return clean;
+        }
+      }
+    } catch {}
+    return INITIAL_CUSTOMERS;
+  });
+  const [activeCustomerId, setActiveCustomerId] = useState<string>(INITIAL_CUSTOMERS[0].id);
+  const customer = customers.find((c) => c.id === activeCustomerId) || customers[0] || INITIAL_CUSTOMERS[0];
+
+  const [jobs, setJobs] = useState<JobPost[]>(() => {
+    try {
+      const saved = safeStorage.getItem('smart_india_jobs_v3');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Strip old dummy jobs
+          return parsed.filter((j: JobPost) => 
+            !j.id?.startsWith('job_dhalai_101') && 
+            !j.id?.startsWith('job_10')
+          );
         }
       }
     } catch (e) {
@@ -234,19 +277,21 @@ export default function App() {
   // Active Booking: Defaults to null for pristine live production start (no fake dummy bookings)
   const [activeBooking, setActiveBooking] = useState<Booking | null>(() => {
     try {
-      const saved = safeStorage.getItem('smart_india_active_booking_v2');
+      const saved = safeStorage.getItem('smart_india_active_booking_v3');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed?.id === 'BK_9081' || parsed?.customerName?.includes('Priya') || parsed?.workerName?.includes('Rameshwar') || (parsed?.customerId === 'c1' && parsed?.workerId === 'w1')) {
-          safeStorage.removeItem('smart_india_active_booking_v2');
-          return null;
+        if (
+          parsed?.id && 
+          !parsed.id.startsWith('BK_9081') && 
+          !parsed.id.startsWith('BK_88') && 
+          !parsed.workerName?.includes('Mukesh') && 
+          !parsed.workerName?.includes('Rameshwar')
+        ) {
+          return parsed;
         }
-        return parsed;
       }
-      return null;
-    } catch {
-      return null;
-    }
+    } catch {}
+    return null;
   });
 
   const [walletTransactions, setWalletTransactions] = useState<WalletTransaction[]>(INITIAL_WALLET_TRANSACTIONS);
@@ -255,7 +300,7 @@ export default function App() {
   // Real-time Worker Notifications: Starts empty for new live users
   const [workerNotifications, setWorkerNotifications] = useState<WorkerNotification[]>(() => {
     try {
-      const saved = safeStorage.getItem('smart_india_worker_notifs_v2');
+      const saved = safeStorage.getItem('smart_india_worker_notifs_v3');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
@@ -269,25 +314,31 @@ export default function App() {
   });
   const [incomingBookingAlert, setIncomingBookingAlert] = useState<Booking | null>(null);
 
-  // Auto-save changes to persistent storage
+  // Auto-save changes to persistent storage v3
   React.useEffect(() => {
     if (activeBooking) {
-      safeStorage.setItem('smart_india_active_booking_v2', JSON.stringify(activeBooking));
+      safeStorage.setItem('smart_india_active_booking_v3', JSON.stringify(activeBooking));
     } else {
+      safeStorage.removeItem('smart_india_active_booking_v3');
       safeStorage.removeItem('smart_india_active_booking_v2');
+      safeStorage.removeItem('smart_india_active_booking');
     }
   }, [activeBooking]);
 
   React.useEffect(() => {
-    safeStorage.setItem('smart_india_workers_v2', JSON.stringify(workers));
+    safeStorage.setItem('smart_india_workers_v3', JSON.stringify(workers));
   }, [workers]);
 
   React.useEffect(() => {
-    safeStorage.setItem('smart_india_jobs_v2', JSON.stringify(jobs));
+    safeStorage.setItem('smart_india_customers_v3', JSON.stringify(customers));
+  }, [customers]);
+
+  React.useEffect(() => {
+    safeStorage.setItem('smart_india_jobs_v3', JSON.stringify(jobs));
   }, [jobs]);
 
   React.useEffect(() => {
-    safeStorage.setItem('smart_india_worker_notifs_v2', JSON.stringify(workerNotifications));
+    safeStorage.setItem('smart_india_worker_notifs_v3', JSON.stringify(workerNotifications));
   }, [workerNotifications]);
 
   // Real-time Firestore sync listener
@@ -1258,11 +1309,26 @@ export default function App() {
     soundManager.playTap();
     setActiveBooking(null);
     setWorkerNotifications([]);
-    safeStorage.removeItem('smart_india_active_booking_v2');
-    safeStorage.removeItem('smart_india_worker_notifs_v2');
-    safeStorage.removeItem('smart_india_jobs_v2');
+    const keysToRemove = [
+      'smart_india_active_booking',
+      'smart_india_active_booking_v2',
+      'smart_india_active_booking_v3',
+      'smart_india_workers',
+      'smart_india_workers_v2',
+      'smart_india_workers_v3',
+      'smart_india_jobs',
+      'smart_india_jobs_v2',
+      'smart_india_jobs_v3',
+      'smart_india_customers',
+      'smart_india_customers_v2',
+      'smart_india_customers_v3',
+      'smart_india_worker_notifs',
+      'smart_india_worker_notifs_v2',
+      'smart_india_worker_notifs_v3',
+    ];
+    keysToRemove.forEach((k) => safeStorage.removeItem(k));
     setWorkers(INITIAL_WORKERS);
-    setActiveWorkerId(INITIAL_WORKERS[0].id);
+    setActiveWorkerId(DEFAULT_STANDBY_WORKER.id);
     setCustomers(INITIAL_CUSTOMERS);
     setActiveCustomerId(INITIAL_CUSTOMERS[0].id);
     setJobs(INITIAL_JOBS);
@@ -1274,7 +1340,9 @@ export default function App() {
   const handleCancelBooking = () => {
     soundManager.playTap();
     setActiveBooking(null);
+    safeStorage.removeItem('smart_india_active_booking');
     safeStorage.removeItem('smart_india_active_booking_v2');
+    safeStorage.removeItem('smart_india_active_booking_v3');
   };
 
   // Update Customer Profile

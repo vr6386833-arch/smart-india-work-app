@@ -390,7 +390,7 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
                   className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 font-black text-xs flex items-center gap-1.5 shadow-md hover:from-emerald-400 hover:to-teal-400 transition-all active:scale-95"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>⚡ 1-Click Auto Fill OTP ({generatedOtp || '8492'})</span>
+                  <span>⚡ {language === 'hi' ? 'SMS कोड स्वतः भरें' : 'Auto Fill SMS OTP'}</span>
                 </button>
               </div>
             </div>
@@ -449,7 +449,7 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
                   type="text"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder={language === 'hi' ? 'उदा. रामेश्वर कुमार' : 'e.g. Rameshwar Kumar'}
+                  placeholder={language === 'hi' ? 'कारीगर का पूरा नाम दर्ज करें' : 'Enter worker full name'}
                   className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
                   required
                 />
@@ -695,15 +695,7 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
                         className="text-emerald-400 hover:text-emerald-300 font-bold flex items-center gap-1 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/30"
                       >
                         <Sparkles className="w-3 h-3" />
-                        <span>{language === 'hi' ? `ऑटो भरें: ${generatedOtp || '8492'}` : `Auto Fill: ${generatedOtp || '8492'}`}</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleAutoFillWorkerOtp('8492')}
-                        className="text-amber-400 hover:text-amber-300 font-semibold text-[10px]"
-                      >
-                        {language === 'hi' ? 'टेस्ट कोड: 8492' : 'Demo OTP: 8492'}
+                        <span>{language === 'hi' ? 'SMS कोड स्वतः भरें' : 'Auto Fill SMS Code'}</span>
                       </button>
                     </div>
                   </div>

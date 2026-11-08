@@ -502,7 +502,7 @@ export const WorkerIdCardModal: React.FC<WorkerIdCardModalProps> = ({
                     required
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. Rameshwar Kumar"
+                    placeholder="कारीगर का पूरा नाम"
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
                   />
                 </div>
@@ -574,7 +574,7 @@ export const WorkerIdCardModal: React.FC<WorkerIdCardModalProps> = ({
                           }}
                           className="text-emerald-400 hover:underline font-bold"
                         >
-                          Auto-fill ({cardGeneratedOtp || '8492'})
+                          {language === 'hi' ? 'स्वतः भरें' : 'Auto-fill'}
                         </button>
                       </div>
                       <div className="flex items-center gap-2">

@@ -268,22 +268,6 @@ export const OtpVerificationDialog: React.FC<OtpVerificationDialogProps> = ({
             ))}
           </div>
 
-          {/* Quick Demo Helper */}
-          <div className="text-center pt-0.5">
-            <button
-              type="button"
-              onClick={() => {
-                const code = expectedOtp || '8492';
-                setDigits(code.split(''));
-                setIsOtpMatched(true);
-                setErrorMsg(null);
-                soundManager.playSuccessCoin();
-              }}
-              className="text-[10px] text-amber-400/80 hover:text-amber-300 underline font-mono"
-            >
-              Demo Auto-Fill OTP ({expectedOtp || '8492'})
-            </button>
-          </div>
 
           {/* OTP Matched Confirmation Banner */}
           {isOtpMatched && (
