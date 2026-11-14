@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Building2, 
   X, 
@@ -26,11 +26,15 @@ import {
   Sparkles,
   Lock,
   Unlock,
-  RefreshCw
+  RefreshCw,
+  Upload,
+  Trash2
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import confetti from 'canvas-confetti';
 import { AppOwnerPaymentConfig, CommissionRecord, Language, WorkerProfile, OwnerPayoutRecord } from '../../types';
 import { soundManager } from '../../services/soundEffects';
+import { compressQrImageFile } from '../../utils/qrImageHelper';
 
 interface AppOwnerEarningsModalProps {
   isOpen: boolean;
@@ -80,7 +84,20 @@ export const AppOwnerEarningsModal: React.FC<AppOwnerEarningsModalProps> = ({
     perJobFeeRupees: appOwnerConfig.perJobFeeRupees || 10,
     totalWithdrawnToBank: appOwnerConfig.totalWithdrawnToBank || 0,
     payoutHistory: appOwnerConfig.payoutHistory || [],
+    customQrImage: appOwnerConfig.customQrImage || '',
   });
+  const qrUploadInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setFormData({
+      ...appOwnerConfig,
+      feeModel: appOwnerConfig.feeModel || 'fixed_per_job',
+      perJobFeeRupees: appOwnerConfig.perJobFeeRupees || 10,
+      totalWithdrawnToBank: appOwnerConfig.totalWithdrawnToBank || 0,
+      payoutHistory: appOwnerConfig.payoutHistory || [],
+      customQrImage: appOwnerConfig.customQrImage || '',
+    });
+  }, [appOwnerConfig]);
 
   if (!isOpen) return null;
 
@@ -825,23 +842,94 @@ export const AppOwnerEarningsModal: React.FC<AppOwnerEarningsModalProps> = ({
                 </div>
               </div>
 
-              {/* UPI ID Field (Crucial!) */}
-              <div className="space-y-1">
-                <label className="text-[11px] font-bold text-white flex items-center gap-1.5">
-                  <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>{language === 'hi' ? 'आपका UPI ID (जिसमें पैसे आएंगे):' : 'Your UPI ID (Where money is received):'}</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={formData.upiId}
-                  onChange={(e) => setFormData({ ...formData, upiId: e.target.value })}
-                  placeholder="e.g. smartindia.official@icici or 9876543210@paytm"
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs font-mono text-emerald-400 font-bold focus:outline-none focus:border-emerald-500"
-                />
-                <span className="text-[10px] text-slate-400 block">
-                  {language === 'hi' ? 'उदाहरण: yourname@okaxis, yourphone@paytm, smartindia@icici' : 'e.g., yourname@okaxis, yourphone@paytm'}
-                </span>
+              {/* UPI ID Field & Custom QR Upload (Crucial!) */}
+              <div className="p-3 rounded-2xl bg-slate-950 border border-emerald-500/30 space-y-3">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-white flex items-center gap-1.5">
+                    <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>{language === 'hi' ? 'आपका UPI ID (जिसमें पैसे आएंगे):' : 'Your UPI ID (Where money is received):'}</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.upiId}
+                    onChange={(e) => setFormData({ ...formData, upiId: e.target.value })}
+                    placeholder="e.g. 9876543210@ybl or yourname@okicici"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs font-mono text-emerald-400 font-bold focus:outline-none focus:border-emerald-500"
+                  />
+                  <span className="text-[10px] text-slate-400 block">
+                    {language === 'hi' ? 'उदाहरण: yourname@okaxis, yourphone@ybl, yourphone@paytm' : 'e.g., yourname@okaxis, yourphone@paytm'}
+                  </span>
+                </div>
+
+                {/* Live QR Preview + Custom QR Photo Upload */}
+                <div className="flex items-center gap-3 pt-1">
+                  <div className="p-2 bg-white rounded-xl shrink-0 border border-emerald-500/40">
+                    {formData.customQrImage ? (
+                      <img src={formData.customQrImage} alt="Owner QR" className="w-20 h-20 object-contain rounded" />
+                    ) : (
+                      <QRCodeSVG
+                        value={`upi://pay?pa=${encodeURIComponent(formData.upiId || 'smartindia.official@icici')}&pn=${encodeURIComponent(formData.businessName || 'Smart India Work')}&cu=INR`}
+                        size={80}
+                        level="M"
+                      />
+                    )}
+                  </div>
+                  <div className="flex-1 space-y-1.5">
+                    <span className="text-[10px] font-bold text-slate-300 block">
+                      {formData.customQrImage
+                        ? (language === 'hi' ? '✓ आपका अपलोड QR फोटो सक्रिय है' : '✓ Custom QR photo active')
+                        : (language === 'hi' ? 'ऑटो UPI QR (या अपना QR फोटो डालें)' : 'Auto UPI QR (or upload your own)')}
+                    </span>
+                    <input
+                      ref={qrUploadInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        try {
+                          const dataUrl = await compressQrImageFile(file);
+                          const updated = { ...formData, customQrImage: dataUrl };
+                          setFormData(updated);
+                          onUpdateConfig(updated);
+                          soundManager.playSuccessCoin();
+                          setSaveSuccess(true);
+                          setTimeout(() => setSaveSuccess(false), 2500);
+                        } catch {
+                          soundManager.playWarning();
+                        } finally {
+                          if (e.target) e.target.value = '';
+                        }
+                      }}
+                    />
+                    <div className="flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => qrUploadInputRef.current?.click()}
+                        className="px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold flex items-center gap-1"
+                      >
+                        <Upload className="w-3 h-3" />
+                        <span>{language === 'hi' ? 'QR फोटो अपलोड करें' : 'Upload QR Photo'}</span>
+                      </button>
+                      {formData.customQrImage && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = { ...formData, customQrImage: '' };
+                            setFormData(updated);
+                            onUpdateConfig(updated);
+                          }}
+                          className="px-2 py-1.5 rounded-lg bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px] font-bold flex items-center gap-1"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>{language === 'hi' ? 'हटाएं' : 'Remove'}</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {/* Business / Owner Name */}

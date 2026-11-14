@@ -330,6 +330,7 @@ export async function syncAppConfigToFirestore(config: AppOwnerPaymentConfig): P
       ownerName: config.ownerName,
       businessName: config.businessName,
       upiId: config.upiId,
+      customQrImage: config.customQrImage || '',
       phone: config.phone,
       bankAccountName: config.bankAccountName,
       bankAccountNumber: config.bankAccountNumber,

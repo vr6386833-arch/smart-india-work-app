@@ -2201,6 +2201,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
         isOpen={isCompanyQrModalOpen}
         onClose={() => setIsCompanyQrModalOpen(false)}
         worker={worker}
+        appOwnerConfig={appOwnerConfig}
         language={language}
         initialPurpose={isAccountBlocked ? 'unpaid_fee' : 'wallet'}
         initialAmount={isAccountBlocked ? unpaidFeeAmount : 200}

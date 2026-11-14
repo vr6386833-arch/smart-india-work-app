@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import confetti from 'canvas-confetti';
-import { WorkerProfile, Language } from '../../types';
+import { WorkerProfile, Language, AppOwnerPaymentConfig } from '../../types';
 import { soundManager } from '../../services/soundEffects';
 import { SmsDispatchService } from '../../services/smsDispatchService';
 
@@ -33,6 +33,7 @@ interface CompanyQrPaymentModalProps {
   isOpen: boolean;
   onClose: () => void;
   worker: WorkerProfile;
+  appOwnerConfig?: AppOwnerPaymentConfig;
   language: Language;
   initialPurpose?: 'unpaid_fee' | 'wallet' | 'kyc' | 'pro' | 'custom';
   initialAmount?: number;
@@ -44,6 +45,7 @@ export const CompanyQrPaymentModal: React.FC<CompanyQrPaymentModalProps> = ({
   isOpen,
   onClose,
   worker,
+  appOwnerConfig,
   language,
   initialPurpose,
   initialAmount,
@@ -53,6 +55,7 @@ export const CompanyQrPaymentModal: React.FC<CompanyQrPaymentModalProps> = ({
   const isWorkerBlocked = Boolean(worker.isBlockedDueToUnpaidFee);
   const defaultPurpose = initialPurpose || (isWorkerBlocked ? 'unpaid_fee' : 'wallet');
   const defaultAmt = initialAmount || (isWorkerBlocked ? (worker.unpaidFeeAmount || 10) : 200);
+  const [preferDynamicQr, setPreferDynamicQr] = useState(false);
 
   // Payment Options & Presets
   const [paymentPurpose, setPaymentPurpose] = useState<'unpaid_fee' | 'wallet' | 'kyc' | 'pro' | 'custom'>(defaultPurpose);
@@ -91,17 +94,18 @@ export const CompanyQrPaymentModal: React.FC<CompanyQrPaymentModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Company Official Banking & UPI Info
-  const companyVpa = 'smartindia.official@icici';
-  const companyName = 'Smart India Technologies Pvt Ltd';
+  // Company / App Owner Live Banking & UPI Info
+  const companyVpa = appOwnerConfig?.upiId?.trim() || 'smartindia.official@icici';
+  const companyName = appOwnerConfig?.businessName?.trim() || 'Smart India Work Official';
+  const customQrImage = appOwnerConfig?.customQrImage?.trim() || '';
   const companyGst = '07AAECS1492Q1ZV';
   const bankAccount = {
-    accountName: 'Smart India Technologies Private Limited',
-    accountNumber: '50200084938291',
-    ifsc: 'ICIC0001092',
-    bankName: 'ICICI Bank Ltd',
-    branch: 'Connaught Place, New Delhi',
-    accountType: 'Current Account (Corporate)'
+    accountName: appOwnerConfig?.bankAccountName?.trim() || 'Smart India Work Official',
+    accountNumber: appOwnerConfig?.bankAccountNumber?.trim() || '50200084938291',
+    ifsc: appOwnerConfig?.ifscCode?.trim() || 'ICIC0001092',
+    bankName: appOwnerConfig?.bankName?.trim() || 'ICICI Bank Ltd',
+    branch: appOwnerConfig?.branchName?.trim() || 'Primary Branch',
+    accountType: appOwnerConfig?.accountType || 'Current Account'
   };
 
   const unpaidDues = worker.unpaidFeeAmount || 10;
@@ -529,31 +533,46 @@ export const CompanyQrPaymentModal: React.FC<CompanyQrPaymentModalProps> = ({
                 <div className="bg-slate-950 rounded-2xl p-4 border border-slate-800 text-center flex flex-col items-center space-y-3 shadow-inner">
                   {/* Verified Company Header in QR */}
                   <div className="flex items-center gap-1 text-[11px] text-indigo-300 font-bold">
-                    <span>🏢 Smart India Tech Pvt Ltd • Official QR</span>
+                    <span>🏢 {companyName} • Official QR</span>
                   </div>
 
                   {/* High Contrast White QR Container */}
                   <div className="bg-white p-3.5 rounded-2xl shadow-xl inline-block border-2 border-indigo-500/40 transform transition-transform hover:scale-[1.02]">
-                    <QRCodeSVG
-                      value={upiIntentUrl}
-                      size={180}
-                      level="H"
-                      includeMargin={false}
-                      imageSettings={{
-                        src: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=80&auto=format&fit=crop&q=60",
-                        x: undefined,
-                        y: undefined,
-                        height: 30,
-                        width: 30,
-                        excavate: true,
-                      }}
-                    />
+                    {customQrImage && !preferDynamicQr ? (
+                      <img
+                        src={customQrImage}
+                        alt="App Owner UPI QR"
+                        className="w-[180px] h-[180px] object-contain rounded-lg mx-auto"
+                      />
+                    ) : (
+                      <QRCodeSVG
+                        value={upiIntentUrl}
+                        size={180}
+                        level="H"
+                        includeMargin={false}
+                      />
+                    )}
                     <div className="mt-2 text-slate-900 font-black text-xs tracking-tight flex items-center justify-center gap-1">
                       <span className="text-orange-600 font-bold">BHIM</span>
                       <span>UPI 2.0</span>
-                      <span className="text-[10px] text-slate-600 font-medium">• Verified Merchant</span>
+                      <span className="text-[10px] text-slate-600 font-medium">• Verified Owner QR</span>
                     </div>
                   </div>
+
+                  {customQrImage && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        soundManager.playTap();
+                        setPreferDynamicQr(!preferDynamicQr);
+                      }}
+                      className="text-[10px] font-bold text-indigo-300 hover:text-white underline underline-offset-2"
+                    >
+                      {preferDynamicQr
+                        ? (language === 'hi' ? 'ओनर का अपलोड QR फोटो देखें' : 'Show Owner Uploaded QR Photo')
+                        : (language === 'hi' ? `₹${currentAmount} भरा हुआ ऑटो QR देखें` : `Show Auto ₹${currentAmount} QR`)}
+                    </button>
+                  )}
 
                   {/* Amount to Pay */}
                   <div>

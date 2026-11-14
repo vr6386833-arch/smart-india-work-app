@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Building2,
   Landmark,
@@ -42,8 +42,12 @@ import {
   HelpCircle,
   TrendingUp,
   X,
-  KeyRound
+  KeyRound,
+  Upload,
+  Trash2,
+  Image as ImageIcon
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import confetti from 'canvas-confetti';
 import {
   AppOwnerPaymentConfig,
@@ -57,6 +61,7 @@ import {
 import { soundManager } from '../../services/soundEffects';
 import { safeStorage } from '../../services/safeStorage';
 import { SecurityShieldService } from '../../services/securityShieldService';
+import { compressQrImageFile } from '../../utils/qrImageHelper';
 import { PhoneFrame } from '../common/PhoneFrame';
 
 interface OwnerAppProps {
@@ -121,7 +126,7 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
     timestamp: string;
   } | null>(null);
 
-  // Bank Account Edit Modal state
+  // Bank Account & UPI QR Edit state
   const [isEditBankModalOpen, setIsEditBankModalOpen] = useState(false);
   const [tempBankConfig, setTempBankConfig] = useState({
     bankName: appOwnerConfig.bankName || 'ICICI Bank Ltd',
@@ -130,11 +135,28 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
     confirmAccountNumber: appOwnerConfig.bankAccountNumber || '50200084938291',
     ifscCode: appOwnerConfig.ifscCode || 'ICIC0001092',
     upiId: appOwnerConfig.upiId || 'smartindia.official@icici',
+    customQrImage: appOwnerConfig.customQrImage || '',
     accountType: appOwnerConfig.accountType || 'Current'
   });
   const [showAccountMask, setShowAccountMask] = useState(true);
   const [newOwnerPin, setNewOwnerPin] = useState('');
   const [pinUpdateMsg, setPinUpdateMsg] = useState<string | null>(null);
+  const [qrStatusMsg, setQrStatusMsg] = useState<string | null>(null);
+  const [isUploadingQr, setIsUploadingQr] = useState(false);
+  const qrFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setTempBankConfig({
+      bankName: appOwnerConfig.bankName || 'ICICI Bank Ltd',
+      bankAccountName: appOwnerConfig.bankAccountName || 'Smart India Work Official',
+      bankAccountNumber: appOwnerConfig.bankAccountNumber || '50200084938291',
+      confirmAccountNumber: appOwnerConfig.bankAccountNumber || '50200084938291',
+      ifscCode: appOwnerConfig.ifscCode || 'ICIC0001092',
+      upiId: appOwnerConfig.upiId || 'smartindia.official@icici',
+      customQrImage: appOwnerConfig.customQrImage || '',
+      accountType: appOwnerConfig.accountType || 'Current'
+    });
+  }, [appOwnerConfig]);
 
   // Financial Calculations
   const totalEarned = commissionRecords.reduce(
@@ -244,7 +266,7 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
     }
   };
 
-  // Save Bank Details
+  // Save Bank & UPI QR Details
   const handleSaveBankConfig = (e: React.FormEvent) => {
     e.preventDefault();
     if (tempBankConfig.bankAccountNumber !== tempBankConfig.confirmAccountNumber) {
@@ -258,7 +280,8 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
       bankAccountName: tempBankConfig.bankAccountName,
       bankAccountNumber: tempBankConfig.bankAccountNumber,
       ifscCode: tempBankConfig.ifscCode.toUpperCase(),
-      upiId: tempBankConfig.upiId,
+      upiId: tempBankConfig.upiId.trim(),
+      customQrImage: tempBankConfig.customQrImage || '',
       accountType: tempBankConfig.accountType as 'Current' | 'Savings',
       isBankVerified: true
     });
@@ -267,8 +290,84 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
     soundManager.playSuccessCoin();
     alert(
       language === 'hi'
-        ? '✓ बैंक खाता सफलतापूर्वक अपडेट व सत्यापित हो गया!'
-        : '✓ Bank account details updated & verified successfully!'
+        ? '✓ बैंक खाता, UPI ID और QR कोड सफलतापूर्वक अपडेट हो गए!'
+        : '✓ Bank account, UPI ID & QR code updated successfully!'
+    );
+  };
+
+  // Save ONLY UPI ID & Custom QR Photo quickly without needing bank re-entry
+  const handleSaveQuickUpiQr = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanedUpi = tempBankConfig.upiId.trim();
+    if (!cleanedUpi || !cleanedUpi.includes('@') || cleanedUpi.length < 5) {
+      soundManager.playWarning();
+      setQrStatusMsg(
+        language === 'hi'
+          ? '⚠️ कृपया सही UPI ID डालें (जैसे: 9876543210@ybl या name@okaxis)'
+          : '⚠️ Please enter a valid UPI ID (e.g., 9876543210@ybl)'
+      );
+      return;
+    }
+
+    onUpdateConfig({
+      ...appOwnerConfig,
+      upiId: cleanedUpi,
+      customQrImage: tempBankConfig.customQrImage || ''
+    });
+
+    soundManager.playSuccessCoin();
+    setQrStatusMsg(
+      language === 'hi'
+        ? '✓ आपका UPI ID और QR कोड लाइव सेव हो गया! अब सभी वर्कर पेमेंट सीधे आपके इसी UPI/QR पर आएंगे।'
+        : '✓ Your UPI ID & QR code saved live! All worker fee payments now go directly to your account.'
+    );
+    setTimeout(() => setQrStatusMsg(null), 5000);
+  };
+
+  const handleQrPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingQr(true);
+    setQrStatusMsg(null);
+    try {
+      const compressedDataUrl = await compressQrImageFile(file);
+      setTempBankConfig((prev) => ({ ...prev, customQrImage: compressedDataUrl }));
+      onUpdateConfig({
+        ...appOwnerConfig,
+        upiId: tempBankConfig.upiId.trim() || appOwnerConfig.upiId,
+        customQrImage: compressedDataUrl
+      });
+      soundManager.playSuccessCoin();
+      setQrStatusMsg(
+        language === 'hi'
+          ? '✓ आपका PhonePe/GPay/Paytm QR फोटो लाइव अपडेट हो गया!'
+          : '✓ Your custom UPI QR photo has been uploaded & activated live!'
+      );
+    } catch {
+      soundManager.playWarning();
+      setQrStatusMsg(
+        language === 'hi'
+          ? '⚠️ फोटो पढ़ने में समस्या आई, कृपया दूसरी साफ QR फोटो चुनें।'
+          : '⚠️ Could not read image. Please pick another clear QR photo.'
+      );
+    } finally {
+      setIsUploadingQr(false);
+      if (e.target) e.target.value = '';
+    }
+  };
+
+  const handleRemoveCustomQr = () => {
+    soundManager.playTap();
+    setTempBankConfig((prev) => ({ ...prev, customQrImage: '' }));
+    onUpdateConfig({
+      ...appOwnerConfig,
+      upiId: tempBankConfig.upiId.trim() || appOwnerConfig.upiId,
+      customQrImage: ''
+    });
+    setQrStatusMsg(
+      language === 'hi'
+        ? '✓ अपलोड QR हटाया गया। अब आपके UPI ID से ऑटो-जनरेटेड QR दिखेगा।'
+        : '✓ Custom QR photo removed. Using auto-generated UPI QR from your UPI ID.'
     );
   };
 
@@ -1442,9 +1541,148 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
     </div>
   );
 
-  // Content for Tab 5: Bank Settings
-  const renderSettingsTab = () => (
+  // Content for Tab 5: Bank & UPI QR Settings
+  const renderSettingsTab = () => {
+    const previewUpiId = tempBankConfig.upiId.trim() || appOwnerConfig.upiId || 'smartindia.official@icici';
+    const previewUpiUrl = `upi://pay?pa=${encodeURIComponent(previewUpiId)}&pn=${encodeURIComponent(appOwnerConfig.businessName || 'Smart India Work')}&cu=INR`;
+
+    return (
     <div className="max-w-2xl mx-auto space-y-6">
+      {/* Dedicated UPI ID & Custom QR Setup Card */}
+      <div className="bg-slate-900/90 border border-emerald-500/40 rounded-2xl p-6 shadow-xl space-y-5">
+        <div className="border-b border-slate-800 pb-3 flex items-start justify-between gap-3">
+          <div>
+            <h4 className="text-base font-bold text-white flex items-center gap-2">
+              <QrCode className="w-5 h-5 text-emerald-400" />
+              <span>{language === 'hi' ? 'अपना UPI ID व पेमेंट QR कोड जोड़ें' : 'Add Your Receiving UPI ID & QR Code'}</span>
+            </h4>
+            <p className="text-xs text-slate-400 mt-1">
+              {language === 'hi'
+                ? 'यहाँ अपना असली PhonePe / GPay / Paytm / BharatPe UPI ID डालें या अपना QR फोटो अपलोड करें। वर्कर जो भी ₹10 फीस या वॉलेट रिचार्ज भेजेंगे, पैसा सीधे आपके इसी खाते में आएगा।'
+                : 'Set your real UPI ID or upload your PhonePe/GPay/Paytm QR photo. All worker fee & wallet payments go directly here.'}
+            </p>
+          </div>
+          <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold shrink-0">
+            LIVE SYNC
+          </span>
+        </div>
+
+        <form onSubmit={handleSaveQuickUpiQr} className="grid grid-cols-1 md:grid-cols-5 gap-5 items-start">
+          {/* Left Side: Live QR Preview */}
+          <div className="md:col-span-2 flex flex-col items-center bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-2.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+              {tempBankConfig.customQrImage
+                ? (language === 'hi' ? 'आपका अपलोड किया QR फोटो' : 'Your Uploaded QR Photo')
+                : (language === 'hi' ? 'लाइव ऑटो UPI QR (Preview)' : 'Auto-Generated UPI QR')}
+            </span>
+
+            <div className="bg-white p-2.5 rounded-2xl shadow-lg border-2 border-emerald-500/40 flex items-center justify-center">
+              {tempBankConfig.customQrImage ? (
+                <img
+                  src={tempBankConfig.customQrImage}
+                  alt="Owner Custom UPI QR"
+                  className="w-40 h-40 object-contain rounded-lg"
+                />
+              ) : (
+                <QRCodeSVG value={previewUpiUrl} size={156} level="H" includeMargin={false} />
+              )}
+            </div>
+
+            <span className="text-[11px] font-mono text-emerald-300 font-bold break-all text-center">
+              {previewUpiId}
+            </span>
+
+            <input
+              ref={qrFileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleQrPhotoUpload}
+              className="hidden"
+            />
+
+            <button
+              type="button"
+              disabled={isUploadingQr}
+              onClick={() => qrFileInputRef.current?.click()}
+              className="w-full py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] flex items-center justify-center gap-1.5 shadow-md transition-all active:scale-95"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span>
+                {isUploadingQr
+                  ? (language === 'hi' ? 'अपलोड हो रहा है...' : 'Uploading...')
+                  : tempBankConfig.customQrImage
+                    ? (language === 'hi' ? 'QR फोटो बदलें' : 'Change QR Photo')
+                    : (language === 'hi' ? 'अपना QR फोटो अपलोड करें' : 'Upload Own QR Photo')}
+              </span>
+            </button>
+
+            {tempBankConfig.customQrImage && (
+              <button
+                type="button"
+                onClick={handleRemoveCustomQr}
+                className="w-full py-1.5 px-3 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 font-semibold text-[10px] flex items-center justify-center gap-1 transition-all"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>{language === 'hi' ? 'फोटो हटाएं (ऑटो QR चलाएं)' : 'Remove Photo (Use Auto QR)'}</span>
+              </button>
+            )}
+          </div>
+
+          {/* Right Side: UPI ID Input & Instructions */}
+          <div className="md:col-span-3 space-y-3.5 text-xs">
+            <div className="space-y-1.5">
+              <label className="font-bold text-white flex items-center gap-1.5">
+                <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
+                <span>{language === 'hi' ? 'आपका असली UPI ID (PhonePe / GPay / Paytm):' : 'Your Real Receiving UPI ID:'}</span>
+              </label>
+              <input
+                type="text"
+                value={tempBankConfig.upiId}
+                onChange={(e) => {
+                  setQrStatusMsg(null);
+                  setTempBankConfig({ ...tempBankConfig, upiId: e.target.value });
+                }}
+                placeholder="उदाहरण: 9876543210@ybl या yourname@okicici"
+                className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-xl font-mono text-emerald-300 font-bold text-sm focus:outline-none"
+                required
+              />
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                {language === 'hi'
+                  ? 'जैसे ही आप अपना UPI ID डालकर सेव करते हैं, ऊपर दिख रहा QR कोड और "Pay via PhonePe / GPay / Paytm" बटन अपनेआप आपके खाते से जुड़ जाता है।'
+                  : 'Once saved, the dynamic Bharat UPI QR and direct app deep-links automatically route payments to your UPI ID.'}
+              </p>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5 text-[11px] text-slate-300">
+              <div className="font-bold text-amber-300 flex items-center gap-1.5">
+                <ImageIcon className="w-3.5 h-3.5" />
+                <span>{language === 'hi' ? 'अपना QR कैसे लगाएं?' : '2 Easy Ways to Receive Money:'}</span>
+              </div>
+              <p>1. {language === 'hi' ? 'अपना PhonePe / GPay / Paytm / BharatPe का UPI ID ऊपर लिखें (QR अपनेआप बन जाएगा)।' : 'Enter your UPI ID above (auto-generates dynamic ₹ amount QR).'}</p>
+              <p>2. {language === 'hi' ? 'या बाईं तरफ "अपना QR फोटो अपलोड करें" दबाकर अपने PhonePe/GPay QR का स्क्रीनशॉट अपलोड कर दें।' : 'Or tap "Upload Own QR Photo" to upload your PhonePe/GPay QR screenshot.'}</p>
+            </div>
+
+            {qrStatusMsg && (
+              <div className={`p-2.5 rounded-xl text-[11px] font-bold border ${
+                qrStatusMsg.startsWith('✓')
+                  ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                  : 'bg-rose-500/15 border-rose-500/30 text-rose-300'
+              }`}>
+                {qrStatusMsg}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs shadow-lg shadow-emerald-950/40 transition-all active:scale-95"
+            >
+              {language === 'hi' ? '✓ अपना UPI ID और QR कोड सेव करें' : '✓ Save My UPI ID & QR Code'}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {/* Bank Account Details Card */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
         <div className="border-b border-slate-800 pb-3">
           <h4 className="text-base font-bold text-white flex items-center gap-2">
@@ -1559,7 +1797,8 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
         </form>
       </div>
     </div>
-  );
+    );
+  };
 
   return (
     <div className="w-full space-y-5">

@@ -50,6 +50,7 @@ export const PayAppOwnerModal: React.FC<PayAppOwnerModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [receiptRecord, setReceiptRecord] = useState<CommissionRecord | null>(null);
+  const [preferDynamicQr, setPreferDynamicQr] = useState(false);
 
   if (!isOpen) return null;
 
@@ -377,13 +378,36 @@ export const PayAppOwnerModal: React.FC<PayAppOwnerModalProps> = ({
                   <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 flex flex-col items-center text-center">
                     {/* QR Code */}
                     <div className="p-3 bg-white rounded-2xl shadow-xl ring-2 ring-emerald-500/30">
-                      <QRCodeSVG
-                        value={upiIntentUrl}
-                        size={160}
-                        level="H"
-                        includeMargin={false}
-                      />
+                      {appOwnerConfig.customQrImage && !preferDynamicQr ? (
+                        <img
+                          src={appOwnerConfig.customQrImage}
+                          alt="App Owner UPI QR"
+                          className="w-[160px] h-[160px] object-contain rounded-lg"
+                        />
+                      ) : (
+                        <QRCodeSVG
+                          value={upiIntentUrl}
+                          size={160}
+                          level="H"
+                          includeMargin={false}
+                        />
+                      )}
                     </div>
+
+                    {appOwnerConfig.customQrImage && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          soundManager.playTap();
+                          setPreferDynamicQr(!preferDynamicQr);
+                        }}
+                        className="mt-1.5 text-[10px] font-bold text-emerald-400 hover:text-emerald-300 underline underline-offset-2"
+                      >
+                        {preferDynamicQr
+                          ? (language === 'hi' ? 'ओनर का अपलोड QR फोटो देखें' : 'Show Owner Uploaded QR')
+                          : (language === 'hi' ? `₹${commissionAmount} भरा ऑटो QR देखें` : `Show Auto ₹${commissionAmount} QR`)}
+                      </button>
+                    )}
 
                     <div className="mt-2.5">
                       <span className="text-xs font-bold text-white block">

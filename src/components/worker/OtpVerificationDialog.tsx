@@ -368,8 +368,16 @@ export const OtpVerificationDialog: React.FC<OtpVerificationDialogProps> = ({
           {/* Method B: Direct UPI QR to App Owner */}
           {selectedPayMethod === 'upi_qr' && (
             <div className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2 text-center">
-              <div className="flex items-center justify-center p-2 bg-white rounded-xl max-w-[130px] mx-auto shadow-md">
-                <QRCodeSVG value={upiIntentUrl} size={114} />
+              <div className="flex items-center justify-center p-2 bg-white rounded-xl max-w-[140px] mx-auto shadow-md">
+                {appOwnerConfig?.customQrImage ? (
+                  <img
+                    src={appOwnerConfig.customQrImage}
+                    alt="App Owner UPI QR"
+                    className="w-[120px] h-[120px] object-contain rounded"
+                  />
+                ) : (
+                  <QRCodeSVG value={upiIntentUrl} size={114} />
+                )}
               </div>
 
               <div className="flex items-center justify-center gap-1 text-[10px] text-slate-400">

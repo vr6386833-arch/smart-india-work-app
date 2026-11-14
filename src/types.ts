@@ -252,6 +252,7 @@ export interface AppOwnerPaymentConfig {
   ownerName: string;
   businessName: string;
   upiId: string; // Real UPI ID to receive payments (e.g., smartindia.work@icici or user's custom UPI)
+  customQrImage?: string; // Optional uploaded static PhonePe/GPay/Paytm/BharatPe QR image (compressed data URL)
   phone: string;
   bankAccountName: string;
   bankAccountNumber: string;
