@@ -13,7 +13,7 @@ import {
   limit
 } from 'firebase/firestore';
 import firebaseConfigJson from '../../firebase-applet-config.json';
-import { Booking, WorkerProfile, CustomerProfile, CommissionRecord, OwnerPayoutRecord, JobPost } from '../types';
+import { Booking, WorkerProfile, CustomerProfile, CommissionRecord, OwnerPayoutRecord, JobPost, ChatMessage, AppOwnerPaymentConfig } from '../types';
 
 let app: FirebaseApp;
 let db: Firestore;
@@ -61,6 +61,7 @@ export async function syncBookingToFirestore(booking: Booking): Promise<void> {
     const bookingRef = doc(db, 'bookings', booking.id);
     await setDoc(bookingRef, {
       ...booking,
+      updatedAtMs: Date.now(),
       updatedAt: serverTimestamp(),
     }, { merge: true });
   } catch (err) {
@@ -191,8 +192,8 @@ export function listenToJobs(callback: (jobs: JobPost[]) => void): () => void {
     const jobsCol = collection(db, 'jobs');
     const unsub = onSnapshot(jobsCol, (snapshot) => {
       const list: JobPost[] = [];
-      snapshot.forEach((doc) => {
-        list.push(doc.data() as JobPost);
+      snapshot.forEach((docSnap) => {
+        list.push(docSnap.data() as JobPost);
       });
       if (list.length > 0) {
         callback(list);
@@ -203,6 +204,164 @@ export function listenToJobs(callback: (jobs: JobPost[]) => void): () => void {
     return unsub;
   } catch (e) {
     console.warn('Unable to subscribe to jobs:', e);
+    return () => {};
+  }
+}
+
+// Real-time listener for Bookings in Firestore (cross-device live sync)
+export function listenToBookings(callback: (bookings: Booking[]) => void): () => void {
+  if (!db) return () => {};
+  try {
+    const bookingsCol = collection(db, 'bookings');
+    const unsub = onSnapshot(bookingsCol, (snapshot) => {
+      const list: Booking[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as Booking & { updatedAtMs?: number };
+        if (
+          data?.id &&
+          !data.id.startsWith('BK_9081') &&
+          !data.id.startsWith('BK_88') &&
+          !data.workerName?.includes('Mukesh') &&
+          !data.workerName?.includes('Rameshwar')
+        ) {
+          list.push(data);
+        }
+      });
+      callback(list);
+    }, (err) => {
+      console.warn('Firestore bookings subscription notice:', err);
+    });
+    return unsub;
+  } catch (e) {
+    console.warn('Unable to subscribe to bookings:', e);
+    return () => {};
+  }
+}
+
+// Real-time listener for Platform Commissions in Firestore
+export function listenToCommissions(callback: (records: CommissionRecord[]) => void): () => void {
+  if (!db) return () => {};
+  try {
+    const commCol = collection(db, 'commissions');
+    const unsub = onSnapshot(commCol, (snapshot) => {
+      const list: CommissionRecord[] = [];
+      snapshot.forEach((docSnap) => {
+        list.push(docSnap.data() as CommissionRecord);
+      });
+      if (list.length > 0) {
+        callback(list);
+      }
+    }, (err) => {
+      console.warn('Firestore commissions subscription notice:', err);
+    });
+    return unsub;
+  } catch (e) {
+    console.warn('Unable to subscribe to commissions:', e);
+    return () => {};
+  }
+}
+
+// Real-time listener for Owner Bank Payouts in Firestore
+export function listenToPayouts(callback: (payouts: OwnerPayoutRecord[]) => void): () => void {
+  if (!db) return () => {};
+  try {
+    const payoutCol = collection(db, 'owner_payouts');
+    const unsub = onSnapshot(payoutCol, (snapshot) => {
+      const list: OwnerPayoutRecord[] = [];
+      snapshot.forEach((docSnap) => {
+        list.push(docSnap.data() as OwnerPayoutRecord);
+      });
+      if (list.length > 0) {
+        callback(list);
+      }
+    }, (err) => {
+      console.warn('Firestore payouts subscription notice:', err);
+    });
+    return unsub;
+  } catch (e) {
+    console.warn('Unable to subscribe to payouts:', e);
+    return () => {};
+  }
+}
+
+// Sync real-time chat message to Firestore
+export async function syncChatMessageToFirestore(message: ChatMessage): Promise<void> {
+  if (!db) return;
+  try {
+    const msgRef = doc(db, 'chat_messages', message.id);
+    await setDoc(msgRef, {
+      ...message,
+      createdAtMs: Date.now(),
+      createdAt: serverTimestamp(),
+    }, { merge: true });
+  } catch (err) {
+    console.error('Error syncing chat message to cloud:', err);
+  }
+}
+
+// Real-time listener for Chat Messages in Firestore
+export function listenToChatMessages(callback: (messages: ChatMessage[]) => void): () => void {
+  if (!db) return () => {};
+  try {
+    const msgCol = collection(db, 'chat_messages');
+    const unsub = onSnapshot(msgCol, (snapshot) => {
+      const list: (ChatMessage & { createdAtMs?: number })[] = [];
+      snapshot.forEach((docSnap) => {
+        list.push(docSnap.data() as ChatMessage & { createdAtMs?: number });
+      });
+      list.sort((a, b) => (a.createdAtMs || 0) - (b.createdAtMs || 0));
+      callback(list);
+    }, (err) => {
+      console.warn('Firestore chat subscription notice:', err);
+    });
+    return unsub;
+  } catch (e) {
+    console.warn('Unable to subscribe to chat messages:', e);
+    return () => {};
+  }
+}
+
+// Sync App Owner config (UPI, Bank, Fee settings) to Firestore
+export async function syncAppConfigToFirestore(config: AppOwnerPaymentConfig): Promise<void> {
+  if (!db) return;
+  try {
+    const cfgRef = doc(db, 'app_config', 'owner_settings');
+    await setDoc(cfgRef, {
+      ownerName: config.ownerName,
+      businessName: config.businessName,
+      upiId: config.upiId,
+      phone: config.phone,
+      bankAccountName: config.bankAccountName,
+      bankAccountNumber: config.bankAccountNumber,
+      ifscCode: config.ifscCode,
+      bankName: config.bankName,
+      feeModel: config.feeModel,
+      perJobFeeRupees: config.perJobFeeRupees,
+      commissionRatePercent: config.commissionRatePercent,
+      autoDeductFromWallet: config.autoDeductFromWallet,
+      totalWithdrawnToBank: config.totalWithdrawnToBank || 0,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+  } catch (err) {
+    console.error('Error syncing app config to cloud:', err);
+  }
+}
+
+// Real-time listener for App Owner Config in Firestore
+export function listenToAppConfig(callback: (config: Partial<AppOwnerPaymentConfig>) => void): () => void {
+  if (!db) return () => {};
+  try {
+    const cfgRef = doc(db, 'app_config', 'owner_settings');
+    const unsub = onSnapshot(cfgRef, (docSnap) => {
+      if (docSnap.exists()) {
+        callback(docSnap.data() as Partial<AppOwnerPaymentConfig>);
+      }
+    }, (err) => {
+      console.warn('Firestore app config notice:', err);
+    });
+    return unsub;
+  } catch (e) {
+    console.warn('Unable to subscribe to app config:', e);
     return () => {};
   }
 }

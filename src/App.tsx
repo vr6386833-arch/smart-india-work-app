@@ -39,9 +39,16 @@ import {
   syncCustomerToFirestore,
   syncCommissionToFirestore, 
   syncPayoutToFirestore,
+  syncChatMessageToFirestore,
+  syncAppConfigToFirestore,
   listenToWorkers,
   listenToCustomers,
-  listenToJobs
+  listenToJobs,
+  listenToBookings,
+  listenToCommissions,
+  listenToPayouts,
+  listenToChatMessages,
+  listenToAppConfig
 } from './services/firebase';
 import { Header } from './components/common/Header';
 import { PhoneFrame } from './components/common/PhoneFrame';
@@ -440,7 +447,24 @@ export default function App() {
     safeStorage.setItem('smart_india_worker_notifs_v3', JSON.stringify(workerNotifications));
   }, [workerNotifications]);
 
-  // Real-time Firestore sync listener
+  const activeCustomerIdRef = React.useRef(activeCustomerId);
+  const activeWorkerIdRef = React.useRef(activeWorkerId);
+  const activeViewRef = React.useRef(activeView);
+  const alertedBookingIdsRef = React.useRef<Set<string>>(new Set());
+
+  React.useEffect(() => {
+    activeCustomerIdRef.current = activeCustomerId;
+  }, [activeCustomerId]);
+
+  React.useEffect(() => {
+    activeWorkerIdRef.current = activeWorkerId;
+  }, [activeWorkerId]);
+
+  React.useEffect(() => {
+    activeViewRef.current = activeView;
+  }, [activeView]);
+
+  // Real-time Firestore sync listeners (cross-device live sync)
   React.useEffect(() => {
     const unsubWorkers = listenToWorkers((cloudWorkers) => {
       if (cloudWorkers && cloudWorkers.length > 0) {
@@ -509,10 +533,125 @@ export default function App() {
       }
     });
 
+    const unsubBookings = listenToBookings((cloudBookings) => {
+      if (!cloudBookings || cloudBookings.length === 0) return;
+      const sorted = [...cloudBookings].sort(
+        (a: Booking & { updatedAtMs?: number }, b: Booking & { updatedAtMs?: number }) =>
+          (b.updatedAtMs || 0) - (a.updatedAtMs || 0)
+      );
+
+      const curWorkerId = activeWorkerIdRef.current;
+      const curCustId = activeCustomerIdRef.current;
+      const curView = activeViewRef.current;
+
+      const relevant = sorted.filter((b) =>
+        curView === 'dual'
+          ? true
+          : b.workerId === curWorkerId || b.customerId === curCustId
+      );
+
+      if (relevant.length === 0) return;
+
+      const latest = relevant[0];
+      if ((latest as { status: string }).status === 'cancelled') {
+        setActiveBooking((prev) => (prev && prev.id === latest.id ? null : prev));
+        return;
+      }
+
+      setActiveBooking((prev) => {
+        if (
+          prev &&
+          prev.id === latest.id &&
+          prev.status === latest.status &&
+          prev.workerLocationProgress === latest.workerLocationProgress &&
+          prev.isOtpVerified === latest.isOtpVerified &&
+          prev.isLocationShared === latest.isLocationShared &&
+          prev.paymentStatus === latest.paymentStatus &&
+          prev.customerRating === latest.customerRating
+        ) {
+          return prev;
+        }
+        return latest;
+      });
+
+      if (
+        latest.status === 'requested' &&
+        latest.workerId === curWorkerId &&
+        !alertedBookingIdsRef.current.has(latest.id)
+      ) {
+        alertedBookingIdsRef.current.add(latest.id);
+        setIncomingBookingAlert(latest);
+        setWorkerNotifications((prev) => {
+          if (prev.some((n) => n.bookingId === latest.id)) return prev;
+          const incomingNotif: WorkerNotification = {
+            id: `notif_cloud_${latest.id}`,
+            workerId: latest.workerId,
+            type: 'new_booking',
+            title: `🚨 [${latest.serviceCategory}] नया काम बुक हुआ - स्वीकार करें (${latest.customerName})`,
+            titleHi: `🚨 [${latest.serviceCategory}] नया काम बुक हुआ - स्वीकार करें (${latest.customerName})`,
+            message: `Customer ${latest.customerName} booked you in ${latest.customerLocality}. Accept job to unlock customer location.`,
+            messageHi: `ग्राहक ${latest.customerName} ने ${latest.customerLocality} में [${latest.serviceCategory}] काम के लिए आपको बुक किया है।`,
+            time: 'Live Now',
+            isRead: false,
+            bookingId: latest.id,
+            customerName: latest.customerName,
+            customerPhone: latest.customerPhone,
+            customerAddress: latest.customerAddress,
+            customerLocality: latest.customerLocality,
+            category: latest.serviceCategory,
+            amount: latest.estimatedAmount,
+          };
+          return [incomingNotif, ...prev];
+        });
+        soundManager.playIncomingJobAlert();
+      }
+    });
+
+    const unsubCommissions = listenToCommissions((cloudRecords) => {
+      if (cloudRecords && cloudRecords.length > 0) {
+        setCommissionRecords((prev) => {
+          const map = new Map(prev.map((r) => [r.id, r]));
+          cloudRecords.forEach((r) => map.set(r.id, { ...map.get(r.id), ...r }));
+          return Array.from(map.values());
+        });
+      }
+    });
+
+    const unsubPayouts = listenToPayouts((cloudPayouts) => {
+      if (cloudPayouts && cloudPayouts.length > 0) {
+        setOwnerPayouts((prev) => {
+          const map = new Map(prev.map((p) => [p.id, p]));
+          cloudPayouts.forEach((p) => map.set(p.id, { ...map.get(p.id), ...p }));
+          return Array.from(map.values());
+        });
+      }
+    });
+
+    const unsubChat = listenToChatMessages((cloudMsgs) => {
+      if (cloudMsgs && cloudMsgs.length > 0) {
+        setChatMessages(cloudMsgs);
+      }
+    });
+
+    const unsubConfig = listenToAppConfig((cloudCfg) => {
+      if (cloudCfg && cloudCfg.upiId) {
+        setAppOwnerConfig((prev) => ({
+          ...prev,
+          ...cloudCfg,
+          ownerSecurityPin: prev.ownerSecurityPin, // Keep device PIN authority local unless explicitly changed
+        }));
+      }
+    });
+
     return () => {
       unsubWorkers();
       unsubCustomers();
       unsubJobs();
+      unsubBookings();
+      unsubCommissions();
+      unsubPayouts();
+      unsubChat();
+      unsubConfig();
     };
   }, []);
 
@@ -641,7 +780,7 @@ export default function App() {
       workerRating: worker.rating,
       serviceCategory: worker.category,
       serviceSubCategory: worker.subSkills[0] || 'General Service',
-      arrivalOtp: '8492', // Standard simulated OTP
+      arrivalOtp: String(Math.floor(1000 + Math.random() * 9000)),
       isOtpVerified: false,
       microFeeDeducted: 10,
       estimatedAmount: worker.dailyRate,
@@ -652,8 +791,9 @@ export default function App() {
       workerLocationProgress: 0,
     };
 
+    alertedBookingIdsRef.current.add(newBooking.id);
     setActiveBooking(newBooking);
-    // Switch active worker to booked worker so worker view updates immediately to this specialist
+    // Switch active worker to booked worker so dual simulator updates immediately
     setActiveWorkerId(worker.id);
 
     // Create immediate Worker Notification strictly for this matching trade worker
@@ -791,6 +931,12 @@ export default function App() {
 
   // 2c. Worker Declines Incoming Booking
   const handleDeclineIncomingBooking = (bookingId?: string) => {
+    if (activeBooking) {
+      syncBookingToFirestore({
+        ...activeBooking,
+        status: 'cancelled' as Booking['status'],
+      });
+    }
     setActiveBooking(null);
     setIncomingBookingAlert(null);
     soundManager.playWarning();
@@ -801,7 +947,7 @@ export default function App() {
     const newBooking: Booking = {
       id: `BK_${Math.floor(1000 + Math.random() * 9000)}`,
       jobId: job.id,
-      customerId: customer.id,
+      customerId: job.customerId || customer.id,
       customerName: job.customerName,
       customerPhone: job.customerPhone,
       customerAddress: job.customerAddress,
@@ -813,7 +959,7 @@ export default function App() {
       workerRating: activeWorker.rating,
       serviceCategory: job.category,
       serviceSubCategory: job.subCategory,
-      arrivalOtp: '8492',
+      arrivalOtp: String(Math.floor(1000 + Math.random() * 9000)),
       isOtpVerified: false,
       microFeeDeducted: 10,
       estimatedAmount: job.budget,
@@ -824,27 +970,32 @@ export default function App() {
       workerLocationProgress: 35,
     };
 
-    // Update job status to assigned
+    alertedBookingIdsRef.current.add(newBooking.id);
+    const updatedJob: JobPost = { ...job, status: 'assigned', assignedWorkerId: activeWorker.id };
     setJobs((prev) =>
-      prev.map((j) => (j.id === job.id ? { ...j, status: 'assigned', assignedWorkerId: activeWorker.id } : j))
+      prev.map((j) => (j.id === job.id ? updatedJob : j))
     );
+    syncJobToFirestore(updatedJob);
     setActiveBooking(newBooking);
+    syncBookingToFirestore(newBooking);
   };
 
   // 4. Worker Toggles Duty Online/Offline
   const handleToggleOnline = (workerId?: string) => {
     const targetId = workerId || activeWorkerId;
     setWorkers((prev) =>
-      prev.map((w) =>
-        w.id === targetId || (!workerId && w.id === prev[0].id)
-          ? { 
-              ...w, 
-              isOnline: !w.isOnline,
-              // If going online, unpause ID if it was paused
-              isIdPaused: !w.isOnline ? false : w.isIdPaused,
-            }
-          : w
-      )
+      prev.map((w) => {
+        if (w.id === targetId || (!workerId && w.id === prev[0]?.id)) {
+          const updated: WorkerProfile = {
+            ...w,
+            isOnline: !w.isOnline,
+            isIdPaused: !w.isOnline ? false : w.isIdPaused,
+          };
+          syncWorkerToFirestore(updated);
+          return updated;
+        }
+        return w;
+      })
     );
   };
 
@@ -856,21 +1007,23 @@ export default function App() {
     pauseUntil?: string
   ) => {
     setWorkers((prev) =>
-      prev.map((w) =>
-        w.id === workerId
-          ? {
-              ...w,
-              isIdPaused: isPaused,
-              idPausedReason: isPaused ? (reason || 'आज काम करने का मन नहीं है (Taking a break)') : undefined,
-              idPausedAt: isPaused
-                ? new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
-                : undefined,
-              idPausedUntil: isPaused ? (pauseUntil || 'जब तक खुद चालू न करें') : undefined,
-              // When ID is paused, set offline so no jobs come
-              isOnline: isPaused ? false : true,
-            }
-          : w
-      )
+      prev.map((w) => {
+        if (w.id === workerId) {
+          const updated: WorkerProfile = {
+            ...w,
+            isIdPaused: isPaused,
+            idPausedReason: isPaused ? (reason || 'आज काम करने का मन नहीं है (Taking a break)') : undefined,
+            idPausedAt: isPaused
+              ? new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+              : undefined,
+            idPausedUntil: isPaused ? (pauseUntil || 'जब तक खुद चालू न करें') : undefined,
+            isOnline: isPaused ? false : true,
+          };
+          syncWorkerToFirestore(updated);
+          return updated;
+        }
+        return w;
+      })
     );
     if (isPaused) {
       soundManager.playTap();
@@ -882,35 +1035,40 @@ export default function App() {
   // 5. Worker Starts Trip (Simulate movement progress)
   const handleStartTrip = () => {
     if (!activeBooking) return;
-    setActiveBooking({
+    const updated: Booking = {
       ...activeBooking,
       status: 'worker_en_route',
       workerLocationProgress: 60,
-    });
+    };
+    setActiveBooking(updated);
+    syncBookingToFirestore(updated);
   };
 
   // 6. Worker Reaches Location
   const handleReachLocation = () => {
     if (!activeBooking) return;
-    setActiveBooking({
+    const updated: Booking = {
       ...activeBooking,
       status: 'arrived_at_door',
       workerLocationProgress: 100,
-    });
+    };
+    setActiveBooking(updated);
+    syncBookingToFirestore(updated);
   };
 
   // 6b. Real-time Ola Live GPS Tracking Progress Update
   const handleUpdateBookingProgress = (progress: number) => {
     if (!activeBooking) return;
-    setActiveBooking((prev) =>
-      prev
-        ? {
-            ...prev,
-            workerLocationProgress: progress,
-            status: progress >= 100 ? 'arrived_at_door' : prev.status === 'arrived_at_door' && progress < 100 ? 'worker_en_route' : prev.status,
-          }
-        : null
-    );
+    setActiveBooking((prev) => {
+      if (!prev) return null;
+      const updated: Booking = {
+        ...prev,
+        workerLocationProgress: progress,
+        status: progress >= 100 ? 'arrived_at_door' : prev.status === 'arrived_at_door' && progress < 100 ? 'worker_en_route' : prev.status,
+      };
+      syncBookingToFirestore(updated);
+      return updated;
+    });
   };
 
   // 7. Core OTP Verification (Worker enters Customer's 4-digit arrival OTP & pays flat ₹10 to App Owner)
@@ -929,7 +1087,14 @@ export default function App() {
       newBal = Math.max(0, currentBal - fee);
       // Deduct from worker balance
       setWorkers((prev) =>
-        prev.map((w) => (w.id === activeWorker.id ? { ...w, walletBalance: newBal } : w))
+        prev.map((w) => {
+          if (w.id === activeWorker.id) {
+            const updated = { ...w, walletBalance: newBal };
+            syncWorkerToFirestore(updated);
+            return updated;
+          }
+          return w;
+        })
       );
 
       // Create wallet passbook transaction
@@ -941,7 +1106,7 @@ export default function App() {
         reason: 'commission_fee',
         description: `₹${fee} Job Meeting Fee to App Owner (${appOwnerConfig.upiId})`,
         date: 'Just now',
-        referenceId: commissionRecord?.upiTxnId || `FEE/BK_8492/${Date.now().toString().slice(-4)}`,
+        referenceId: commissionRecord?.upiTxnId || `FEE/${activeBooking.id}/${Date.now().toString().slice(-4)}`,
         balanceAfter: newBal,
       };
 
@@ -967,9 +1132,11 @@ export default function App() {
     };
 
     setCommissionRecords((prev) => [finalRecord, ...prev]);
+    syncCommissionToFirestore(finalRecord);
+    AwsCloudService.syncCommissionToAws(finalRecord);
 
     // Update booking status to in_progress
-    setActiveBooking({
+    const updatedBooking: Booking = {
       ...activeBooking,
       isOtpVerified: true,
       status: 'in_progress',
@@ -977,7 +1144,9 @@ export default function App() {
       meetingFeePaid: true,
       meetingFeeTxnId: finalRecord.upiTxnId,
       meetingFeeMethod: method,
-    });
+    };
+    setActiveBooking(updatedBooking);
+    syncBookingToFirestore(updatedBooking);
   };
 
   // 7b. Worker Enters OTP but Skips / Fails Fee Payment -> Trigger Automated Account Lockout
@@ -985,14 +1154,16 @@ export default function App() {
     if (!activeBooking) return;
 
     // Work starts for customer
-    setActiveBooking({
+    const updatedBooking: Booking = {
       ...activeBooking,
       isOtpVerified: true,
       status: 'in_progress',
       workerLocationProgress: 100,
       meetingFeePaid: false,
       microFeeDeducted: 0,
-    });
+    };
+    setActiveBooking(updatedBooking);
+    syncBookingToFirestore(updatedBooking);
 
     const lockReason = language === 'hi'
       ? `ग्राहक (${activeBooking.customerName}) का OTP डालने के बाद ₹${unpaidFee} ऐप फीस जमा नहीं की गई।`
@@ -1000,19 +1171,22 @@ export default function App() {
 
     // Enforce lock on active worker: blocks accepting new job leads
     setWorkers((prev) =>
-      prev.map((w) =>
-        w.id === activeWorker.id
-          ? {
-              ...w,
-              isBlockedDueToUnpaidFee: true,
-              unpaidFeeAmount: unpaidFee,
-              unpaidFeeReason: lockReason,
-              unpaidCustomerName: activeBooking.customerName,
-              unpaidBookingId: activeBooking.id,
-              pendingCommissionDues: (w.pendingCommissionDues || 0) + unpaidFee,
-            }
-          : w
-      )
+      prev.map((w) => {
+        if (w.id === activeWorker.id) {
+          const updated: WorkerProfile = {
+            ...w,
+            isBlockedDueToUnpaidFee: true,
+            unpaidFeeAmount: unpaidFee,
+            unpaidFeeReason: lockReason,
+            unpaidCustomerName: activeBooking.customerName,
+            unpaidBookingId: activeBooking.id,
+            pendingCommissionDues: (w.pendingCommissionDues || 0) + unpaidFee,
+          };
+          syncWorkerToFirestore(updated);
+          return updated;
+        }
+        return w;
+      })
     );
 
     soundManager.playWarning();
@@ -1052,19 +1226,22 @@ export default function App() {
 
     // Unlock worker from lockout
     setWorkers((prev) =>
-      prev.map((w) =>
-        w.id === workerId
-          ? {
-              ...w,
-              isBlockedDueToUnpaidFee: false,
-              unpaidFeeAmount: 0,
-              unpaidFeeReason: undefined,
-              unpaidCustomerName: undefined,
-              unpaidBookingId: undefined,
-              pendingCommissionDues: Math.max(0, (w.pendingCommissionDues || 0) - amount),
-            }
-          : w
-      )
+      prev.map((w) => {
+        if (w.id === workerId) {
+          const updated: WorkerProfile = {
+            ...w,
+            isBlockedDueToUnpaidFee: false,
+            unpaidFeeAmount: 0,
+            unpaidFeeReason: undefined,
+            unpaidCustomerName: undefined,
+            unpaidBookingId: undefined,
+            pendingCommissionDues: Math.max(0, (w.pendingCommissionDues || 0) - amount),
+          };
+          syncWorkerToFirestore(updated);
+          return updated;
+        }
+        return w;
+      })
     );
 
     soundManager.playSuccessCoin();
@@ -1073,18 +1250,21 @@ export default function App() {
   // 7d. Admin Manual Unlock Worker
   const handleUnlockWorkerByAdmin = (workerId: string) => {
     setWorkers((prev) =>
-      prev.map((w) =>
-        w.id === workerId
-          ? {
-              ...w,
-              isBlockedDueToUnpaidFee: false,
-              unpaidFeeAmount: 0,
-              unpaidFeeReason: undefined,
-              unpaidCustomerName: undefined,
-              unpaidBookingId: undefined,
-            }
-          : w
-      )
+      prev.map((w) => {
+        if (w.id === workerId) {
+          const updated: WorkerProfile = {
+            ...w,
+            isBlockedDueToUnpaidFee: false,
+            unpaidFeeAmount: 0,
+            unpaidFeeReason: undefined,
+            unpaidCustomerName: undefined,
+            unpaidBookingId: undefined,
+          };
+          syncWorkerToFirestore(updated);
+          return updated;
+        }
+        return w;
+      })
     );
     soundManager.playSuccessCoin();
   };
@@ -1131,7 +1311,7 @@ export default function App() {
     const isLeadFeeSettled = activeBooking.meetingFeePaid || false;
     const pendingDueToAdd = isLeadFeeSettled ? 0 : leadFee;
 
-    setActiveBooking({
+    const completedBooking: Booking = {
       ...activeBooking,
       status: 'completed',
       finalAmount: finalAmt,
@@ -1141,7 +1321,9 @@ export default function App() {
       platformCommissionRate: 0, // 0% commission (no 10% deduction!)
       platformCommissionAmount: isLeadFeeSettled ? 0 : leadFee,
       commissionPaymentStatus: isLeadFeeSettled ? 'paid_wallet' : 'pending',
-    });
+    };
+    setActiveBooking(completedBooking);
+    syncBookingToFirestore(completedBooking);
 
     // Automatically save completed job into Worker Data Save System
     try {
@@ -1159,15 +1341,18 @@ export default function App() {
     }
 
     setWorkers((prev) =>
-      prev.map((w) =>
-        w.id === activeWorker.id
-          ? { 
-              ...w, 
-              completedJobsCount: w.completedJobsCount + 1,
-              pendingCommissionDues: (w.pendingCommissionDues || 0) + pendingDueToAdd,
-            }
-          : w
-      )
+      prev.map((w) => {
+        if (w.id === activeWorker.id) {
+          const updated: WorkerProfile = {
+            ...w,
+            completedJobsCount: w.completedJobsCount + 1,
+            pendingCommissionDues: (w.pendingCommissionDues || 0) + pendingDueToAdd,
+          };
+          syncWorkerToFirestore(updated);
+          return updated;
+        }
+        return w;
+      })
     );
   };
 
@@ -1180,12 +1365,14 @@ export default function App() {
 
     // Update active booking status
     if (activeBooking) {
-      setActiveBooking({
+      const updatedBooking: Booking = {
         ...activeBooking,
         commissionPaymentStatus: method === 'wallet_deduct' ? 'paid_wallet' : 'paid_upi',
         commissionTxnId: record.upiTxnId,
         commissionPaidAt: record.paidAt,
-      });
+      };
+      setActiveBooking(updatedBooking);
+      syncBookingToFirestore(updatedBooking);
     }
 
     // Update worker state (reduce pending dues, add to total paid)
@@ -1198,12 +1385,14 @@ export default function App() {
             ? Math.max(0, w.walletBalance - record.commissionAmount) 
             : w.walletBalance;
 
-          return {
+          const updated: WorkerProfile = {
             ...w,
             walletBalance: newBal,
             pendingCommissionDues: newPending,
             totalCommissionPaid: newPaid,
           };
+          syncWorkerToFirestore(updated);
+          return updated;
         }
         return w;
       })
@@ -1229,11 +1418,13 @@ export default function App() {
   // 9. Customer Rates Worker
   const handleRateWorker = (bookingId: string, stars: number, review: string) => {
     if (activeBooking && activeBooking.id === bookingId) {
-      setActiveBooking({
+      const ratedBooking: Booking = {
         ...activeBooking,
         customerRating: stars,
         customerReview: review,
-      });
+      };
+      setActiveBooking(ratedBooking);
+      syncBookingToFirestore(ratedBooking);
     }
 
     setWorkers((prev) =>
@@ -1241,7 +1432,9 @@ export default function App() {
         if (w.id === activeWorker.id) {
           const newCount = w.reviewsCount + 1;
           const newRating = Number(((w.rating * w.reviewsCount + stars) / newCount).toFixed(2));
-          return { ...w, rating: newRating, reviewsCount: newCount };
+          const updated = { ...w, rating: newRating, reviewsCount: newCount };
+          syncWorkerToFirestore(updated);
+          return updated;
         }
         return w;
       })
@@ -1253,7 +1446,14 @@ export default function App() {
     const newBal = activeWorker.walletBalance + amount;
 
     setWorkers((prev) =>
-      prev.map((w) => (w.id === activeWorker.id ? { ...w, walletBalance: newBal } : w))
+      prev.map((w) => {
+        if (w.id === activeWorker.id) {
+          const updated = { ...w, walletBalance: newBal };
+          syncWorkerToFirestore(updated);
+          return updated;
+        }
+        return w;
+      })
     );
 
     const newTx: WalletTransaction = {
@@ -1274,9 +1474,14 @@ export default function App() {
   // 11. Worker KYC update
   const handleUpdateKyc = (aadhar: string, pan: string) => {
     setWorkers((prev) =>
-      prev.map((w) =>
-        w.id === activeWorker.id ? { ...w, isAadhaarVerified: true, isPanVerified: true } : w
-      )
+      prev.map((w) => {
+        if (w.id === activeWorker.id) {
+          const updated = { ...w, isAadhaarVerified: true, isPanVerified: true };
+          syncWorkerToFirestore(updated);
+          return updated;
+        }
+        return w;
+      })
     );
   };
 
@@ -1285,7 +1490,7 @@ export default function App() {
     setWorkers((prev) =>
       prev.map((w) => {
         if (w.id === activeWorker.id) {
-          return {
+          const updated: WorkerProfile = {
             ...w,
             portfolio: [
               {
@@ -1298,13 +1503,15 @@ export default function App() {
               ...w.portfolio,
             ],
           };
+          syncWorkerToFirestore(updated);
+          return updated;
         }
         return w;
       })
     );
   };
 
-  // 13. Send Chat Message
+  // 13. Send Real-Time Cross-Device Chat Message via Firestore
   const handleSendMessage = (
     text: string,
     options?: {
@@ -1320,8 +1527,8 @@ export default function App() {
     const isWorkerSender = activeView === 'worker';
     const sanitizedText = SecurityShieldService.sanitizeInput(text);
     const newMsg: ChatMessage = {
-      id: `msg_${Date.now()}`,
-      bookingId: activeBooking?.id || 'BK_9081',
+      id: `msg_${Date.now()}_${Math.floor(Math.random() * 999)}`,
+      bookingId: activeBooking?.id || 'live_booking_chat',
       senderRole: isWorkerSender ? 'worker' : 'customer',
       senderName: isWorkerSender ? activeWorker.name : customer.name,
       text: sanitizedText,
@@ -1333,40 +1540,9 @@ export default function App() {
       callDurationSeconds: options?.callDuration,
     };
     setChatMessages((prev) => [...prev, newMsg]);
+    syncChatMessageToFirestore(newMsg);
     if (!options?.isCallEvent) {
       soundManager.playMessageSent();
-    }
-
-    // Realistic auto-reply simulation when communicating with partner
-    if (!options?.isCallEvent && !text.startsWith('📞')) {
-      setTimeout(() => {
-        const replyTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const autoRepliesCustomer = [
-          'जी भैया, मैं बस 5 मिनट में पहुंच रहा हूँ। बाइक पार्क कर रहा हूँ।',
-          'हाँ जी सर, मुझे लोकेशन मिल गई है। सीढ़ियों से ऊपर आ रहा हूँ।',
-          'जी, मैं जरूरी टूल्स और सामान लेकर आ गया हूँ। बस गेट पर हूँ।',
-          'नमस्ते, कार्य शुरू करने के लिए 4-अंकों का OTP बता दीजिए प्लीज।'
-        ];
-        const autoRepliesWorker = [
-          'हाँ भैया, गेट खुला है। लिफ्ट से 3rd फ्लोर आ जाइए।',
-          'ठीक है भैया, मैं मुख्य गेट पर खड़ा हूँ।',
-          'OTP कोड तैयार है, आते ही बता दूंगा।',
-          'काम ध्यान से करिएगा, धन्यवाद।'
-        ];
-        const replies = isWorkerSender ? autoRepliesWorker : autoRepliesCustomer;
-        const randomReply = replies[Math.floor(Math.random() * replies.length)];
-
-        const replyMsg: ChatMessage = {
-          id: `msg_reply_${Date.now()}`,
-          bookingId: activeBooking?.id || 'BK_9081',
-          senderRole: isWorkerSender ? 'customer' : 'worker',
-          senderName: isWorkerSender ? customer.name : activeWorker.name,
-          text: randomReply,
-          timestamp: replyTime,
-        };
-        setChatMessages((prev) => [...prev, replyMsg]);
-        soundManager.playMessageReceived();
-      }, 1800);
     }
   };
 
@@ -1384,7 +1560,7 @@ export default function App() {
       createdAt: 'Just now',
       messages: [
         { sender: 'user', text: subject, time: 'Just now' },
-        { sender: 'support', text: 'Namaste! Support executive is reviewing your request. We will update you in 15 mins.', time: 'Just now' }
+        { sender: 'support', text: 'Namaste! Your support ticket has been logged.', time: 'Just now' }
       ]
     };
     setSupportTickets((prev) => [newTicket, ...prev]);
@@ -1392,6 +1568,7 @@ export default function App() {
 
   // 15. Update or Register Worker ID Card details
   const handleUpdateWorker = (updatedWorker: WorkerProfile) => {
+    syncWorkerToFirestore(updatedWorker);
     setWorkers((prev) => {
       const idx = prev.findIndex((w) => w.id === updatedWorker.id);
       if (idx !== -1) {
@@ -1517,6 +1694,12 @@ export default function App() {
   // Cancel / Dismiss Active Booking
   const handleCancelBooking = () => {
     soundManager.playTap();
+    if (activeBooking) {
+      syncBookingToFirestore({
+        ...activeBooking,
+        status: 'cancelled' as Booking['status'],
+      });
+    }
     setActiveBooking(null);
     safeStorage.removeItem('smart_india_active_booking');
     safeStorage.removeItem('smart_india_active_booking_v2');
@@ -2021,6 +2204,7 @@ export default function App() {
                 language={language}
                 onUpdateConfig={(newCfg) => {
                   setAppOwnerConfig(newCfg);
+                  syncAppConfigToFirestore(newCfg);
                   if (newCfg.ownerSecurityPin && newCfg.ownerSecurityPin.trim().length >= 4) {
                     try {
                       safeStorage.setItem('smart_india_owner_pin', newCfg.ownerSecurityPin.trim());
@@ -2045,6 +2229,7 @@ export default function App() {
         appOwnerConfig={appOwnerConfig}
         onUpdateConfig={(newCfg) => {
           setAppOwnerConfig(newCfg);
+          syncAppConfigToFirestore(newCfg);
           if (newCfg.ownerSecurityPin && newCfg.ownerSecurityPin.trim().length >= 4) {
             try {
               safeStorage.setItem('smart_india_owner_pin', newCfg.ownerSecurityPin.trim());

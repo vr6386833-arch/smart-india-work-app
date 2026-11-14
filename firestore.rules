@@ -71,7 +71,15 @@ service cloud.firestore {
       allow write: if request.resource.data.upiId is string && request.resource.data.upiId.size() > 3;
     }
 
-    // 6. Connection test ping
+    // 6. Real-Time Booking Chat Messages
+    match /chat_messages/{messageId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['id', 'bookingId', 'senderRole', 'text'])
+                    && isNonEmptyString(request.resource.data.text);
+      allow update, delete: if false;
+    }
+
+    // 7. Connection test ping
     match /_connection_test/{docId} {
       allow read, write: if true;
     }
