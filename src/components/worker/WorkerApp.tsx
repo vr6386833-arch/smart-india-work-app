@@ -104,6 +104,7 @@ interface WorkerAppProps {
   onOpenReviews?: (worker: WorkerProfile) => void;
   onTogglePauseId?: (workerId: string, isPaused: boolean, reason?: string, pauseUntil?: string) => void;
   onNavigateToCustomer?: () => void;
+  onOpenOnboarding?: () => void;
 }
 
 export const WorkerApp: React.FC<WorkerAppProps> = ({
@@ -148,6 +149,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
   onDeclineBooking,
   onTriggerSos,
   onOpenReviews,
+  onOpenOnboarding,
 }) => {
   const [activeTab, setActiveTab] = useState<'radar' | 'active' | 'wallet' | 'profile'>('radar');
   
@@ -235,248 +237,264 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
     }
   };
 
+  const isStandbyWorker = worker.id === 'wrk_standby_live';
+
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-950 text-slate-100 overflow-hidden select-none">
-      {/* Top Worker App Bar */}
+    <div className="flex-1 flex flex-col h-full min-h-0 bg-slate-950 text-slate-100 overflow-hidden select-none">
+      {/* Top Worker App Bar (2 clean rows so nothing overflows on mobile) */}
       <div 
-        className="bg-slate-900/90 border-b border-slate-800/80 px-4 pt-9 sm:pt-3.5 pb-2.5 flex items-center justify-between z-10 shrink-0"
+        className="bg-slate-900 border-b border-slate-800 px-3 sm:px-4 pb-2 z-20 shrink-0"
         style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), 2.25rem)' }}
       >
-        <div 
-          onClick={() => {
-            soundManager.playTap();
-            setIsIdCardModalOpen(true);
-          }}
-          className="flex items-center gap-2.5 cursor-pointer group"
-          title="Click to view/edit Worker Smart ID Card"
-        >
-          <div className="relative">
-            <img 
-              src={worker.avatar} 
-              alt={worker.name} 
-              className="w-10 h-10 rounded-xl object-cover ring-2 ring-emerald-500/40 group-hover:ring-emerald-400 transition-all"
-            />
-            <span className={`w-3 h-3 rounded-full absolute -bottom-0.5 -right-0.5 border-2 border-slate-950 ${
-              worker.isIdPaused ? 'bg-amber-500' : worker.isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-500'
-            }`} />
+        {/* Row 1: Identity & Primary Controls */}
+        <div className="flex items-center justify-between gap-2">
+          <div 
+            onClick={() => {
+              soundManager.playTap();
+              if (isStandbyWorker && onAddWorker) {
+                setIsAddWorkerOpen(true);
+              } else {
+                setIsIdCardModalOpen(true);
+              }
+            }}
+            className="flex items-center gap-2 cursor-pointer group min-w-0"
+            title={isStandbyWorker ? (language === 'hi' ? 'नई कारीगर ID बनाएं' : 'Create New Worker ID') : 'Click to view/edit Worker Smart ID Card'}
+          >
+            <div className="relative shrink-0">
+              <img 
+                src={worker.avatar} 
+                alt={worker.name} 
+                className="w-9 h-9 rounded-xl object-cover ring-2 ring-emerald-500/40 group-hover:ring-emerald-400 transition-all"
+              />
+              <span className={`w-2.5 h-2.5 rounded-full absolute -bottom-0.5 -right-0.5 border-2 border-slate-950 ${
+                worker.isIdPaused ? 'bg-amber-500' : worker.isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-500'
+              }`} />
+            </div>
+
+            <div className="min-w-0">
+              <div className="flex items-center gap-1">
+                <h3 className="text-xs font-bold text-white group-hover:text-emerald-300 transition-colors truncate max-w-[120px]">
+                  {isStandbyWorker ? 'New Worker ID' : worker.name}
+                </h3>
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              </div>
+              <div className="flex items-center gap-1 text-[10px]">
+                {isStandbyWorker ? (
+                  <span className="text-amber-300 font-semibold">
+                    {language === 'hi' ? 'टैप कर ID बनाएं' : 'Tap to Create ID'}
+                  </span>
+                ) : worker.isIdPaused ? (
+                  <span className="font-bold text-amber-400">
+                    ⏸️ {language === 'hi' ? 'आईडी बंद है' : 'ID Paused'}
+                  </span>
+                ) : (
+                  <span className={`font-bold ${worker.isOnline ? 'text-emerald-400' : 'text-slate-400'}`}>
+                    {worker.isOnline ? '● Online' : '○ Offline'}
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
 
-          <div>
-            <div className="flex items-center gap-1.5">
-              <h3 className="text-xs font-bold text-white group-hover:text-emerald-300 transition-colors truncate max-w-[130px]">
-                {worker.name}
-              </h3>
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            </div>
-            <div className="flex items-center gap-1.5 text-[10px]">
-              {worker.isIdPaused ? (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    soundManager.playTap();
-                    setIsIdPauseModalOpen(true);
-                  }}
-                  className="font-bold text-amber-400 bg-amber-500/15 hover:bg-amber-500/25 px-1.5 py-0.5 rounded-full border border-amber-500/30 flex items-center gap-1 transition-all"
-                  title="आईडी बंद है - चालू करने हेतु दबाएं"
-                >
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
-                  <span>⏸️ {language === 'hi' ? 'आईडी बंद है' : 'ID Paused'}</span>
-                </button>
-              ) : (
-                <span className={`font-bold ${worker.isOnline ? 'text-emerald-400' : 'text-slate-400'}`}>
-                  {worker.isOnline ? '● Online & Ready' : '○ Offline'}
+          <div className="flex items-center gap-1.5 shrink-0">
+            {/* Wallet Balance Pill */}
+            <button
+              onClick={() => {
+                soundManager.playTap();
+                setIsWalletModalOpen(true);
+              }}
+              className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-emerald-500/40 text-xs font-bold text-emerald-400 shadow-sm transition-all"
+            >
+              <Wallet className="w-3.5 h-3.5 text-emerald-400" />
+              <span>₹{worker.walletBalance}</span>
+            </button>
+
+            {/* Notifications Bell */}
+            <button
+              onClick={() => {
+                soundManager.playTap();
+                setIsNotificationsModalOpen(true);
+              }}
+              className="relative p-1.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-emerald-500/50 text-slate-300 hover:text-white transition-all shadow-sm"
+              title={language === 'hi' ? 'कार्य सूचनाएँ व अलर्ट' : 'Job Notifications & Alerts'}
+            >
+              <Bell className="w-4 h-4 text-emerald-400" />
+              {unreadNotifCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full bg-rose-500 text-white text-[9px] font-black flex items-center justify-center border border-slate-950">
+                  {unreadNotifCount}
                 </span>
               )}
-              <span className="text-slate-600">•</span>
-              <span className="text-emerald-400 font-mono font-semibold text-[9px] bg-emerald-500/10 px-1 rounded">
-                ID Card 🪪
-              </span>
-            </div>
+            </button>
+
+            {/* Duty Toggle Button */}
+            <button
+              onClick={() => {
+                soundManager.playTap();
+                if (worker.isIdPaused && onTogglePauseId) {
+                  onTogglePauseId(worker.id, false);
+                }
+                onToggleOnline();
+              }}
+              className={`p-1.5 rounded-xl transition-all shadow-sm ${
+                worker.isOnline
+                  ? 'bg-emerald-600 text-white shadow-emerald-600/30'
+                  : 'bg-slate-800 text-slate-400'
+              }`}
+              title={worker.isOnline ? 'Go Offline' : 'Go Online to receive leads'}
+            >
+              <Power className="w-4 h-4" />
+            </button>
+
+            {/* Switch to Customer App Button */}
+            {onNavigateToCustomer && (
+              <button
+                onClick={() => {
+                  soundManager.playTap();
+                  onNavigateToCustomer();
+                }}
+                className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-blue-600/30 hover:bg-blue-600/50 text-blue-200 border border-blue-500/40 text-[11px] font-bold transition-all"
+                title={language === 'hi' ? 'ग्राहक ऐप पर वापस जाएं' : 'Switch to Customer App'}
+              >
+                <User className="w-3.5 h-3.5" />
+                <span>{language === 'hi' ? 'ग्राहक' : 'Customer'}</span>
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Online Toggle & Wallet Pill */}
-        <div className="flex items-center gap-1.5">
-          {/* Lockout Warning Button in Header if Worker Blocked */}
+        {/* Row 2: Compact Scrollable Utility Tools */}
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-2 mt-2 border-t border-slate-800/70">
           {isAccountBlocked && (
             <button
               onClick={() => {
                 soundManager.playTap();
                 setIsCompanyQrModalOpen(true);
               }}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-rose-600/30 border border-rose-500 text-xs font-black text-rose-300 shadow-md animate-pulse active:scale-95"
-              title={worker.unpaidFeeReason || `₹${unpaidFeeAmount} ऐप फीस बकाया होने के कारण नया काम लॉक है`}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-600/30 border border-rose-500 text-[11px] font-black text-rose-300 shrink-0 animate-pulse"
             >
-              <Lock className="w-3.5 h-3.5 text-rose-400" />
-              <span className="font-mono">बकाया ₹{unpaidFeeAmount}</span>
+              <Lock className="w-3 h-3 text-rose-400" />
+              <span>बकाया ₹{unpaidFeeAmount}</span>
             </button>
           )}
 
-          {/* Add Worker Quick Button */}
           {onAddWorker && (
             <button
               onClick={() => {
                 soundManager.playTap();
                 setIsAddWorkerOpen(true);
               }}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-xs font-bold text-slate-950 shadow-sm transition-all active:scale-95"
-              title={language === 'hi' ? 'नया कारीगर जोड़ें' : 'Add New Worker'}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 text-[11px] font-bold text-slate-950 shrink-0"
             >
-              <UserPlus className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{language === 'hi' ? '+ कारीगर' : '+ Worker'}</span>
+              <UserPlus className="w-3 h-3" />
+              <span>{language === 'hi' ? '+ कारीगर' : '+ Worker'}</span>
             </button>
           )}
 
-          {/* Worker ID Card Quick Button */}
           <button
             onClick={() => {
               soundManager.playTap();
               setIsIdCardModalOpen(true);
             }}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-950/70 border border-emerald-500/40 hover:border-emerald-400 text-xs font-bold text-emerald-300 shadow-sm transition-all"
-            title="Official Digital Worker ID Card"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-950/70 border border-emerald-500/40 text-[11px] font-bold text-emerald-300 shrink-0"
           >
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="hidden sm:inline">ID</span>
+            <ShieldCheck className="w-3 h-3 text-emerald-400" />
+            <span>ID Card</span>
           </button>
 
-          {/* Worker Job Records & Data Save System Button */}
           <button
             onClick={() => {
               soundManager.playTap();
               setIsRecordsModalOpen(true);
             }}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-900/60 border border-emerald-400/50 hover:border-emerald-300 text-xs font-bold text-emerald-300 shadow-sm transition-all active:scale-95"
-            title={language === 'hi' ? 'किए गए सभी कार्यों का डेटा सेविंग सिस्टम व डायरी' : 'Worker Job Ledger & Permanent Data Save System'}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-900/50 border border-emerald-400/40 text-[11px] font-bold text-emerald-300 shrink-0"
           >
-            <FolderCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="hidden sm:inline">{language === 'hi' ? 'काम डायरी' : 'Kaam Diary'}</span>
-            <span className="text-[10px] bg-emerald-500 text-slate-950 font-black px-1.5 py-0.2 rounded-full">
+            <FolderCheck className="w-3 h-3 text-emerald-400" />
+            <span>{language === 'hi' ? 'काम डायरी' : 'Diary'}</span>
+            <span className="text-[9px] bg-emerald-500 text-slate-950 font-black px-1 rounded-full">
               {records.filter((r) => r.workerId === worker.id).length}
             </span>
           </button>
-          {/* Company Official QR Pay Button */}
+
           <button
             onClick={() => {
               soundManager.playTap();
               setIsCompanyQrModalOpen(true);
             }}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-indigo-950/60 border border-indigo-500/40 hover:border-indigo-400 text-xs font-bold text-indigo-300 shadow-sm transition-all"
-            title="Official Company Bharat QR Pay (Recharge / KYC / Pro)"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-950/60 border border-indigo-500/40 text-[11px] font-bold text-indigo-300 shrink-0"
           >
-            <Building2 className="w-3.5 h-3.5 text-indigo-400" />
-            <span className="hidden sm:inline">Co. QR</span>
+            <Building2 className="w-3 h-3 text-indigo-400" />
+            <span>Co. QR</span>
           </button>
 
-          {/* Dynamic UPI Bharat QR Code Generator Quick Action */}
           <button
             onClick={() => {
               soundManager.playTap();
               setIsUpiQrModalOpen(true);
             }}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-emerald-500/50 text-xs font-bold text-emerald-400 shadow-sm transition-all"
-            title="Dynamic UPI Bharat QR Terminal for Customer"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-[11px] font-bold text-emerald-400 shrink-0"
           >
-            <QrCode className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="hidden sm:inline">Job QR</span>
+            <QrCode className="w-3 h-3 text-emerald-400" />
+            <span>Job QR</span>
           </button>
 
-          {/* Wallet Balance Pill */}
-          <button
-            onClick={() => {
-              soundManager.playTap();
-              setIsWalletModalOpen(true);
-            }}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-emerald-500/40 text-xs font-bold text-emerald-400 shadow-sm transition-all"
-          >
-            <Wallet className="w-3.5 h-3.5 text-emerald-400" />
-            <span>₹{worker.walletBalance}</span>
-          </button>
-
-          {/* Worker Notifications Bell Button with Unread Badge */}
-          <button
-            onClick={() => {
-              soundManager.playTap();
-              setIsNotificationsModalOpen(true);
-            }}
-            className="relative p-2 rounded-xl bg-slate-950 border border-slate-800 hover:border-emerald-500/50 text-slate-300 hover:text-white transition-all shadow-sm active:scale-95"
-            title={language === 'hi' ? 'कार्य सूचनाएँ व अलर्ट' : 'Job Notifications & Alerts'}
-          >
-            <Bell className="w-4 h-4 text-emerald-400" />
-            {unreadNotifCount > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 rounded-full bg-rose-500 text-white text-[9px] font-black flex items-center justify-center border-2 border-slate-950 animate-pulse">
-                {unreadNotifCount}
-              </span>
-            )}
-          </button>
-
-          {/* Pause ID / Vacation Mode Button */}
           <button
             type="button"
             onClick={() => {
               soundManager.playTap();
               setIsIdPauseModalOpen(true);
             }}
-            className={`p-2 rounded-xl transition-all shadow-md flex items-center justify-center ${
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold shrink-0 ${
               worker.isIdPaused
-                ? 'bg-amber-500 text-slate-950 font-black shadow-amber-500/40 ring-2 ring-amber-400/60'
-                : 'bg-slate-800 hover:bg-slate-700 text-amber-400/90 border border-slate-700'
+                ? 'bg-amber-500 text-slate-950 font-black'
+                : 'bg-slate-800 text-amber-400 border border-slate-700'
             }`}
-            title={
-              worker.isIdPaused
-                ? (language === 'hi' ? 'आईडी बंद है - चालू करने हेतु दबाएं' : 'ID is Paused - Click to resume')
-                : (language === 'hi' ? 'काम का मन न हो तो आईडी बंद करें / छुट्टी लें' : 'Pause ID & Take a Break')
-            }
           >
             {worker.isIdPaused ? (
-              <PlayCircle className="w-4 h-4 text-slate-950" />
+              <PlayCircle className="w-3 h-3 text-slate-950" />
             ) : (
-              <PauseCircle className="w-4 h-4 text-amber-400" />
+              <PauseCircle className="w-3 h-3 text-amber-400" />
             )}
+            <span>{worker.isIdPaused ? (language === 'hi' ? 'चालू करें' : 'Resume') : (language === 'hi' ? 'छुट्टी / Break' : 'Pause ID')}</span>
           </button>
-
-          {/* Duty Toggle Button */}
-          <button
-            onClick={() => {
-              soundManager.playTap();
-              if (worker.isIdPaused && onTogglePauseId) {
-                onTogglePauseId(worker.id, false);
-              }
-              onToggleOnline();
-            }}
-            className={`p-2 rounded-xl transition-all shadow-md ${
-              worker.isOnline
-                ? 'bg-emerald-600 text-white shadow-emerald-600/30'
-                : 'bg-slate-800 text-slate-400'
-            }`}
-            title={worker.isOnline ? 'Go Offline' : 'Go Online to receive leads'}
-          >
-            <Power className="w-4 h-4" />
-          </button>
-
-          {/* Switch to Customer App Button */}
-          {onNavigateToCustomer && (
-            <button
-              onClick={() => {
-                soundManager.playTap();
-                onNavigateToCustomer();
-              }}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-blue-600/30 hover:bg-blue-600/50 text-blue-200 border border-blue-500/40 text-xs font-bold transition-all active:scale-95"
-              title={language === 'hi' ? 'ग्राहक ऐप पर वापस जाएं' : 'Switch to Customer App'}
-            >
-              <User className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{language === 'hi' ? 'ग्राहक ऐप' : 'Customer'}</span>
-            </button>
-          )}
         </div>
       </div>
 
       {/* Main Tab Views */}
-      <div className="flex-1 overflow-y-auto flex flex-col">
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain flex flex-col">
         {/* Tab 1: Radar & Leads Feed */}
         {activeTab === 'radar' && (
           <div className="p-4 space-y-4">
+            {/* STANDBY WORKER REGISTRATION CTA */}
+            {isStandbyWorker && onAddWorker && (
+              <div className="p-4 rounded-3xl bg-gradient-to-br from-emerald-950/90 via-slate-900 to-teal-950/80 border-2 border-emerald-500/60 shadow-xl space-y-2.5">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0">
+                    <UserPlus className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-white">
+                      {language === 'hi' ? 'अपनी कारीगर ID बनाएं (New Worker ID)' : 'Create Your Worker ID'}
+                    </h4>
+                    <p className="text-[11px] text-slate-300 mt-0.5">
+                      {language === 'hi'
+                        ? 'अपना नाम, मोबाइल और काम की श्रेणी दर्ज करें ताकि ग्राहक आपको सीधे बुक कर सकें।'
+                        : 'Register your name, phone & trade skill so local customers can book you directly.'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundManager.playTap();
+                    setIsAddWorkerOpen(true);
+                  }}
+                  className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 text-slate-950 font-black text-xs shadow-md flex items-center justify-center gap-1.5"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span>{language === 'hi' ? '+ अभी नई Worker ID बनाएं' : '+ Create New Worker ID Now'}</span>
+                </button>
+              </div>
+            )}
             {/* WORKER ID VOLUNTARILY PAUSED BANNER */}
             {worker.isIdPaused && (
               <div className="p-4 rounded-3xl bg-gradient-to-br from-amber-950/80 via-slate-900 to-orange-950/80 border-2 border-amber-500/70 shadow-2xl shadow-amber-950/40 space-y-3 animate-in fade-in">
@@ -1996,82 +2014,116 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                 ))}
               </div>
             </div>
+
+            {onOpenOnboarding && (
+              <button
+                type="button"
+                onClick={() => {
+                  soundManager.playTap();
+                  onOpenOnboarding();
+                }}
+                className="w-full py-2.5 px-3 rounded-2xl bg-blue-950/40 hover:bg-blue-950/70 border border-blue-500/40 text-blue-300 font-bold text-xs flex items-center justify-between transition-all"
+              >
+                <span className="flex items-center gap-2">
+                  <UserPlus className="w-4 h-4 text-blue-400" />
+                  <span>{language === 'hi' ? '🆔 नई Customer / Worker ID चुनें' : '🆔 Switch / Create Role ID'}</span>
+                </span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            )}
           </div>
         )}
       </div>
 
-      {/* Bottom Worker Navigation Bar */}
-      <div className="bg-slate-900/95 border-t border-slate-800/90 px-3 py-2 flex items-center justify-around z-20 shrink-0">
+      {/* Bottom Worker Navigation Bar - Uniform Grid Alignment + Safe Area */}
+      <div
+        className="bg-slate-900 border-t border-slate-800 px-1 pt-2 grid grid-cols-5 items-center z-20 shrink-0"
+        style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom, 0px))' }}
+      >
         <button
+          type="button"
           onClick={() => {
             soundManager.playTap();
             setActiveTab('radar');
           }}
-          className={`flex flex-col items-center gap-1 text-[10px] font-medium transition-colors ${
+          className={`flex flex-col items-center justify-center gap-1 py-1 text-[10px] leading-none font-medium transition-colors ${
             activeTab === 'radar' ? 'text-emerald-400 font-bold' : 'text-slate-400 hover:text-slate-200'
           }`}
         >
-          <Radar className="w-4 h-4" />
-          <span>Radar / Leads</span>
+          <div className="w-6 h-6 flex items-center justify-center">
+            <Radar className="w-4 h-4" />
+          </div>
+          <span>Radar</span>
         </button>
 
         <button
+          type="button"
           onClick={() => {
             soundManager.playTap();
             setActiveTab('active');
           }}
-          className={`relative flex flex-col items-center gap-1 text-[10px] font-medium transition-colors ${
+          className={`flex flex-col items-center justify-center gap-1 py-1 text-[10px] leading-none font-medium transition-colors ${
             activeTab === 'active' ? 'text-emerald-400 font-bold' : 'text-slate-400 hover:text-slate-200'
           }`}
         >
-          <Briefcase className="w-4 h-4" />
+          <div className="relative w-6 h-6 flex items-center justify-center">
+            <Briefcase className="w-4 h-4" />
+            {activeBooking && (
+              <span className="w-2 h-2 rounded-full bg-amber-400 absolute top-0 right-0 animate-ping" />
+            )}
+          </div>
           <span>Active Job</span>
-          {activeBooking && (
-            <span className="w-2 h-2 rounded-full bg-amber-400 absolute top-0 right-3 animate-ping" />
-          )}
         </button>
 
         <button
+          type="button"
           onClick={() => {
             soundManager.playTap();
             setActiveTab('wallet');
           }}
-          className={`flex flex-col items-center gap-1 text-[10px] font-medium transition-colors ${
+          className={`flex flex-col items-center justify-center gap-1 py-1 text-[10px] leading-none font-medium transition-colors ${
             activeTab === 'wallet' ? 'text-emerald-400 font-bold' : 'text-slate-400 hover:text-slate-200'
           }`}
         >
-          <Wallet className="w-4 h-4" />
+          <div className="w-6 h-6 flex items-center justify-center">
+            <Wallet className="w-4 h-4" />
+          </div>
           <span>Wallet</span>
         </button>
 
-        {/* Worker Job Records & Data Save System Navigation Button */}
         <button
+          type="button"
           onClick={() => {
             soundManager.playTap();
             setIsRecordsModalOpen(true);
           }}
-          className="relative flex flex-col items-center gap-1 text-[10px] font-medium transition-colors text-slate-400 hover:text-emerald-300"
+          className="flex flex-col items-center justify-center gap-1 py-1 text-[10px] leading-none font-medium transition-colors text-slate-400 hover:text-emerald-300"
         >
-          <FolderCheck className="w-4 h-4 text-emerald-400" />
+          <div className="relative w-6 h-6 flex items-center justify-center">
+            <FolderCheck className="w-4 h-4 text-emerald-400" />
+            {records.filter((r) => r.workerId === worker.id).length > 0 && (
+              <span className="text-[8px] bg-emerald-500 text-slate-950 font-bold px-1 rounded-full absolute -top-1 -right-2">
+                {records.filter((r) => r.workerId === worker.id).length}
+              </span>
+            )}
+          </div>
           <span>{language === 'hi' ? 'काम डायरी' : 'Kaam Diary'}</span>
-          {records.filter((r) => r.workerId === worker.id).length > 0 && (
-            <span className="text-[8px] bg-emerald-500 text-slate-950 font-bold px-1 rounded-full absolute -top-1 right-2">
-              {records.filter((r) => r.workerId === worker.id).length}
-            </span>
-          )}
         </button>
 
         <button
+          type="button"
           onClick={() => {
             soundManager.playTap();
             setActiveTab('profile');
           }}
-          className={`flex flex-col items-center gap-1 text-[10px] font-medium transition-colors ${
+          className={`flex flex-col items-center justify-center gap-1 py-1 text-[10px] leading-none font-medium transition-colors ${
             activeTab === 'profile' ? 'text-emerald-400 font-bold' : 'text-slate-400 hover:text-slate-200'
           }`}
         >
-          <User className="w-4 h-4" />
-          <span>Profile/KYC</span>
+          <div className="w-6 h-6 flex items-center justify-center">
+            <User className="w-4 h-4" />
+          </div>
+          <span>Profile</span>
         </button>
       </div>
 

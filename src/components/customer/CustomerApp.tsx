@@ -86,6 +86,7 @@ interface CustomerAppProps {
   onResetData?: () => void;
   ownerPin?: string;
   onUpdateOwnerPin?: (newPin: string) => void;
+  onOpenOnboarding?: () => void;
 }
 
 export const CustomerApp: React.FC<CustomerAppProps> = ({
@@ -122,6 +123,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
   onResetData,
   ownerPin,
   onUpdateOwnerPin,
+  onOpenOnboarding,
 }) => {
   // Purge any legacy demo booking so customer view starts completely pristine
   const isMockBooking = activeBooking?.id === 'BK_9081' || 
@@ -233,22 +235,28 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
     setIsAddAddressOpen(false);
   };
 
+  const isGuestCustomer = customer.id === 'c_new_guest';
+
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-950 text-slate-100 overflow-hidden select-none">
+    <div className="flex-1 flex flex-col h-full min-h-0 bg-slate-950 text-slate-100 overflow-hidden select-none">
       {/* Top Customer App Bar */}
       <div 
-        className="bg-slate-900/90 border-b border-slate-800/80 px-4 pt-9 sm:pt-3.5 pb-2.5 flex items-center justify-between z-10 shrink-0"
+        className="bg-slate-900 border-b border-slate-800 px-3 sm:px-4 pb-2.5 flex items-center justify-between gap-2 z-20 shrink-0"
         style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), 2.25rem)' }}
       >
-        <div className="flex items-center gap-2">
-          {/* Brand Logo & Customer Account trigger */}
+        <div className="flex items-center gap-2 min-w-0">
+          {/* Brand Logo & Customer Account / New ID trigger */}
           <div 
             onClick={() => {
               soundManager.playTap();
-              setIsAccountModalOpen(true);
+              if (isGuestCustomer) {
+                setIsAddCustomerOpen(true);
+              } else {
+                setIsAccountModalOpen(true);
+              }
             }}
-            className="flex items-center gap-2 cursor-pointer hover:bg-slate-800/80 p-1 pr-2 rounded-xl transition-all border border-transparent hover:border-slate-700/80 group"
-            title={language === 'hi' ? 'मेरा खाता और प्रोफ़ाइल देखें' : 'My Account & Profile'}
+            className="flex items-center gap-2 cursor-pointer hover:bg-slate-800/80 p-1 pr-2 rounded-xl transition-all border border-transparent hover:border-slate-700/80 group min-w-0"
+            title={isGuestCustomer ? (language === 'hi' ? 'नई ग्राहक ID बनाएं' : 'Create New Customer ID') : (language === 'hi' ? 'मेरा खाता और प्रोफ़ाइल देखें' : 'My Account & Profile')}
           >
             <div className="relative shrink-0">
               <img 
@@ -256,19 +264,21 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                 alt={customer.name} 
                 className="w-9 h-9 rounded-xl object-cover ring-2 ring-blue-500/40 group-hover:ring-blue-400 transition-all"
               />
-              <span className="w-2.5 h-2.5 rounded-full bg-blue-500 absolute -bottom-0.5 -right-0.5 border border-slate-950" />
+              <span className={`w-2.5 h-2.5 rounded-full absolute -bottom-0.5 -right-0.5 border border-slate-950 ${isGuestCustomer ? 'bg-amber-400' : 'bg-blue-500'}`} />
             </div>
-            <div className="text-left">
-              <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                <span className="font-bold text-white group-hover:text-blue-300 transition-colors truncate max-w-[90px]">
-                  {customer.name.split(' ')[0]}
+            <div className="text-left min-w-0">
+              <div className="flex items-center gap-1 text-[11px] text-slate-400">
+                <span className="font-bold text-white group-hover:text-blue-300 transition-colors truncate max-w-[125px]">
+                  {isGuestCustomer ? 'New Customer ID' : customer.name.split(' ')[0]}
                 </span>
-                <ChevronDown className="w-3 h-3 text-slate-400 group-hover:text-blue-400 transition-transform" />
+                <ChevronDown className="w-3 h-3 text-slate-400 group-hover:text-blue-400 shrink-0" />
               </div>
               <div className="flex items-center gap-0.5 text-[10px] text-slate-300">
                 <MapPin className="w-2.5 h-2.5 text-orange-400 shrink-0" />
-                <span className="truncate max-w-[100px] text-slate-400 font-medium">
-                  {customer.locality.split(',')[0]}
+                <span className="truncate max-w-[115px] text-slate-400 font-medium">
+                  {isGuestCustomer
+                    ? (language === 'hi' ? 'टैप कर ID बनाएं' : 'Tap to Create ID')
+                    : (customer.locality || 'India').split(',')[0]}
                 </span>
               </div>
             </div>
@@ -276,7 +286,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
         </div>
 
         {/* Action Buttons: Switch to Worker & Post Requirement */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0">
           {onSwitchToWorker && (
             <button
               onClick={() => {
@@ -296,7 +306,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
               soundManager.playTap();
               setIsPostJobOpen(true);
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 text-slate-950 font-bold text-xs shadow-md shadow-orange-500/20 hover:scale-105 active:scale-95 transition-all"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 text-slate-950 font-bold text-xs shadow-md shadow-orange-500/20 hover:scale-105 active:scale-95 transition-all"
           >
             <PlusCircle className="w-3.5 h-3.5" />
             <span>Post Job</span>
@@ -305,7 +315,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
       </div>
 
       {/* Main Tab Views */}
-      <div className="flex-1 overflow-y-auto flex flex-col">
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain flex flex-col">
         {activeTab === 'home' && (
           <div className="p-4 space-y-4">
             {/* Search Input */}
@@ -968,25 +978,49 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
         {activeTab === 'profile' && (
           <div className="p-4 space-y-4 text-xs">
             {/* User Profile Card */}
-            <div className="bg-slate-900 rounded-2xl p-4 border border-slate-800 flex items-center gap-3.5">
-              <img
-                src={customer.avatar}
-                alt={customer.name}
-                className="w-14 h-14 rounded-2xl object-cover ring-2 ring-blue-500/40 shrink-0"
-              />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-bold text-white truncate">{customer.name}</h4>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">
-                    Active
-                  </span>
-                </div>
-                <p className="text-slate-400">{customer.phone}</p>
-                <div className="flex items-center gap-1.5 mt-1 text-[11px] text-slate-300">
-                  <MapPin className="w-3 h-3 text-orange-400 shrink-0" />
-                  <span className="truncate">{customer.locality}, {customer.city}</span>
+            <div className="bg-slate-900 rounded-2xl p-4 border border-slate-800 space-y-3">
+              <div className="flex items-center gap-3.5">
+                <img
+                  src={customer.avatar}
+                  alt={customer.name}
+                  className="w-14 h-14 rounded-2xl object-cover ring-2 ring-blue-500/40 shrink-0"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-sm font-bold text-white truncate">
+                      {isGuestCustomer ? 'New Customer ID' : customer.name}
+                    </h4>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${
+                      isGuestCustomer
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                        : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                    }`}>
+                      {isGuestCustomer ? (language === 'hi' ? 'ID बनाएं' : 'Create ID') : 'Active'}
+                    </span>
+                  </div>
+                  <p className="text-slate-400">
+                    {customer.phone || (language === 'hi' ? 'मोबाइल नंबर पंजीकृत नहीं है' : 'Phone number not added yet')}
+                  </p>
+                  <div className="flex items-center gap-1.5 mt-1 text-[11px] text-slate-300">
+                    <MapPin className="w-3 h-3 text-orange-400 shrink-0" />
+                    <span className="truncate">{customer.locality}, {customer.city}</span>
+                  </div>
                 </div>
               </div>
+
+              {isGuestCustomer && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundManager.playTap();
+                    setIsAddCustomerOpen(true);
+                  }}
+                  className="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span>{language === 'hi' ? 'अपनी New Customer ID अभी बनाएं' : 'Create Your New Customer ID Now'}</span>
+                </button>
+              )}
             </div>
 
             {/* Switch & Add Customer Section */}
@@ -1242,6 +1276,33 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                 </button>
               )}
 
+              {/* Reopen Onboarding Role & ID Selection */}
+              {onOpenOnboarding && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundManager.playTap();
+                    onOpenOnboarding();
+                  }}
+                  className="w-full flex items-center justify-between p-2.5 rounded-xl bg-blue-950/30 hover:bg-blue-950/60 border border-blue-500/30 transition-all text-left group"
+                >
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center text-blue-400">
+                      <UserPlus className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="text-xs font-bold text-white group-hover:text-blue-300">
+                        {language === 'hi' ? '🆔 नई Customer / Worker ID चुनें' : '🆔 Switch / Create Role ID'}
+                      </span>
+                      <p className="text-[10px] text-slate-400">
+                        {language === 'hi' ? 'ग्राहक या कारीगर के रूप में नई ID बनाएं' : 'Choose Customer ID or Worker ID setup'}
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-blue-400 transition-transform" />
+                </button>
+              )}
+
               {/* Protected App Owner Portal */}
               {onSwitchToOwner && (
                 <button
@@ -1358,73 +1419,89 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
         )}
       </div>
 
-      {/* Bottom App Navigation Bar */}
-      <div className="bg-slate-900/95 border-t border-slate-800/90 px-3 py-2 flex items-center justify-around z-20 shrink-0">
+      {/* Bottom App Navigation Bar - Uniform Horizontal Alignment + Safe Area */}
+      <div
+        className="bg-slate-900 border-t border-slate-800 px-1 pt-2 grid grid-cols-5 items-center z-20 shrink-0"
+        style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom, 0px))' }}
+      >
         <button
+          type="button"
           onClick={() => {
             soundManager.playTap();
             setActiveTab('home');
           }}
-          className={`flex flex-col items-center gap-1 text-[10px] font-medium transition-colors ${
+          className={`flex flex-col items-center justify-center gap-1 py-1 text-[10px] leading-none font-medium transition-colors ${
             activeTab === 'home' ? 'text-blue-400 font-bold' : 'text-slate-400 hover:text-slate-200'
           }`}
         >
-          <Home className="w-4 h-4" />
+          <div className="w-6 h-6 flex items-center justify-center">
+            <Home className="w-4 h-4" />
+          </div>
           <span>Home</span>
         </button>
 
         <button
+          type="button"
           onClick={() => {
             soundManager.playTap();
             setActiveTab('search');
           }}
-          className={`flex flex-col items-center gap-1 text-[10px] font-medium transition-colors ${
+          className={`flex flex-col items-center justify-center gap-1 py-1 text-[10px] leading-none font-medium transition-colors ${
             activeTab === 'search' ? 'text-blue-400 font-bold' : 'text-slate-400 hover:text-slate-200'
           }`}
         >
-          <Search className="w-4 h-4" />
+          <div className="w-6 h-6 flex items-center justify-center">
+            <Search className="w-4 h-4" />
+          </div>
           <span>Workers</span>
         </button>
 
         <button
+          type="button"
           onClick={() => {
             soundManager.playTap();
             setIsPostJobOpen(true);
           }}
-          className="flex flex-col items-center gap-1 text-[10px] font-bold text-orange-400 -mt-3"
+          className="flex flex-col items-center justify-center gap-1 py-1 text-[10px] leading-none font-bold text-orange-400 active:scale-95 transition-transform"
         >
-          <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-orange-500 to-amber-500 flex items-center justify-center text-slate-950 shadow-lg shadow-orange-500/30">
-            <PlusCircle className="w-5 h-5" />
+          <div className="w-6 h-6 rounded-lg bg-gradient-to-tr from-orange-500 to-amber-500 flex items-center justify-center text-slate-950 shadow-sm shadow-orange-500/30">
+            <PlusCircle className="w-4 h-4" />
           </div>
           <span>Post</span>
         </button>
 
         <button
+          type="button"
           onClick={() => {
             soundManager.playTap();
             setActiveTab('bookings');
           }}
-          className={`relative flex flex-col items-center gap-1 text-[10px] font-medium transition-colors ${
+          className={`flex flex-col items-center justify-center gap-1 py-1 text-[10px] leading-none font-medium transition-colors ${
             activeTab === 'bookings' ? 'text-blue-400 font-bold' : 'text-slate-400 hover:text-slate-200'
           }`}
         >
-          <ClipboardList className="w-4 h-4" />
+          <div className="relative w-6 h-6 flex items-center justify-center">
+            <ClipboardList className="w-4 h-4" />
+            {safeActiveBooking && (
+              <span className="absolute top-0 right-0 w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+            )}
+          </div>
           <span>{language === 'hi' ? 'बुकिंग्स' : 'Bookings'}</span>
-          {safeActiveBooking && (
-            <span className="absolute top-0 right-3 w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-          )}
         </button>
 
         <button
+          type="button"
           onClick={() => {
             soundManager.playTap();
             setActiveTab('profile');
           }}
-          className={`flex flex-col items-center gap-1 text-[10px] font-medium transition-colors ${
+          className={`flex flex-col items-center justify-center gap-1 py-1 text-[10px] leading-none font-medium transition-colors ${
             activeTab === 'profile' ? 'text-blue-400 font-bold' : 'text-slate-400 hover:text-slate-200'
           }`}
         >
-          <User className="w-4 h-4" />
+          <div className="w-6 h-6 flex items-center justify-center">
+            <User className="w-4 h-4" />
+          </div>
           <span>Profile</span>
         </button>
       </div>

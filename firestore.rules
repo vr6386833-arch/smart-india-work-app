@@ -4,7 +4,7 @@ service cloud.firestore {
     
     // Global Security Helper Functions
     function isValidPhone(phone) {
-      return phone is string && phone.size() >= 10 && phone.size() <= 16;
+      return phone is string && phone.size() >= 10 && phone.size() <= 20;
     }
 
     function isPositiveAmount(amount) {
@@ -20,8 +20,8 @@ service cloud.firestore {
       allow read: if true;
       allow create: if request.resource.data.keys().hasAll(['id', 'customerName', 'status'])
                     && isNonEmptyString(request.resource.data.customerName)
-                    && request.resource.data.status in ['requested', 'searching', 'accepted', 'arrived', 'in_progress', 'completed', 'cancelled'];
-      allow update: if request.resource.data.status in ['requested', 'searching', 'accepted', 'arrived', 'in_progress', 'completed', 'cancelled'];
+                    && request.resource.data.status in ['requested', 'searching', 'accepted', 'worker_en_route', 'arrived', 'arrived_at_door', 'in_progress', 'completed', 'cancelled'];
+      allow update: if request.resource.data.status in ['requested', 'searching', 'accepted', 'worker_en_route', 'arrived', 'arrived_at_door', 'in_progress', 'completed', 'cancelled'];
       allow delete: if false; // Anti-Hacking: Bookings can NEVER be deleted to protect audit trail
     }
     
@@ -32,6 +32,15 @@ service cloud.firestore {
                     && isValidPhone(request.resource.data.phone);
       allow update: if true;
       allow delete: if false; // Workers cannot be deleted arbitrarily by outsiders
+    }
+
+    // 2a. Customers Collection: Customer profile registration
+    match /customers/{customerId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['id', 'name'])
+                    && isNonEmptyString(request.resource.data.name);
+      allow update: if true;
+      allow delete: if false;
     }
 
     // 2b. Jobs Broadcast Collection: Customer broadcast leads

@@ -22,12 +22,14 @@ interface SecurityShieldModalProps {
   isOpen: boolean;
   onClose: () => void;
   language: Language;
+  onPinUpdated?: (newPin: string) => void;
 }
 
 export const SecurityShieldModal: React.FC<SecurityShieldModalProps> = ({
   isOpen,
   onClose,
   language,
+  onPinUpdated,
 }) => {
   const [currentPin, setCurrentPin] = useState(SecurityShieldService.getMasterPin());
   const [newPinInput, setNewPinInput] = useState('');
@@ -40,15 +42,17 @@ export const SecurityShieldModal: React.FC<SecurityShieldModalProps> = ({
 
   const handleUpdatePin = () => {
     soundManager.playTap();
-    if (newPinInput.length < 4) {
+    const cleaned = newPinInput.trim();
+    if (cleaned.length < 4) {
       setPinChangeMsg({ text: 'PIN कम से कम 4 अंकों का होना चाहिए!', error: true });
       return;
     }
-    const success = SecurityShieldService.setMasterPin(newPinInput);
+    const success = SecurityShieldService.setMasterPin(cleaned);
     if (success) {
-      setCurrentPin(newPinInput);
+      setCurrentPin(cleaned);
       setNewPinInput('');
       setPinChangeMsg({ text: 'Master Security PIN सफलता पूर्वक बदल दिया गया!', error: false });
+      onPinUpdated?.(cleaned);
       soundManager.playSuccessCoin();
       setLogs(SecurityShieldService.getSecurityLogs());
     }

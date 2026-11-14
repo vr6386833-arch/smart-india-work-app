@@ -60,8 +60,8 @@ export const BackendFlutterStudio: React.FC = () => {
             bookingId: "BK_9081",
             status: "otp_verified",
             customerDetails: {
-              fullName: "Vipin Rajput",
-              phone: "+91 98765 43210",
+              fullName: "Verified Customer",
+              phone: "+91 98765 00000",
               unmaskedAddress: "Sector 62, Noida, Uttar Pradesh - 201309",
               location: { lat: 28.6280, lng: 77.3649 }
             },

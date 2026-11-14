@@ -13,7 +13,7 @@ import {
   limit
 } from 'firebase/firestore';
 import firebaseConfigJson from '../../firebase-applet-config.json';
-import { Booking, WorkerProfile, CommissionRecord, OwnerPayoutRecord, JobPost } from '../types';
+import { Booking, WorkerProfile, CustomerProfile, CommissionRecord, OwnerPayoutRecord, JobPost } from '../types';
 
 let app: FirebaseApp;
 let db: Firestore;
@@ -96,6 +96,20 @@ export async function syncWorkerToFirestore(worker: WorkerProfile): Promise<void
   }
 }
 
+// Sync customer profile to cloud Firestore
+export async function syncCustomerToFirestore(customer: CustomerProfile): Promise<void> {
+  if (!db) return;
+  try {
+    const custRef = doc(db, 'customers', customer.id);
+    await setDoc(custRef, {
+      ...customer,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+  } catch (err) {
+    console.error('Error syncing customer to cloud:', err);
+  }
+}
+
 // Sync platform fee commission record (₹10 fee) to cloud
 export async function syncCommissionToFirestore(record: CommissionRecord): Promise<void> {
   if (!db) return;
@@ -143,6 +157,29 @@ export function listenToWorkers(callback: (workers: WorkerProfile[]) => void): (
     return unsub;
   } catch (e) {
     console.warn('Unable to subscribe to workers:', e);
+    return () => {};
+  }
+}
+
+// Real-time listener for Customers in Firestore
+export function listenToCustomers(callback: (customers: CustomerProfile[]) => void): () => void {
+  if (!db) return () => {};
+  try {
+    const custCol = collection(db, 'customers');
+    const unsub = onSnapshot(custCol, (snapshot) => {
+      const list: CustomerProfile[] = [];
+      snapshot.forEach((doc) => {
+        list.push(doc.data() as CustomerProfile);
+      });
+      if (list.length > 0) {
+        callback(list);
+      }
+    }, (err) => {
+      console.warn('Firestore customers subscription notice:', err);
+    });
+    return unsub;
+  } catch (e) {
+    console.warn('Unable to subscribe to customers:', e);
     return () => {};
   }
 }

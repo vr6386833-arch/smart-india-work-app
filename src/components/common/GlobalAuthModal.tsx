@@ -36,16 +36,6 @@ interface GlobalAuthModalProps {
   initialRole?: 'customer' | 'worker';
 }
 
-// Preset Google Accounts for realistic 1-click experience
-const GOOGLE_ACCOUNTS = [
-  {
-    email: 'vr6386833@gmail.com',
-    name: 'Vipin Rajput (Owner & Customer)',
-    avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=400&q=80',
-    locality: 'Sector 62, Noida'
-  }
-];
-
 export const GlobalAuthModal: React.FC<GlobalAuthModalProps> = ({
   isOpen,
   onClose,
@@ -61,7 +51,7 @@ export const GlobalAuthModal: React.FC<GlobalAuthModalProps> = ({
   initialRole = 'customer'
 }) => {
   const [role, setRole] = useState<'customer' | 'worker'>(initialRole);
-  const [method, setMethod] = useState<'gmail' | 'otp'>('gmail');
+  const [method, setMethod] = useState<'gmail' | 'otp'>('otp');
   
   // Mobile OTP state
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -76,20 +66,19 @@ export const GlobalAuthModal: React.FC<GlobalAuthModalProps> = ({
   // New user registration extra fields
   const [name, setName] = useState('');
   const [locality, setLocality] = useState('Sector 62, Noida');
-  const [address, setAddress] = useState('Tower B, Sector 62');
-  const [workerAge, setWorkerAge] = useState<number | ''>(30);
+  const [address, setAddress] = useState('');
+  const [workerAge, setWorkerAge] = useState<number | ''>(28);
   const [workerAadhaar, setWorkerAadhaar] = useState('');
   const [workerCategory, setWorkerCategory] = useState('mistry');
 
   // Custom Gmail input
-  const [showCustomGmailInput, setShowCustomGmailInput] = useState(false);
   const [customGmail, setCustomGmail] = useState('');
   const [customGmailName, setCustomGmailName] = useState('');
 
   useEffect(() => {
     if (isOpen) {
       setRole(initialRole);
-      setMethod(initialRole === 'worker' ? 'otp' : 'gmail');
+      setMethod('otp');
       setOtpSent(false);
       setIsOtpVerified(false);
       setEnteredOtp(['', '', '', '']);
@@ -269,47 +258,6 @@ export const GlobalAuthModal: React.FC<GlobalAuthModalProps> = ({
     }
 
     soundManager.playSuccess();
-    onClose();
-  };
-
-  // One-click Gmail Login for Customer
-  const handleSelectGoogleAccount = (acc: typeof GOOGLE_ACCOUNTS[0]) => {
-    soundManager.playTap();
-    
-    // Check if a customer already exists with this email or name
-    const existing = customers.find((c) => c.email === acc.email || c.name.toLowerCase() === acc.name.toLowerCase());
-    if (existing) {
-      soundManager.playSuccess();
-      try {
-        confetti({ particleCount: 30, spread: 45 });
-      } catch {
-        // ignore
-      }
-      onSelectCustomer(existing.id);
-      onClose();
-      return;
-    }
-
-    // Otherwise create customer from Google profile
-    onAddCustomer({
-      name: acc.name,
-      email: acc.email,
-      phone: '+91 98711 ' + Math.floor(10000 + Math.random() * 90000),
-      avatar: acc.avatar,
-      city: 'Delhi NCR',
-      locality: acc.locality,
-      address: `Tower B, ${acc.locality}`,
-      loginMethod: 'gmail',
-      isPhoneVerified: true,
-      savedAddresses: [{ label: 'Home', address: `Tower B, ${acc.locality}` }]
-    });
-
-    soundManager.playPaymentSuccess();
-    try {
-      confetti({ particleCount: 50, spread: 60 });
-    } catch {
-      // ignore
-    }
     onClose();
   };
 
@@ -506,7 +454,6 @@ export const GlobalAuthModal: React.FC<GlobalAuthModalProps> = ({
             <div className="space-y-3.5">
               <div className="text-center space-y-1">
                 <div className="w-12 h-12 rounded-2xl bg-white/10 border border-white/20 mx-auto flex items-center justify-center shadow-inner">
-                  {/* Google Multi-color G Icon */}
                   <svg className="w-6 h-6" viewBox="0 0 24 24">
                     <path
                       fill="#4285F4"
@@ -527,99 +474,39 @@ export const GlobalAuthModal: React.FC<GlobalAuthModalProps> = ({
                   </svg>
                 </div>
                 <h4 className="text-sm font-bold text-white">
-                  {language === 'hi' ? 'Gmail द्वारा ग्राहक खाता खोलें' : 'Sign in with Google / Gmail'}
+                  {language === 'hi' ? 'Gmail द्वारा ग्राहक खाता खोलें' : 'Create Customer ID with Gmail'}
                 </h4>
                 <p className="text-[11px] text-slate-400">
                   {language === 'hi' 
-                    ? '1-क्लिक में अपनी Google आईडी से जुड़ें और सीधे बुकिंग शुरू करें' 
-                    : 'Instant 1-click customer ID creation with your Google email'}
+                    ? 'अपना Gmail पता और नाम दर्ज करें' 
+                    : 'Enter your Google Gmail & name to open your Customer ID'}
                 </p>
               </div>
 
-              {/* Google Account List Chooser */}
-              <div className="space-y-2 pt-1">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                  {language === 'hi' ? 'खाता चुनें (Choose an account):' : 'Choose an account to continue:'}
-                </span>
-
-                {GOOGLE_ACCOUNTS.map((acc, idx) => (
-                  <button
-                    key={acc.email}
-                    type="button"
-                    onClick={() => handleSelectGoogleAccount(acc)}
-                    className="w-full p-2.5 rounded-2xl bg-slate-950/80 hover:bg-slate-800 border border-slate-700/80 hover:border-blue-500/80 flex items-center justify-between text-left transition-all group active:scale-98"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <img
-                        src={acc.avatar}
-                        alt={acc.name}
-                        className="w-9 h-9 rounded-full object-cover ring-2 ring-slate-700 group-hover:ring-blue-400 shrink-0"
-                      />
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-white text-xs truncate">{acc.name}</span>
-                          {idx === 0 && (
-                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
-                              Active
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[11px] text-slate-400 font-mono truncate">{acc.email}</p>
-                      </div>
-                    </div>
-                    <div className="w-6 h-6 rounded-full bg-slate-800 group-hover:bg-blue-600 text-slate-400 group-hover:text-white flex items-center justify-center shrink-0 transition-colors">
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </div>
-                  </button>
-                ))}
-
-                {/* Custom Gmail toggle */}
-                {!showCustomGmailInput ? (
-                  <button
-                    type="button"
-                    onClick={() => setShowCustomGmailInput(true)}
-                    className="w-full py-2 rounded-xl text-center text-xs text-blue-400 hover:text-blue-300 font-semibold border border-dashed border-blue-500/40 hover:border-blue-400 mt-1 transition-colors"
-                  >
-                    + {language === 'hi' ? 'किसी अन्य Gmail ID से लॉगिन करें' : 'Use another Gmail account'}
-                  </button>
-                ) : (
-                  <form onSubmit={handleCustomGmailLogin} className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-2.5 mt-2 animate-in fade-in">
-                    <span className="text-[10px] font-bold text-slate-300 block">
-                      {language === 'hi' ? 'अपना Gmail पता दर्ज करें:' : 'Enter your Gmail address:'}
-                    </span>
-                    <input
-                      type="email"
-                      required
-                      value={customGmail}
-                      onChange={(e) => setCustomGmail(e.target.value)}
-                      placeholder="example@gmail.com"
-                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:border-blue-500 focus:outline-none"
-                    />
-                    <input
-                      type="text"
-                      value={customGmailName}
-                      onChange={(e) => setCustomGmailName(e.target.value)}
-                      placeholder={language === 'hi' ? 'आपका नाम (Optional)' : 'Your name (Optional)'}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs focus:border-blue-500 focus:outline-none"
-                    />
-                    <div className="flex items-center gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={() => setShowCustomGmailInput(false)}
-                        className="flex-1 py-1.5 rounded-xl bg-slate-800 text-slate-400 hover:text-white font-semibold text-xs"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="submit"
-                        className="flex-1 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md"
-                      >
-                        {language === 'hi' ? 'Gmail ID से खोलें' : 'Open with Gmail'}
-                      </button>
-                    </div>
-                  </form>
-                )}
-              </div>
+              <form onSubmit={handleCustomGmailLogin} className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-2.5">
+                <input
+                  type="text"
+                  required
+                  value={customGmailName}
+                  onChange={(e) => setCustomGmailName(e.target.value)}
+                  placeholder={language === 'hi' ? 'आपका पूरा नाम *' : 'Your full name *'}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs focus:border-blue-500 focus:outline-none"
+                />
+                <input
+                  type="email"
+                  required
+                  value={customGmail}
+                  onChange={(e) => setCustomGmail(e.target.value)}
+                  placeholder="yourname@gmail.com"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:border-blue-500 focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  className="w-full py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-md"
+                >
+                  {language === 'hi' ? 'Gmail से Customer ID खोलें' : 'Open Customer ID with Gmail'}
+                </button>
+              </form>
             </div>
           )}
 

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { 
   DEFAULT_STANDBY_WORKER,
+  DEFAULT_GUEST_CUSTOMER,
   INITIAL_WORKERS, 
   INITIAL_CUSTOMER,
   INITIAL_CUSTOMERS,
@@ -35,9 +36,11 @@ import {
   syncBookingToFirestore, 
   syncJobToFirestore,
   syncWorkerToFirestore, 
+  syncCustomerToFirestore,
   syncCommissionToFirestore, 
   syncPayoutToFirestore,
   listenToWorkers,
+  listenToCustomers,
   listenToJobs
 } from './services/firebase';
 import { Header } from './components/common/Header';
@@ -59,6 +62,8 @@ import { WorkerReviewsModal } from './components/customer/WorkerReviewsModal';
 import { BackendFlutterStudio } from './components/devstudio/BackendFlutterStudio';
 import { TestingGuideModal } from './components/common/TestingGuideModal';
 import { SecurityShieldModal } from './components/common/SecurityShieldModal';
+import { OnboardingAuthScreen } from './components/common/OnboardingAuthScreen';
+import { OwnerPinModal } from './components/common/OwnerPinModal';
 import { SecurityShieldService } from './services/securityShieldService';
 import { AwsCloudService } from './services/awsCloudService';
 import { soundManager } from './services/soundEffects';
@@ -68,8 +73,21 @@ import { IndexedDbSyncService } from './services/indexedDbSyncService';
 import { Sparkles, RefreshCw, Zap, ShieldCheck } from 'lucide-react';
 
 export default function App() {
-  const isInitialMobile = typeof window !== 'undefined' && (window.innerWidth < 1024 || window.matchMedia('(display-mode: standalone)').matches);
-  const [activeView, setActiveView] = useState<'dual' | 'customer' | 'worker' | 'owner' | 'admin' | 'studio'>('customer');
+  const [activeView, setActiveView] = useState<'dual' | 'customer' | 'worker' | 'owner' | 'admin' | 'studio'>(() => {
+    try {
+      const preferred = safeStorage.getItem('smart_india_preferred_role_v4');
+      if (preferred === 'worker') return 'worker';
+    } catch {}
+    return 'customer';
+  });
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(() => {
+    try {
+      return !safeStorage.getItem('smart_india_onboarded_v4');
+    } catch {
+      return true;
+    }
+  });
+  const [isOnboardingOwnerPinOpen, setIsOnboardingOwnerPinOpen] = useState(false);
   const [language, setLanguage] = useState<Language>('en');
   const [isGlobalIdCardOpen, setIsGlobalIdCardOpen] = useState(false);
   const [isGlobalAddCustomerOpen, setIsGlobalAddCustomerOpen] = useState(false);
@@ -98,7 +116,7 @@ export default function App() {
     PushNotificationService.init();
     IndexedDbSyncService.init();
 
-    // Comprehensive purge: Clear ALL old legacy mock data (dummy workers, fake customers, stuck bookings)
+    // Comprehensive purge: Clear ALL old legacy mock data (dummy workers, Vipin Rajput demo profile, fake customers, stuck bookings)
     try {
       const legacyStorageKeys = [
         'smart_india_active_booking',
@@ -119,6 +137,22 @@ export default function App() {
       if (!safeStorage.getItem('smart_india_live_fresh_v3_ready')) {
         legacyStorageKeys.forEach((key) => safeStorage.removeItem(key));
         safeStorage.setItem('smart_india_live_fresh_v3_ready', 'true');
+      }
+      if (!safeStorage.getItem('smart_india_live_fresh_v4_ready')) {
+        const savedCusts = safeStorage.getItem('smart_india_customers_v3');
+        if (savedCusts) {
+          const parsedCusts = JSON.parse(savedCusts);
+          if (Array.isArray(parsedCusts)) {
+            const stripped = parsedCusts.filter(
+              (c: CustomerProfile) =>
+                c.id !== 'c1' &&
+                !c.name?.includes('Vipin Rajput') &&
+                c.email !== 'vr6386833@gmail.com'
+            );
+            safeStorage.setItem('smart_india_customers_v3', JSON.stringify(stripped));
+          }
+        }
+        safeStorage.setItem('smart_india_live_fresh_v4_ready', 'true');
       }
     } catch {}
 
@@ -186,8 +220,33 @@ export default function App() {
     activeView,
   ]);
 
-  // App Owner receiving payment configuration (UPI, Bank, Commission %)
-  const [appOwnerConfig, setAppOwnerConfig] = useState<AppOwnerPaymentConfig>(DEFAULT_APP_OWNER_CONFIG);
+  // App Owner receiving payment configuration (UPI, Bank, Commission %, persisted Security PIN)
+  const [appOwnerConfig, setAppOwnerConfig] = useState<AppOwnerPaymentConfig>(() => {
+    let savedConfig: Partial<AppOwnerPaymentConfig> = {};
+    try {
+      const raw = safeStorage.getItem('smart_india_owner_config_v1');
+      if (raw) {
+        savedConfig = JSON.parse(raw);
+      }
+    } catch {}
+    let savedPin = DEFAULT_APP_OWNER_CONFIG.ownerSecurityPin || '1234';
+    try {
+      const storedPin = safeStorage.getItem('smart_india_owner_pin');
+      const masterPin = SecurityShieldService.getMasterPin();
+      if (storedPin && storedPin.trim().length >= 4) {
+        savedPin = storedPin.trim();
+      } else if (masterPin && masterPin.trim().length >= 4 && masterPin !== '1234') {
+        savedPin = masterPin.trim();
+      } else if (savedConfig.ownerSecurityPin && savedConfig.ownerSecurityPin.trim().length >= 4) {
+        savedPin = savedConfig.ownerSecurityPin.trim();
+      }
+    } catch {}
+    return {
+      ...DEFAULT_APP_OWNER_CONFIG,
+      ...savedConfig,
+      ownerSecurityPin: savedPin,
+    };
+  });
   const [commissionRecords, setCommissionRecords] = useState<CommissionRecord[]>(INITIAL_COMMISSION_RECORDS);
   const [ownerPayouts, setOwnerPayouts] = useState<OwnerPayoutRecord[]>(INITIAL_APP_OWNER_PAYOUTS);
 
@@ -200,6 +259,7 @@ export default function App() {
         if (Array.isArray(parsed) && parsed.length > 0) {
           // Filter out any legacy dummy workers (Brijesh, Rameshwar, etc.)
           const clean = parsed.filter((w: WorkerProfile) => 
+            w.id !== 'wrk_standby_live' &&
             !w.name?.includes('Brijesh') && 
             !w.name?.includes('Rameshwar') && 
             !w.name?.includes('Dharmendra') && 
@@ -227,7 +287,15 @@ export default function App() {
     return INITIAL_WORKERS;
   });
 
-  const [activeWorkerId, setActiveWorkerId] = useState<string>(() => workers[0]?.id || DEFAULT_STANDBY_WORKER.id);
+  const [activeWorkerId, setActiveWorkerId] = useState<string>(() => {
+    try {
+      const savedWorkerId = safeStorage.getItem('smart_india_active_worker_id_v4');
+      if (savedWorkerId && workers.some((w) => w.id === savedWorkerId)) {
+        return savedWorkerId;
+      }
+    } catch {}
+    return workers[0]?.id || DEFAULT_STANDBY_WORKER.id;
+  });
   const activeWorker = workers.find((w) => w.id === activeWorkerId) || workers[0] || DEFAULT_STANDBY_WORKER;
 
   const [customers, setCustomers] = useState<CustomerProfile[]>(() => {
@@ -236,8 +304,12 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Keep only Vipin Rajput and newly registered users; filter out dummy customer seeds
+          // Strip legacy dummy customers and hardcoded Vipin Rajput demo profile
           const clean = parsed.filter((c: CustomerProfile) => 
+            c.id !== 'c1' &&
+            c.id !== 'c_new_guest' &&
+            !c.name?.includes('Vipin Rajput') &&
+            c.email !== 'vr6386833@gmail.com' &&
             !c.name?.includes('Anil Gupta') &&
             !c.name?.includes('Rajesh Kumar') &&
             !c.name?.includes('Sunita Devi') &&
@@ -252,8 +324,16 @@ export default function App() {
     } catch {}
     return INITIAL_CUSTOMERS;
   });
-  const [activeCustomerId, setActiveCustomerId] = useState<string>(INITIAL_CUSTOMERS[0].id);
-  const customer = customers.find((c) => c.id === activeCustomerId) || customers[0] || INITIAL_CUSTOMERS[0];
+  const [activeCustomerId, setActiveCustomerId] = useState<string>(() => {
+    try {
+      const savedCustId = safeStorage.getItem('smart_india_active_customer_id_v4');
+      if (savedCustId && customers.some((c) => c.id === savedCustId)) {
+        return savedCustId;
+      }
+    } catch {}
+    return customers[0]?.id || DEFAULT_GUEST_CUSTOMER.id;
+  });
+  const customer = customers.find((c) => c.id === activeCustomerId) || customers[0] || DEFAULT_GUEST_CUSTOMER;
 
   const [jobs, setJobs] = useState<JobPost[]>(() => {
     try {
@@ -326,12 +406,31 @@ export default function App() {
   }, [activeBooking]);
 
   React.useEffect(() => {
+    safeStorage.setItem('smart_india_owner_config_v1', JSON.stringify(appOwnerConfig));
+    if (appOwnerConfig.ownerSecurityPin && appOwnerConfig.ownerSecurityPin.trim().length >= 4) {
+      safeStorage.setItem('smart_india_owner_pin', appOwnerConfig.ownerSecurityPin.trim());
+    }
+  }, [appOwnerConfig]);
+
+  React.useEffect(() => {
     safeStorage.setItem('smart_india_workers_v3', JSON.stringify(workers));
   }, [workers]);
 
   React.useEffect(() => {
+    if (activeWorkerId) {
+      safeStorage.setItem('smart_india_active_worker_id_v4', activeWorkerId);
+    }
+  }, [activeWorkerId]);
+
+  React.useEffect(() => {
     safeStorage.setItem('smart_india_customers_v3', JSON.stringify(customers));
   }, [customers]);
+
+  React.useEffect(() => {
+    if (activeCustomerId) {
+      safeStorage.setItem('smart_india_active_customer_id_v4', activeCustomerId);
+    }
+  }, [activeCustomerId]);
 
   React.useEffect(() => {
     safeStorage.setItem('smart_india_jobs_v3', JSON.stringify(jobs));
@@ -345,11 +444,58 @@ export default function App() {
   React.useEffect(() => {
     const unsubWorkers = listenToWorkers((cloudWorkers) => {
       if (cloudWorkers && cloudWorkers.length > 0) {
-        setWorkers((prev) => {
-          const map = new Map(prev.map((w) => [w.id, w]));
-          cloudWorkers.forEach((w) => map.set(w.id, { ...map.get(w.id), ...w }));
-          return Array.from(map.values());
-        });
+        const cleanCloud = cloudWorkers.filter((w) =>
+          w.id !== 'wrk_standby_live' &&
+          !w.name?.includes('Brijesh') &&
+          !w.name?.includes('Rameshwar') &&
+          !w.name?.includes('Dharmendra') &&
+          !w.name?.includes('Sunil Sharma') &&
+          !w.name?.includes('Mohammed Arif') &&
+          !w.name?.includes('Balwant Singh') &&
+          !w.name?.includes('Radhe Shyam') &&
+          !w.name?.includes('Chandan Kumar') &&
+          !w.name?.includes('Santosh Tiles') &&
+          !w.name?.includes('Suresh Kumar AC') &&
+          !w.name?.includes('Jagdish Halwai') &&
+          !w.name?.includes('Kallu DJ') &&
+          !w.name?.includes('Lalji Vishwakarma') &&
+          !w.name?.includes('Munna Bhai') &&
+          !w.name?.includes('Aslam POP') &&
+          !w.name?.includes('Surendra Waterproofing') &&
+          !w.name?.includes('Subhash Rawat')
+        );
+        if (cleanCloud.length > 0) {
+          setWorkers((prev) => {
+            const map = new Map(prev.map((w) => [w.id, w]));
+            cleanCloud.forEach((w) => map.set(w.id, { ...map.get(w.id), ...w }));
+            return Array.from(map.values());
+          });
+        }
+      }
+    });
+
+    const unsubCustomers = listenToCustomers((cloudCustomers) => {
+      if (cloudCustomers && cloudCustomers.length > 0) {
+        const cleanCloud = cloudCustomers.filter((c) =>
+          c.id !== 'c1' &&
+          c.id !== 'c_new_guest' &&
+          !c.name?.includes('Vipin Rajput') &&
+          c.email !== 'vr6386833@gmail.com' &&
+          !c.name?.includes('Anil Gupta') &&
+          !c.name?.includes('Rajesh Kumar') &&
+          !c.name?.includes('Sunita Devi') &&
+          !c.name?.includes('Vikram Malhotra') &&
+          !c.name?.includes('Kavita Verma') &&
+          !c.name?.includes('Manoj Tiwari') &&
+          !c.name?.includes('Deepika Joshi')
+        );
+        if (cleanCloud.length > 0) {
+          setCustomers((prev) => {
+            const map = new Map(prev.map((c) => [c.id, c]));
+            cleanCloud.forEach((c) => map.set(c.id, { ...map.get(c.id), ...c }));
+            return Array.from(map.values());
+          });
+        }
       }
     });
 
@@ -365,6 +511,7 @@ export default function App() {
 
     return () => {
       unsubWorkers();
+      unsubCustomers();
       unsubJobs();
     };
   }, []);
@@ -575,15 +722,28 @@ export default function App() {
   // 2c. Instant Book Specialist by Category
   const handleBookCategory = (categoryId: string) => {
     soundManager.playTap();
+    if (workers.length === 0) {
+      soundManager.playWarning();
+      alert(
+        language === 'hi'
+          ? 'अभी कोई लाइव कारीगर रजिस्टर्ड नहीं है। कृपया पहले Worker Mode में कारीगर ID बनाएं या "Post Job" से अपना काम पोस्ट करें।'
+          : 'No live registered workers available yet. Please post your job requirement via "Post Job" or register a Worker ID first.'
+      );
+      return;
+    }
+
     const cleanCat = categoryId.toLowerCase();
-    const matching = workers.filter(
+    const availableWorkers = workers.filter((w) => !w.isIdPaused);
+    const pool = availableWorkers.length > 0 ? availableWorkers : workers;
+    const matching = pool.filter(
       (w) => w.category.toLowerCase() === cleanCat ||
              w.subSkills.some(s => s.toLowerCase().includes(cleanCat))
     );
     const chosenWorker = matching.length > 0
       ? [...matching].sort((a, b) => b.rating - a.rating)[0]
-      : workers.find((w) => w.category.toLowerCase() === cleanCat) || workers[0];
+      : pool.find((w) => w.category.toLowerCase() === cleanCat) || pool[0];
 
+    if (!chosenWorker) return;
     handleBookWorker(chosenWorker);
   };
 
@@ -1077,8 +1237,8 @@ export default function App() {
     }
 
     setWorkers((prev) =>
-      prev.map((w, i) => {
-        if (i === 0) {
+      prev.map((w) => {
+        if (w.id === activeWorker.id) {
           const newCount = w.reviewsCount + 1;
           const newRating = Number(((w.rating * w.reviewsCount + stars) / newCount).toFixed(2));
           return { ...w, rating: newRating, reviewsCount: newCount };
@@ -1093,7 +1253,7 @@ export default function App() {
     const newBal = activeWorker.walletBalance + amount;
 
     setWorkers((prev) =>
-      prev.map((w, i) => (i === 0 ? { ...w, walletBalance: newBal } : w))
+      prev.map((w) => (w.id === activeWorker.id ? { ...w, walletBalance: newBal } : w))
     );
 
     const newTx: WalletTransaction = {
@@ -1114,8 +1274,8 @@ export default function App() {
   // 11. Worker KYC update
   const handleUpdateKyc = (aadhar: string, pan: string) => {
     setWorkers((prev) =>
-      prev.map((w, i) =>
-        i === 0 ? { ...w, isAadhaarVerified: true, isPanVerified: true } : w
+      prev.map((w) =>
+        w.id === activeWorker.id ? { ...w, isAadhaarVerified: true, isPanVerified: true } : w
       )
     );
   };
@@ -1123,8 +1283,8 @@ export default function App() {
   // 12. Add Portfolio Item
   const handleAddPortfolio = (title: string, tag: string, desc: string, img: string) => {
     setWorkers((prev) =>
-      prev.map((w, i) => {
-        if (i === 0) {
+      prev.map((w) => {
+        if (w.id === activeWorker.id) {
           return {
             ...w,
             portfolio: [
@@ -1252,26 +1412,36 @@ export default function App() {
     };
     setCustomers((prev) => [newCustomer, ...prev]);
     setActiveCustomerId(newId);
+    try {
+      safeStorage.setItem('smart_india_active_customer_id_v4', newId);
+    } catch {}
+    syncCustomerToFirestore(newCustomer);
     soundManager.playSuccess();
   };
 
   // 17. Switch Active Customer
   const handleSelectCustomer = (customerId: string) => {
     setActiveCustomerId(customerId);
+    try {
+      safeStorage.setItem('smart_india_active_customer_id_v4', customerId);
+    } catch {}
     soundManager.playSuccess();
   };
 
   // 18. Add Saved Address to Customer
   const handleAddCustomerAddress = (label: string, address: string) => {
     setCustomers((prev) =>
-      prev.map((c) =>
-        c.id === customer.id
-          ? {
-              ...c,
-              savedAddresses: [...c.savedAddresses, { label, address }],
-            }
-          : c
-      )
+      prev.map((c) => {
+        if (c.id === customer.id) {
+          const updatedCustomer = {
+            ...c,
+            savedAddresses: [...c.savedAddresses, { label, address }],
+          };
+          syncCustomerToFirestore(updatedCustomer);
+          return updatedCustomer;
+        }
+        return c;
+      })
     );
     soundManager.playSuccess();
   };
@@ -1294,6 +1464,9 @@ export default function App() {
     };
     setWorkers((prev) => [newWorker, ...prev]);
     setActiveWorkerId(newWorkerId);
+    try {
+      safeStorage.setItem('smart_india_active_worker_id_v4', newWorkerId);
+    } catch {}
     syncWorkerToFirestore(newWorker);
     soundManager.playSuccess();
   };
@@ -1301,6 +1474,9 @@ export default function App() {
   // 20. Switch Active Worker
   const handleSelectWorker = (workerId: string) => {
     setActiveWorkerId(workerId);
+    try {
+      safeStorage.setItem('smart_india_active_worker_id_v4', workerId);
+    } catch {}
     soundManager.playSuccess();
   };
 
@@ -1325,12 +1501,14 @@ export default function App() {
       'smart_india_worker_notifs',
       'smart_india_worker_notifs_v2',
       'smart_india_worker_notifs_v3',
+      'smart_india_active_customer_id_v4',
+      'smart_india_active_worker_id_v4',
     ];
     keysToRemove.forEach((k) => safeStorage.removeItem(k));
     setWorkers(INITIAL_WORKERS);
     setActiveWorkerId(DEFAULT_STANDBY_WORKER.id);
     setCustomers(INITIAL_CUSTOMERS);
-    setActiveCustomerId(INITIAL_CUSTOMERS[0].id);
+    setActiveCustomerId(DEFAULT_GUEST_CUSTOMER.id);
     setJobs(INITIAL_JOBS);
     setWalletTransactions(INITIAL_WALLET_TRANSACTIONS);
     setSupportTickets(INITIAL_TICKETS);
@@ -1347,8 +1525,23 @@ export default function App() {
 
   // Update Customer Profile
   const handleUpdateCustomerProfile = (updated: Partial<CustomerProfile>) => {
+    if (customer.id === DEFAULT_GUEST_CUSTOMER.id) {
+      handleAddCustomer({
+        ...DEFAULT_GUEST_CUSTOMER,
+        ...updated,
+        name: updated.name || 'New Customer ID',
+      });
+      return;
+    }
     setCustomers((prev) =>
-      prev.map((c) => (c.id === customer.id ? { ...c, ...updated } : c))
+      prev.map((c) => {
+        if (c.id === customer.id) {
+          const next = { ...c, ...updated };
+          syncCustomerToFirestore(next);
+          return next;
+        }
+        return c;
+      })
     );
     soundManager.playSuccess();
   };
@@ -1356,6 +1549,10 @@ export default function App() {
   // Quick Testing Action Handlers
   const handleTestBookWorker = () => {
     const testWorker = workers.find((w) => w.category === 'electrician' || w.category === 'mistry') || workers[0];
+    if (!testWorker) {
+      alert(language === 'hi' ? 'टेस्ट बुकिंग से पहले कम से कम 1 कारीगर ID बनाएं।' : 'Please register at least 1 worker first.');
+      return;
+    }
     handleBookWorker(testWorker);
   };
 
@@ -1376,10 +1573,73 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col font-['Plus_Jakarta_Sans',sans-serif] text-slate-100 antialiased selection:bg-orange-500 selection:text-slate-950">
+    <div
+      className={
+        activeView === 'dual' || activeView === 'studio'
+          ? "min-h-screen bg-slate-950 flex flex-col font-['Plus_Jakarta_Sans',sans-serif] text-slate-100 antialiased selection:bg-orange-500 selection:text-slate-950"
+          : "h-[100dvh] max-h-[100dvh] bg-slate-950 flex flex-col overflow-hidden font-['Plus_Jakarta_Sans',sans-serif] text-slate-100 antialiased selection:bg-orange-500 selection:text-slate-950"
+      }
+    >
+      {/* First-Install Onboarding Screen: Choose & Create Customer ID or Worker ID */}
+      {showOnboarding && (
+        <OnboardingAuthScreen
+          language={language}
+          onToggleLanguage={(lang) => setLanguage(lang)}
+          onCreateCustomer={(custData) => {
+            handleAddCustomer(custData);
+            try {
+              safeStorage.setItem('smart_india_onboarded_v4', 'true');
+              safeStorage.setItem('smart_india_preferred_role_v4', 'customer');
+            } catch {}
+            setActiveView('customer');
+            setShowOnboarding(false);
+          }}
+          onCreateWorker={(workerData) => {
+            handleAddWorker(workerData);
+            try {
+              safeStorage.setItem('smart_india_onboarded_v4', 'true');
+              safeStorage.setItem('smart_india_preferred_role_v4', 'worker');
+            } catch {}
+            setActiveView('worker');
+            setShowOnboarding(false);
+          }}
+          onSkipAsGuest={() => {
+            try {
+              safeStorage.setItem('smart_india_onboarded_v4', 'true');
+              safeStorage.setItem('smart_india_preferred_role_v4', 'customer');
+            } catch {}
+            setActiveView('customer');
+            setShowOnboarding(false);
+          }}
+          onOpenOwnerPortal={() => setIsOnboardingOwnerPinOpen(true)}
+        />
+      )}
+
+      {/* Owner PIN Modal accessible from First-Install Onboarding */}
+      <OwnerPinModal
+        isOpen={isOnboardingOwnerPinOpen}
+        onClose={() => setIsOnboardingOwnerPinOpen(false)}
+        onSuccess={() => {
+          try {
+            safeStorage.setItem('smart_india_onboarded_v4', 'true');
+          } catch {}
+          setShowOnboarding(false);
+          setActiveView('owner');
+        }}
+        language={language}
+        ownerPin={appOwnerConfig.ownerSecurityPin || '1234'}
+        onUpdatePin={(newPin) => {
+          setAppOwnerConfig((prev) => ({ ...prev, ownerSecurityPin: newPin }));
+          try {
+            safeStorage.setItem('smart_india_owner_pin', newPin);
+            SecurityShieldService.setMasterPin(newPin);
+          } catch {}
+        }}
+      />
+
       {/* Offline Mode Banner for Network Disconnections */}
       {!isOnline && (
-        <div className="bg-amber-600 text-white text-xs px-4 py-1.5 flex items-center justify-center gap-2 font-medium shadow-md sticky top-0 z-50">
+        <div className="bg-amber-600 text-white text-xs px-4 py-1.5 flex items-center justify-center gap-2 font-medium shadow-md shrink-0 z-50">
           <span className="w-2 h-2 rounded-full bg-amber-200 animate-ping" />
           <span>
             {language === 'hi'
@@ -1458,7 +1718,7 @@ export default function App() {
       )}
 
       {/* Main Workspace Canvas */}
-      <main className={activeView === 'dual' || activeView === 'studio' ? "flex-1 flex flex-col p-3 md:p-6 overflow-hidden" : "flex-1 flex flex-col h-screen w-full overflow-hidden"}>
+      <main className={activeView === 'dual' || activeView === 'studio' ? "flex-1 flex flex-col p-3 md:p-6 overflow-hidden" : "flex-1 min-h-0 flex flex-col w-full overflow-hidden"}>
         {/* VIEW 1: Dual Mobile Split Simulator */}
         {activeView === 'dual' && (
           <div className="max-w-7xl mx-auto w-full flex-1 grid grid-cols-1 lg:grid-cols-2 gap-6 items-center justify-center">
@@ -1586,7 +1846,7 @@ export default function App() {
 
         {/* VIEW 2: Single Customer Mobile View (Native Full-Screen, Clean UI) */}
         {activeView === 'customer' && (
-          <div className="w-full flex-1 flex flex-col h-full overflow-hidden">
+          <div className="w-full flex-1 min-h-0 flex flex-col overflow-hidden">
             <CustomerApp
               customer={customer}
               customers={customers}
@@ -1621,6 +1881,9 @@ export default function App() {
               }}
               onSwitchToWorker={() => {
                 soundManager.playTap();
+                try {
+                  safeStorage.setItem('smart_india_preferred_role_v4', 'worker');
+                } catch {}
                 setActiveView('worker');
               }}
               onSwitchToOwner={() => {
@@ -1645,7 +1908,12 @@ export default function App() {
                 setAppOwnerConfig((prev) => ({ ...prev, ownerSecurityPin: newPin }));
                 try {
                   safeStorage.setItem('smart_india_owner_pin', newPin);
+                  SecurityShieldService.setMasterPin(newPin);
                 } catch {}
+              }}
+              onOpenOnboarding={() => {
+                soundManager.playTap();
+                setShowOnboarding(true);
               }}
             />
           </div>
@@ -1653,7 +1921,7 @@ export default function App() {
 
         {/* VIEW 3: Single Worker Mobile View */}
         {activeView === 'worker' && (
-          <div className="w-full flex-1 flex flex-col h-full overflow-hidden">
+          <div className="w-full flex-1 min-h-0 flex flex-col overflow-hidden">
             <WorkerApp
               worker={activeWorker}
               workers={workers}
@@ -1714,7 +1982,14 @@ export default function App() {
               }}
               onNavigateToCustomer={() => {
                 soundManager.playTap();
+                try {
+                  safeStorage.setItem('smart_india_preferred_role_v4', 'customer');
+                } catch {}
                 setActiveView('customer');
+              }}
+              onOpenOnboarding={() => {
+                soundManager.playTap();
+                setShowOnboarding(true);
               }}
             />
           </div>
@@ -1729,20 +2004,36 @@ export default function App() {
 
         {/* VIEW 5: Owner App (ओनर ऐप - ऐप कितने लोगों ने इस्तेमाल किया व बैंक ट्रांसफर) */}
         {(activeView === 'owner' || activeView === 'admin') && (
-          <div className="max-w-7xl mx-auto w-full flex-1">
-            <OwnerApp
-              appOwnerConfig={appOwnerConfig}
-              commissionRecords={commissionRecords}
-              workers={workers}
-              customers={customers}
-              jobs={jobs}
-              language={language}
-              onUpdateConfig={(newCfg) => setAppOwnerConfig(newCfg)}
-              onPayoutToBank={handleOwnerWithdrawToBank}
-              onUnlockWorker={handleUnlockWorkerByAdmin}
-              onNavigateToView={(view) => setActiveView(view)}
-              payoutHistory={ownerPayouts}
-            />
+          <div
+            className="w-full flex-1 min-h-0 overflow-y-auto overscroll-contain px-2 sm:px-4"
+            style={{
+              paddingTop: 'max(env(safe-area-inset-top, 0px), 1.5rem)',
+              paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom, 0px))',
+            }}
+          >
+            <div className="max-w-7xl mx-auto w-full">
+              <OwnerApp
+                appOwnerConfig={appOwnerConfig}
+                commissionRecords={commissionRecords}
+                workers={workers}
+                customers={customers}
+                jobs={jobs}
+                language={language}
+                onUpdateConfig={(newCfg) => {
+                  setAppOwnerConfig(newCfg);
+                  if (newCfg.ownerSecurityPin && newCfg.ownerSecurityPin.trim().length >= 4) {
+                    try {
+                      safeStorage.setItem('smart_india_owner_pin', newCfg.ownerSecurityPin.trim());
+                      SecurityShieldService.setMasterPin(newCfg.ownerSecurityPin.trim());
+                    } catch {}
+                  }
+                }}
+                onPayoutToBank={handleOwnerWithdrawToBank}
+                onUnlockWorker={handleUnlockWorkerByAdmin}
+                onNavigateToView={(view) => setActiveView(view)}
+                payoutHistory={ownerPayouts}
+              />
+            </div>
           </div>
         )}
       </main>
@@ -1752,7 +2043,15 @@ export default function App() {
         isOpen={isAppOwnerEarningsOpen}
         onClose={() => setIsAppOwnerEarningsOpen(false)}
         appOwnerConfig={appOwnerConfig}
-        onUpdateConfig={(newCfg) => setAppOwnerConfig(newCfg)}
+        onUpdateConfig={(newCfg) => {
+          setAppOwnerConfig(newCfg);
+          if (newCfg.ownerSecurityPin && newCfg.ownerSecurityPin.trim().length >= 4) {
+            try {
+              safeStorage.setItem('smart_india_owner_pin', newCfg.ownerSecurityPin.trim());
+              SecurityShieldService.setMasterPin(newCfg.ownerSecurityPin.trim());
+            } catch {}
+          }
+        }}
         commissionRecords={commissionRecords}
         workers={workers}
         language={language}
@@ -1874,6 +2173,12 @@ export default function App() {
         isOpen={isSecurityShieldOpen}
         onClose={() => setIsSecurityShieldOpen(false)}
         language={language}
+        onPinUpdated={(newPin) => {
+          setAppOwnerConfig((prev) => ({ ...prev, ownerSecurityPin: newPin }));
+          try {
+            safeStorage.setItem('smart_india_owner_pin', newPin);
+          } catch {}
+        }}
       />
     </div>
   );

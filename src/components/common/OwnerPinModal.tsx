@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Crown, Lock, X, Check, KeyRound, ShieldAlert, Sparkles, RefreshCw } from 'lucide-react';
 import { soundManager } from '../../services/soundEffects';
 import { safeStorage } from '../../services/safeStorage';
+import { SecurityShieldService } from '../../services/securityShieldService';
 
 interface OwnerPinModalProps {
   isOpen: boolean;
@@ -32,19 +33,24 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Retrieve effective PIN from localStorage or props or fallback 1234
+  // Retrieve effective PIN strictly from storage/props (no hardcoded bypasses)
   const getEffectivePin = (): string => {
     try {
       const stored = safeStorage.getItem('smart_india_owner_pin');
-      if (stored && stored.length >= 4) return stored;
+      if (stored && stored.trim().length >= 4) return stored.trim();
+      const master = SecurityShieldService.getMasterPin();
+      if (master && master.trim().length >= 4 && master !== '1234') return master.trim();
     } catch {}
-    return ownerPin || '1234';
+    return (ownerPin || '1234').trim();
   };
+
+  const effectivePin = getEffectivePin();
+  const isDefaultPin = effectivePin === '1234';
 
   const handleUnlockSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const activePin = getEffectivePin();
-    if (pin === activePin || pin === '1234' || pin === '0000') {
+    if (pin.trim() === activePin) {
       soundManager.playSuccessCoin();
       setError(null);
       setPin('');
@@ -53,9 +59,9 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
     } else {
       soundManager.playWarning();
       setError(
-        language === 'hi' 
-          ? 'गलत पिन! कृपया सही 4-अंकों का पिन दर्ज करें।' 
-          : 'Incorrect PIN! Please enter the correct 4-digit PIN.'
+        language === 'hi'
+          ? 'गलत पिन! कृपया अपना सेट किया हुआ सही पिन दर्ज करें।'
+          : 'Incorrect PIN! Please enter your configured Owner PIN.'
       );
       setPin('');
     }
@@ -65,30 +71,32 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
     e.preventDefault();
     const activePin = getEffectivePin();
 
-    if (currentPinInput !== activePin && currentPinInput !== '1234' && currentPinInput !== '0000') {
+    if (currentPinInput.trim() !== activePin) {
       soundManager.playWarning();
       setError(language === 'hi' ? 'पुराना पिन गलत है!' : 'Current PIN is incorrect!');
       return;
     }
 
-    if (!newPinInput || newPinInput.length < 4) {
+    const cleanedNew = newPinInput.trim();
+    if (!cleanedNew || cleanedNew.length < 4) {
       soundManager.playWarning();
       setError(language === 'hi' ? 'नया पिन कम से कम 4 अंकों का होना चाहिए!' : 'New PIN must be at least 4 digits!');
       return;
     }
 
-    if (newPinInput !== confirmPinInput) {
+    if (cleanedNew !== confirmPinInput.trim()) {
       soundManager.playWarning();
       setError(language === 'hi' ? 'दोनों नए पिन मेल नहीं खा रहे हैं!' : 'New PINs do not match!');
       return;
     }
 
-    // Save newly changed PIN to safeStorage
+    // Persist newly changed PIN across all storage keys and services
     try {
-      safeStorage.setItem('smart_india_owner_pin', newPinInput);
+      safeStorage.setItem('smart_india_owner_pin', cleanedNew);
+      SecurityShieldService.setMasterPin(cleanedNew);
     } catch {}
 
-    onUpdatePin?.(newPinInput);
+    onUpdatePin?.(cleanedNew);
     soundManager.playSuccessCoin();
     setChangeSuccess(true);
     setError(null);
@@ -137,12 +145,16 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
         <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 mb-4 text-[11px] text-amber-300">
           {mode === 'enter' ? (
             language === 'hi'
-              ? '🔐 सामान्य ग्राहकों को यह स्क्रीन नहीं दिखती। मालिक पोर्टल खोलने हेतु गुप्त 4-अंकों का पिन डालें (डिफ़ॉल्ट पिन: 1234)'
-              : '🔐 This portal is hidden from regular users. Enter your 4-digit secret PIN to access the earnings & settings portal (Default: 1234)'
+              ? (isDefaultPin
+                  ? '🔐 सामान्य ग्राहकों को यह स्क्रीन नहीं दिखती। मालिक पोर्टल खोलने हेतु गुप्त 4-अंकों का पिन डालें (डिफ़ॉल्ट पिन: 1234)'
+                  : '🔐 मालिक पोर्टल सुरक्षित है। पोर्टल खोलने के लिए अपना नया सेट किया हुआ गुप्त पिन डालें।')
+              : (isDefaultPin
+                  ? '🔐 This portal is hidden from regular users. Enter your 4-digit secret PIN (Default: 1234)'
+                  : '🔐 Owner portal is PIN protected. Enter your custom secret PIN to unlock.')
           ) : (
             language === 'hi'
-              ? '🛡️ सुरक्षा नियम: अपना नया 4-अंकों का पिन केवल अपने पास रखें। इसे किसी अन्य व्यक्ति को न बताएं।'
-              : '🛡️ Security rule: Keep your owner PIN secret. Never share it with customers or workers.'
+              ? '🛡️ सुरक्षा नियम: नया पिन सेव करने के बाद पुराना पिन (1234 आदि) काम करना बंद कर देगा।'
+              : '🛡️ Security rule: Once changed, old PINs will no longer work.'
           )}
         </div>
 
@@ -232,7 +244,7 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
                       setError(null);
                       setCurrentPinInput(e.target.value);
                     }}
-                    placeholder="डिफ़ॉल्ट 1234"
+                    placeholder={isDefaultPin ? 'डिफ़ॉल्ट 1234' : 'वर्तमान पिन डालें'}
                     className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-3 py-2 text-center text-sm font-mono text-white focus:outline-none"
                     required
                   />

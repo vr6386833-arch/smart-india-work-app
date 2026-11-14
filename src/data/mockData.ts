@@ -815,18 +815,18 @@ export const CATEGORIES: Category[] = [
 // Standby default worker fallback used when no local workers have registered yet
 export const DEFAULT_STANDBY_WORKER: WorkerProfile = {
   id: 'wrk_standby_live',
-  name: 'कारीगर / मिस्त्री (रजिस्टर करें)',
-  nameHi: 'नया कारीगर जोड़ें',
-  age: 32,
-  phone: '+91 98765 43210',
+  name: 'New Worker ID',
+  nameHi: 'नया कारीगर ID बनाएं',
+  age: 28,
+  phone: '',
   avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80',
   rating: 5.0,
   reviewsCount: 0,
   experienceYears: 1,
   category: 'mistry',
-  subSkills: ['कारीगर रजिस्टर करें', 'काम स्वीकारें'],
-  city: 'Delhi NCR',
-  locality: 'Sector 62, Noida',
+  subSkills: ['नया कारीगर रजिस्टर करें', 'काम पाएं'],
+  city: 'India',
+  locality: 'लोकेशन चुनें',
   distanceKm: 0.5,
   hourlyRate: 150,
   dailyRate: 850,
@@ -835,42 +835,41 @@ export const DEFAULT_STANDBY_WORKER: WorkerProfile = {
   isOnline: true,
   walletBalance: 100,
   completedJobsCount: 0,
-  workerIdCode: 'SI-LIVE-001',
+  workerIdCode: 'SI-NEW-ID',
   aadhaarNumber: 'XXXX-XXXX-0000',
-  registeredDate: 'आज (Live)',
+  registeredDate: 'नया (New)',
   bloodGroup: 'O+',
-  emergencyContact: '+91 98765 43210',
+  emergencyContact: '',
   portfolio: []
 };
 
 // 100% Clean Production Workers Array (Starts pristine, populates from real registrations & Firestore)
 export const INITIAL_WORKERS: WorkerProfile[] = [];
 
-// Production Customer Profile: Only the real verified owner/customer Vipin Rajput
-export const INITIAL_CUSTOMERS: CustomerProfile[] = [
-  {
-    id: 'c1',
-    name: 'Vipin Rajput',
-    phone: '+91 98765 43210',
-    email: 'vr6386833@gmail.com',
-    loginMethod: 'gmail',
-    isPhoneVerified: true,
-    avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=400&q=80',
-    city: 'Delhi NCR',
-    locality: 'Sector 62, Noida',
-    address: 'Sector 62, Noida, Uttar Pradesh - 201309',
-    totalBookingsCount: 0,
-    totalSpent: 0,
-    joinedDate: 'आज (Live)',
-    lastActive: 'अभी सक्रिय (Active now)',
-    status: 'active',
-    savedAddresses: [
-      { label: 'घर (Home)', address: 'Sector 62, Noida, Uttar Pradesh - 201309' }
-    ]
-  }
-];
+// Guest placeholder when no customer has registered yet on device
+export const DEFAULT_GUEST_CUSTOMER: CustomerProfile = {
+  id: 'c_new_guest',
+  name: 'New Customer ID',
+  phone: '',
+  email: '',
+  loginMethod: 'otp',
+  isPhoneVerified: false,
+  avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80',
+  city: 'India',
+  locality: 'लोकेशन चुनें',
+  address: '',
+  totalBookingsCount: 0,
+  totalSpent: 0,
+  joinedDate: 'नया (New)',
+  lastActive: 'आईडी बनाएं',
+  status: 'active',
+  savedAddresses: []
+};
 
-export const INITIAL_CUSTOMER: CustomerProfile = INITIAL_CUSTOMERS[0];
+// 100% Clean Production Customers Array (Starts empty until real user creates Customer ID)
+export const INITIAL_CUSTOMERS: CustomerProfile[] = [];
+
+export const INITIAL_CUSTOMER: CustomerProfile = DEFAULT_GUEST_CUSTOMER;
 
 // 100% Clean Production Jobs Array (Starts pristine, populates when real customers post jobs)
 export const INITIAL_JOBS: JobPost[] = [];
@@ -884,10 +883,10 @@ export const INITIAL_TICKETS: SupportTicket[] = [];
 
 // Official App Owner / Admin Receiving Account Configuration
 export const DEFAULT_APP_OWNER_CONFIG: AppOwnerPaymentConfig = {
-  ownerName: 'Smart India Admin (Vipin Rajput)',
+  ownerName: 'Smart India Work Owner',
   businessName: 'Smart India Work Official',
   upiId: 'smartindia.official@icici',
-  phone: '+91 98765 43210',
+  phone: '+91 98765 00000',
   bankAccountName: 'Smart India Work Technologies Pvt Ltd',
   bankAccountNumber: '50200084938291',
   ifscCode: 'ICIC0001092',

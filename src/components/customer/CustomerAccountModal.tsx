@@ -60,6 +60,12 @@ export const CustomerAccountModal: React.FC<CustomerAccountModalProps> = ({
 
   const [confirmClearData, setConfirmClearData] = useState(false);
 
+  React.useEffect(() => {
+    setName(customer.name === 'New Customer ID' ? '' : customer.name);
+    setPhone(customer.phone || '');
+    setLocality(customer.locality === 'लोकेशन चुनें' ? '' : customer.locality);
+  }, [customer.id, customer.name, customer.phone, customer.locality]);
+
   if (!isOpen) return null;
 
   const handleSaveProfile = (e: React.FormEvent) => {
@@ -138,19 +144,23 @@ export const CustomerAccountModal: React.FC<CustomerAccountModalProps> = ({
                 <div>
                   <div className="flex items-center gap-1.5">
                     <span className="font-extrabold text-white text-sm">{customer.name}</span>
-                    <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[9px] font-bold">
-                      <ShieldCheck className="w-2.5 h-2.5" />
-                      KYC Verified
-                    </span>
+                    {customer.isPhoneVerified && (
+                      <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[9px] font-bold">
+                        <ShieldCheck className="w-2.5 h-2.5" />
+                        Verified
+                      </span>
+                    )}
                   </div>
                   <p className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
                     <Phone className="w-2.5 h-2.5 text-blue-400" />
-                    <span>{customer.phone}</span>
+                    <span>{customer.phone || (language === 'hi' ? 'मोबाइल नंबर जोड़ें' : 'Add phone number')}</span>
                   </p>
-                  <p className="text-[10px] text-slate-400 flex items-center gap-1">
-                    <Mail className="w-2.5 h-2.5 text-slate-400" />
-                    <span className="truncate max-w-[180px]">{customer.email || 'vr6386833@gmail.com'}</span>
-                  </p>
+                  {customer.email && (
+                    <p className="text-[10px] text-slate-400 flex items-center gap-1">
+                      <Mail className="w-2.5 h-2.5 text-slate-400" />
+                      <span className="truncate max-w-[180px]">{customer.email}</span>
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -307,33 +317,36 @@ export const CustomerAccountModal: React.FC<CustomerAccountModalProps> = ({
 
             {/* List of Addresses */}
             <div className="space-y-1.5">
-              {(customer.savedAddresses || [
-                { label: 'Home', address: 'Sector 62, Noida, Uttar Pradesh - 201309' },
-                { label: 'Construction Site', address: 'Plot 42, Block C, Industrial Area, Sector 62' }
-              ]).map((addr, idx) => (
-                <div 
-                  key={idx}
-                  className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between text-[11px]"
-                >
-                  <div className="min-w-0 pr-2">
-                    <span className="font-bold text-amber-400 block text-[10px] uppercase">
-                      {addr.label}
-                    </span>
-                    <span className="text-slate-300 truncate block">
-                      {addr.address}
-                    </span>
+              {customer.savedAddresses && customer.savedAddresses.length > 0 ? (
+                customer.savedAddresses.map((addr, idx) => (
+                  <div 
+                    key={idx}
+                    className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between text-[11px]"
+                  >
+                    <div className="min-w-0 pr-2">
+                      <span className="font-bold text-amber-400 block text-[10px] uppercase">
+                        {addr.label}
+                      </span>
+                      <span className="text-slate-300 truncate block">
+                        {addr.address}
+                      </span>
+                    </div>
+                    {onRemoveAddress && idx > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => onRemoveAddress(idx)}
+                        className="p-1 text-slate-500 hover:text-rose-400 transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
-                  {onRemoveAddress && idx > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => onRemoveAddress(idx)}
-                      className="p-1 text-slate-500 hover:text-rose-400 transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
-              ))}
+                ))
+              ) : (
+                <p className="text-[11px] text-slate-500 text-center py-2">
+                  {language === 'hi' ? 'कोई सहेजा गया पता नहीं। ऊपर "+ नया पता जोड़ें" पर टैप करें।' : 'No saved addresses yet. Tap "+ Add New" above.'}
+                </p>
+              )}
             </div>
 
             {/* Add Address Form */}

@@ -122,12 +122,18 @@ export class SecurityShieldService {
    * 4. Master Security PIN for Owner & Admin Controls
    */
   public static getMasterPin(): string {
-    return safeStorage.getItem(STORAGE_KEY_MASTER_PIN) || DEFAULT_MASTER_PIN;
+    const primary = safeStorage.getItem('smart_india_owner_pin');
+    if (primary && primary.trim().length >= 4) return primary.trim();
+    const legacy = safeStorage.getItem(STORAGE_KEY_MASTER_PIN);
+    if (legacy && legacy.trim().length >= 4) return legacy.trim();
+    return DEFAULT_MASTER_PIN;
   }
 
   public static setMasterPin(newPin: string): boolean {
-    if (!newPin || newPin.length < 4) return false;
-    safeStorage.setItem(STORAGE_KEY_MASTER_PIN, newPin);
+    const cleaned = (newPin || '').trim();
+    if (cleaned.length < 4) return false;
+    safeStorage.setItem(STORAGE_KEY_MASTER_PIN, cleaned);
+    safeStorage.setItem('smart_india_owner_pin', cleaned);
     this.logSecurityEvent({
       id: `pin_update_${Date.now()}`,
       type: 'pin_success',
@@ -140,7 +146,7 @@ export class SecurityShieldService {
 
   public static verifyMasterPin(enteredPin: string): boolean {
     const correctPin = this.getMasterPin();
-    const isMatch = enteredPin === correctPin;
+    const isMatch = enteredPin.trim() === correctPin;
     if (!isMatch) {
       this.logSecurityEvent({
         id: `pin_fail_${Date.now()}`,

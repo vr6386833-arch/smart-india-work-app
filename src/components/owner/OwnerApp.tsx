@@ -56,6 +56,7 @@ import {
 } from '../../types';
 import { soundManager } from '../../services/soundEffects';
 import { safeStorage } from '../../services/safeStorage';
+import { SecurityShieldService } from '../../services/securityShieldService';
 import { PhoneFrame } from '../common/PhoneFrame';
 
 interface OwnerAppProps {
@@ -756,7 +757,7 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
               })) : []),
               {
                 time: 'अभी (Live)',
-                user: 'स्मार्ट इंडिया वर्क (Vipin Rajput)',
+                user: appOwnerConfig.ownerName || 'स्मार्ट इंडिया वर्क ओनर',
                 role: 'Admin / Owner',
                 action: 'लाइव उत्पादन सर्वर सक्रिय है - नए काम व कारीगर पंजीकरण की प्रतीक्षा है',
                 tag: 'System Live'
@@ -805,7 +806,7 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
                 <span className="text-xs text-slate-400">
                   {language === 'hi' ? 'कुल खर्च: ' : 'Total Spent: '}
                   <strong className="text-emerald-400 font-mono">
-                    ₹{filteredCustomers.reduce((acc, c) => acc + (c.totalSpent || 2000), 0).toLocaleString('en-IN')}
+                    ₹{filteredCustomers.reduce((acc, c) => acc + (c.totalSpent || 0), 0).toLocaleString('en-IN')}
                   </strong>
                 </span>
               </div>
@@ -1219,7 +1220,8 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                if (!newOwnerPin || newOwnerPin.length < 4) {
+                const cleaned = newOwnerPin.trim();
+                if (!cleaned || cleaned.length < 4) {
                   soundManager.playWarning();
                   setPinUpdateMsg(language === 'hi' ? 'पिन कम से कम 4 अंकों का होना चाहिए!' : 'PIN must be at least 4 digits!');
                   return;
@@ -1227,14 +1229,15 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
                 soundManager.playSuccessCoin();
                 onUpdateConfig({
                   ...appOwnerConfig,
-                  ownerSecurityPin: newOwnerPin
+                  ownerSecurityPin: cleaned
                 });
                 try {
-                  safeStorage.setItem('smart_india_owner_pin', newOwnerPin);
+                  safeStorage.setItem('smart_india_owner_pin', cleaned);
+                  SecurityShieldService.setMasterPin(cleaned);
                 } catch {}
-                setPinUpdateMsg(language === 'hi' ? '✓ नया पिन सफलतापूर्वक सेव हो गया!' : '✓ PIN updated successfully!');
+                setPinUpdateMsg(language === 'hi' ? '✓ नया पिन सफलतापूर्वक सेव हो गया! अब पुराना पिन काम नहीं करेगा।' : '✓ PIN updated successfully! Old PINs are now disabled.');
                 setNewOwnerPin('');
-                setTimeout(() => setPinUpdateMsg(null), 3000);
+                setTimeout(() => setPinUpdateMsg(null), 3500);
               }}
               className="space-y-2.5 pt-1"
             >

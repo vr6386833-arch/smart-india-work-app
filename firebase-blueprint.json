@@ -66,6 +66,20 @@
         "date": { "type": "string" }
       },
       "required": ["id", "amount"]
+    },
+    "CustomerProfile": {
+      "title": "CustomerProfile",
+      "description": "Registered customer profile",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "city": { "type": "string" },
+        "locality": { "type": "string" },
+        "address": { "type": "string" }
+      },
+      "required": ["id", "name"]
     }
   },
   "firestore": {
@@ -76,6 +90,10 @@
     "/workers/{workerId}": {
       "schema": { "$ref": "#/entities/WorkerProfile" },
       "description": "Collection of worker profiles"
+    },
+    "/customers/{customerId}": {
+      "schema": { "$ref": "#/entities/CustomerProfile" },
+      "description": "Collection of customer profiles"
     },
     "/commissions/{commissionId}": {
       "schema": { "$ref": "#/entities/CommissionRecord" },
