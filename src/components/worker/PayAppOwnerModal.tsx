@@ -139,7 +139,8 @@ export const PayAppOwnerModal: React.FC<PayAppOwnerModalProps> = ({
 
   const handleWalletDeductPayment = () => {
     if (worker.walletBalance < commissionAmount) {
-      alert(language === 'hi' ? 'वॉलेट में पर्याप्त बैलेंस नहीं है। कृपया UPI से भुगतान करें।' : 'Insufficient wallet balance. Please pay via UPI QR.');
+      soundManager.playWarning();
+      setUtrError(language === 'hi' ? 'वॉलेट में पर्याप्त बैलेंस नहीं है। कृपया UPI से भुगतान करें।' : 'Insufficient wallet balance. Please pay via UPI QR.');
       return;
     }
 

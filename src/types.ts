@@ -271,7 +271,7 @@ export interface AppOwnerPaymentConfig {
   accountType?: 'Current' | 'Savings';
   autoSettlementEnabled?: boolean;
   autoSettlementTime?: string;
-  ownerSecurityPin?: string; // 4-digit secret PIN for Owner & Admin access
+  ownerSecurityPin?: string; // 6-digit secret PIN for Owner & Admin access
   cleanResetAtMs?: number; // Epoch ms baseline for filtering pre-launch test records
 }
 

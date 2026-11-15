@@ -34,6 +34,10 @@ import { safeStorage } from './services/safeStorage';
 import { 
   CLEAN_LAUNCH_CUTOFF_MS,
   extractRecordTimeMs,
+  isLegacyDemoWorker,
+  isLegacyDemoCustomer,
+  isLegacyDemoJob,
+  isLegacyDemoBooking,
   testFirestoreConnection, 
   syncBookingToFirestore, 
   syncJobToFirestore,
@@ -166,6 +170,13 @@ export default function App() {
   const [isApkDownloadOpen, setIsApkDownloadOpen] = useState(false);
   const [isCloudConnected, setIsCloudConnected] = useState(true);
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [appToast, setAppToast] = useState<{ message: string; type: 'warning' | 'info' | 'success' } | null>(null);
+  const showToast = React.useCallback((message: string, type: 'warning' | 'info' | 'success' = 'warning') => {
+    setAppToast({ message, type });
+    setTimeout(() => {
+      setAppToast((prev) => (prev?.message === message ? null : prev));
+    }, 4500);
+  }, []);
 
   // Initialize background push notifications and local offline IndexedDB auto-sync
   React.useEffect(() => {
@@ -204,10 +215,7 @@ export default function App() {
           const parsedCusts = JSON.parse(savedCusts);
           if (Array.isArray(parsedCusts)) {
             const stripped = parsedCusts.filter(
-              (c: CustomerProfile) =>
-                c.id !== 'c1' &&
-                !c.name?.includes('Vipin Rajput') &&
-                c.email !== 'vr6386833@gmail.com'
+              (c: CustomerProfile) => !isLegacyDemoCustomer(c)
             );
             safeStorage.setItem('smart_india_customers_v3', JSON.stringify(stripped));
           }
@@ -290,16 +298,17 @@ export default function App() {
         savedConfig = JSON.parse(raw);
       }
     } catch {}
-    let savedPin = DEFAULT_APP_OWNER_CONFIG.ownerSecurityPin || '1234';
+    let savedPin = DEFAULT_APP_OWNER_CONFIG.ownerSecurityPin || '123456';
     try {
-      const storedPin = safeStorage.getItem('smart_india_owner_pin');
-      const masterPin = SecurityShieldService.getMasterPin();
-      if (storedPin && storedPin.trim().length >= 4) {
-        savedPin = storedPin.trim();
-      } else if (masterPin && masterPin.trim().length >= 4 && masterPin !== '1234') {
-        savedPin = masterPin.trim();
-      } else if (savedConfig.ownerSecurityPin && savedConfig.ownerSecurityPin.trim().length >= 4) {
-        savedPin = savedConfig.ownerSecurityPin.trim();
+      const storedPin = (safeStorage.getItem('smart_india_owner_pin') || '').trim();
+      const masterPin = (SecurityShieldService.getMasterPin() || '').trim();
+      const cfgPin = (savedConfig.ownerSecurityPin || '').trim();
+      if (/^\d{6}$/.test(storedPin)) {
+        savedPin = storedPin;
+      } else if (/^\d{6}$/.test(masterPin) && masterPin !== '123456') {
+        savedPin = masterPin;
+      } else if (/^\d{6}$/.test(cfgPin)) {
+        savedPin = cfgPin;
       }
     } catch {}
     return {
@@ -318,27 +327,7 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Filter out any legacy dummy workers (Brijesh, Rameshwar, etc.)
-          const clean = parsed.filter((w: WorkerProfile) => 
-            w.id !== 'wrk_standby_live' &&
-            !w.name?.includes('Brijesh') && 
-            !w.name?.includes('Rameshwar') && 
-            !w.name?.includes('Dharmendra') && 
-            !w.name?.includes('Sunil Sharma') &&
-            !w.name?.includes('Mohammed Arif') &&
-            !w.name?.includes('Balwant Singh') &&
-            !w.name?.includes('Radhe Shyam') &&
-            !w.name?.includes('Chandan Kumar') &&
-            !w.name?.includes('Santosh Tiles') &&
-            !w.name?.includes('Suresh Kumar AC') &&
-            !w.name?.includes('Jagdish Halwai') &&
-            !w.name?.includes('Kallu DJ') &&
-            !w.name?.includes('Lalji Vishwakarma') &&
-            !w.name?.includes('Munna Bhai') &&
-            !w.name?.includes('Aslam POP') &&
-            !w.name?.includes('Surendra Waterproofing') &&
-            !w.name?.includes('Subhash Rawat')
-          );
+          const clean = parsed.filter((w: WorkerProfile) => !isLegacyDemoWorker(w));
           if (clean.length > 0) return clean;
         }
       }
@@ -365,20 +354,7 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Strip legacy dummy customers and hardcoded Vipin Rajput demo profile
-          const clean = parsed.filter((c: CustomerProfile) => 
-            c.id !== 'c1' &&
-            c.id !== 'c_new_guest' &&
-            !c.name?.includes('Vipin Rajput') &&
-            c.email !== 'vr6386833@gmail.com' &&
-            !c.name?.includes('Anil Gupta') &&
-            !c.name?.includes('Rajesh Kumar') &&
-            !c.name?.includes('Sunita Devi') &&
-            !c.name?.includes('Vikram Malhotra') &&
-            !c.name?.includes('Kavita Verma') &&
-            !c.name?.includes('Manoj Tiwari') &&
-            !c.name?.includes('Deepika Joshi')
-          );
+          const clean = parsed.filter((c: CustomerProfile) => !isLegacyDemoCustomer(c));
           if (clean.length > 0) return clean;
         }
       }
@@ -402,11 +378,7 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Strip old dummy jobs
-          return parsed.filter((j: JobPost) => 
-            !j.id?.startsWith('job_dhalai_101') && 
-            !j.id?.startsWith('job_10')
-          );
+          return parsed.filter((j: JobPost) => !isLegacyDemoJob(j));
         }
       }
     } catch (e) {
@@ -421,13 +393,7 @@ export default function App() {
       const saved = safeStorage.getItem('smart_india_active_booking_v3');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (
-          parsed?.id && 
-          !parsed.id.startsWith('BK_9081') && 
-          !parsed.id.startsWith('BK_88') && 
-          !parsed.workerName?.includes('Mukesh') && 
-          !parsed.workerName?.includes('Rameshwar')
-        ) {
+        if (parsed && !isLegacyDemoBooking(parsed)) {
           return parsed;
         }
       }
@@ -468,7 +434,7 @@ export default function App() {
 
   React.useEffect(() => {
     safeStorage.setItem('smart_india_owner_config_v1', JSON.stringify(appOwnerConfig));
-    if (appOwnerConfig.ownerSecurityPin && appOwnerConfig.ownerSecurityPin.trim().length >= 4) {
+    if (appOwnerConfig.ownerSecurityPin && /^\d{6}$/.test(appOwnerConfig.ownerSecurityPin.trim())) {
       safeStorage.setItem('smart_india_owner_pin', appOwnerConfig.ownerSecurityPin.trim());
     }
   }, [appOwnerConfig]);
@@ -518,7 +484,8 @@ export default function App() {
     activeViewRef.current = activeView;
   }, [activeView]);
 
-  const effectiveCutoffMs = Math.max(CLEAN_LAUNCH_CUTOFF_MS, appOwnerConfig.cleanResetAtMs || 0);
+  const rawResetMs = appOwnerConfig.cleanResetAtMs || 0;
+  const effectiveCutoffMs = rawResetMs > 0 && rawResetMs <= Date.now() + 300000 ? rawResetMs : CLEAN_LAUNCH_CUTOFF_MS;
 
   // Real-time App Owner Config listener (UPI ID, QR Photo, Reset Timestamp)
   React.useEffect(() => {
@@ -534,31 +501,14 @@ export default function App() {
     return () => unsubConfig();
   }, []);
 
-  // Real-time Firestore sync listeners (cross-device live sync, filtered strictly by effectiveCutoffMs)
+  // Real-time Firestore sync listeners (cross-device live sync, clock-safe filtering)
   React.useEffect(() => {
+    const passesCutoff = (tsMs: number) => effectiveCutoffMs <= 0 || tsMs >= effectiveCutoffMs;
+
     const unsubWorkers = listenToWorkers((cloudWorkers) => {
-      const cleanCloud = (cloudWorkers || []).filter((w) =>
-        w.id !== 'wrk_standby_live' &&
-        !w.name?.includes('Brijesh') &&
-        !w.name?.includes('Rameshwar') &&
-        !w.name?.includes('Dharmendra') &&
-        !w.name?.includes('Sunil Sharma') &&
-        !w.name?.includes('Mohammed Arif') &&
-        !w.name?.includes('Balwant Singh') &&
-        !w.name?.includes('Radhe Shyam') &&
-        !w.name?.includes('Chandan Kumar') &&
-        !w.name?.includes('Santosh Tiles') &&
-        !w.name?.includes('Suresh Kumar AC') &&
-        !w.name?.includes('Jagdish Halwai') &&
-        !w.name?.includes('Kallu DJ') &&
-        !w.name?.includes('Lalji Vishwakarma') &&
-        !w.name?.includes('Munna Bhai') &&
-        !w.name?.includes('Aslam POP') &&
-        !w.name?.includes('Surendra Waterproofing') &&
-        !w.name?.includes('Subhash Rawat')
-      );
+      const cleanCloud = (cloudWorkers || []).filter((w) => !isLegacyDemoWorker(w));
       setWorkers((prev) => {
-        const recentLocal = prev.filter((w) => extractRecordTimeMs(w.id) >= effectiveCutoffMs);
+        const recentLocal = prev.filter((w) => !isLegacyDemoWorker(w) && passesCutoff(extractRecordTimeMs(w.id)));
         const map = new Map(recentLocal.map((w) => [w.id, w]));
         cleanCloud.forEach((w) => map.set(w.id, { ...map.get(w.id), ...w }));
         return Array.from(map.values());
@@ -566,21 +516,9 @@ export default function App() {
     }, effectiveCutoffMs);
 
     const unsubCustomers = listenToCustomers((cloudCustomers) => {
-      const cleanCloud = (cloudCustomers || []).filter((c) =>
-        c.id !== 'c1' &&
-        c.id !== 'c_new_guest' &&
-        !c.name?.includes('Vipin Rajput') &&
-        c.email !== 'vr6386833@gmail.com' &&
-        !c.name?.includes('Anil Gupta') &&
-        !c.name?.includes('Rajesh Kumar') &&
-        !c.name?.includes('Sunita Devi') &&
-        !c.name?.includes('Vikram Malhotra') &&
-        !c.name?.includes('Kavita Verma') &&
-        !c.name?.includes('Manoj Tiwari') &&
-        !c.name?.includes('Deepika Joshi')
-      );
+      const cleanCloud = (cloudCustomers || []).filter((c) => !isLegacyDemoCustomer(c));
       setCustomers((prev) => {
-        const recentLocal = prev.filter((c) => extractRecordTimeMs(c.id) >= effectiveCutoffMs);
+        const recentLocal = prev.filter((c) => !isLegacyDemoCustomer(c) && passesCutoff(extractRecordTimeMs(c.id)));
         const map = new Map(recentLocal.map((c) => [c.id, c]));
         cleanCloud.forEach((c) => map.set(c.id, { ...map.get(c.id), ...c }));
         return Array.from(map.values());
@@ -589,7 +527,7 @@ export default function App() {
 
     const unsubJobs = listenToJobs((cloudJobs) => {
       setJobs((prev) => {
-        const recentLocal = prev.filter((j) => extractRecordTimeMs(j.id) >= effectiveCutoffMs);
+        const recentLocal = prev.filter((j) => !isLegacyDemoJob(j) && passesCutoff(extractRecordTimeMs(j.id)));
         const map = new Map(recentLocal.map((j) => [j.id, j]));
         (cloudJobs || []).forEach((j) => map.set(j.id, { ...map.get(j.id), ...j }));
         return Array.from(map.values());
@@ -598,8 +536,9 @@ export default function App() {
 
     const unsubBookings = listenToBookings((cloudBookings) => {
       const freshBookings = (cloudBookings || []).filter((b: Booking & { updatedAtMs?: number }) => {
+        if (isLegacyDemoBooking(b)) return false;
         const tsMs = b.updatedAtMs || extractRecordTimeMs(b.id);
-        return tsMs >= effectiveCutoffMs;
+        return passesCutoff(tsMs);
       });
       if (freshBookings.length === 0) return;
       const sorted = [...freshBookings].sort(
@@ -676,7 +615,7 @@ export default function App() {
 
     const unsubCommissions = listenToCommissions((cloudRecords) => {
       setCommissionRecords((prev) => {
-        const recentLocal = prev.filter((r) => extractRecordTimeMs(r.id) >= effectiveCutoffMs && r.commissionAmount !== 95);
+        const recentLocal = prev.filter((r) => passesCutoff(extractRecordTimeMs(r.id)) && r.commissionAmount !== 95);
         const map = new Map(recentLocal.map((r) => [r.id, r]));
         (cloudRecords || []).forEach((r) => map.set(r.id, { ...map.get(r.id), ...r }));
         return Array.from(map.values());
@@ -685,7 +624,7 @@ export default function App() {
 
     const unsubPayouts = listenToPayouts((cloudPayouts) => {
       setOwnerPayouts((prev) => {
-        const recentLocal = prev.filter((p) => extractRecordTimeMs(p.id) >= effectiveCutoffMs);
+        const recentLocal = prev.filter((p) => passesCutoff(extractRecordTimeMs(p.id)));
         const map = new Map(recentLocal.map((p) => [p.id, p]));
         (cloudPayouts || []).forEach((p) => map.set(p.id, { ...map.get(p.id), ...p }));
         return Array.from(map.values());
@@ -695,7 +634,7 @@ export default function App() {
     const unsubChat = listenToChatMessages((cloudMsgs) => {
       const freshMsgs = (cloudMsgs || []).filter((m: ChatMessage & { createdAtMs?: number }) => {
         const tsMs = m.createdAtMs || extractRecordTimeMs(m.id);
-        return tsMs >= effectiveCutoffMs;
+        return passesCutoff(tsMs);
       });
       setChatMessages(freshMsgs);
     });
@@ -812,12 +751,13 @@ export default function App() {
 
   // 2. Direct Book a Worker from Directory (Targeted Notification Sent Directly to That Specialist)
   const handleBookWorker = (worker: WorkerProfile) => {
-    // If worker's ID is paused voluntarily, alert customer and prevent booking
     if (worker.isIdPaused) {
-      alert(
+      soundManager.playWarning();
+      showToast(
         language === 'hi'
-          ? `कारीगर ${worker.name} ने वर्तमान में अपनी आईडी बंद (छुट्टी पर) की हुई है।\nकारण: "${worker.idPausedReason || 'काम का मन नहीं है'}"\nकृपया किसी अन्य उपलब्ध कारीगर को बुक करें।`
-          : `Artisan ${worker.name} has temporarily paused their ID (Taking a break).\nReason: "${worker.idPausedReason || 'Not in mood to work'}"\nPlease book another available artisan.`
+          ? `कारीगर ${worker.name} छुट्टी पर हैं ("${worker.idPausedReason || 'उपलब्ध नहीं'}") — कृपया अन्य कारीगर चुनें।`
+          : `Artisan ${worker.name} is temporarily unavailable ("${worker.idPausedReason || 'On break'}"). Please book another artisan.`,
+        'warning'
       );
       return;
     }
@@ -920,10 +860,11 @@ export default function App() {
     soundManager.playTap();
     if (workers.length === 0) {
       soundManager.playWarning();
-      alert(
+      showToast(
         language === 'hi'
-          ? 'अभी कोई लाइव कारीगर रजिस्टर्ड नहीं है। कृपया पहले Worker Mode में कारीगर ID बनाएं या "Post Job" से अपना काम पोस्ट करें।'
-          : 'No live registered workers available yet. Please post your job requirement via "Post Job" or register a Worker ID first.'
+          ? 'अभी कोई लाइव कारीगर ऑनलाइन नहीं है। कृपया नीचे "Post" टैब से अपना काम पोस्ट करें।'
+          : 'No live registered workers available yet. Please post your job requirement via the Post tab.',
+        'warning'
       );
       return;
     }
@@ -1352,10 +1293,14 @@ export default function App() {
     setOwnerPayouts((prev) => [newPayout, ...prev]);
     syncPayoutToFirestore(newPayout);
     AwsCloudService.syncPayoutToAws(newPayout);
-    setAppOwnerConfig((prev) => ({
-      ...prev,
-      totalWithdrawnToBank: (prev.totalWithdrawnToBank || 0) + amount,
-    }));
+    setAppOwnerConfig((prev) => {
+      const updated = {
+        ...prev,
+        totalWithdrawnToBank: (prev.totalWithdrawnToBank || 0) + amount,
+      };
+      syncAppConfigToFirestore(updated);
+      return updated;
+    });
     soundManager.playSuccessCoin();
   };
 
@@ -1807,7 +1752,12 @@ export default function App() {
   const handleTestBookWorker = () => {
     const testWorker = workers.find((w) => w.category === 'electrician' || w.category === 'mistry') || workers[0];
     if (!testWorker) {
-      alert(language === 'hi' ? 'टेस्ट बुकिंग से पहले कम से कम 1 कारीगर ID बनाएं।' : 'Please register at least 1 worker first.');
+      showToast(
+        language === 'hi'
+          ? 'टेस्ट बुकिंग से पहले कम से कम 1 कारीगर ID बनाएं।'
+          : 'Please register at least 1 worker first.',
+        'warning'
+      );
       return;
     }
     handleBookWorker(testWorker);
@@ -1888,7 +1838,7 @@ export default function App() {
           setActiveView('owner');
         }}
         language={language}
-        ownerPin={appOwnerConfig.ownerSecurityPin || '1234'}
+        ownerPin={appOwnerConfig.ownerSecurityPin || '123456'}
         onUpdatePin={(newPin) => {
           setAppOwnerConfig((prev) => ({ ...prev, ownerSecurityPin: newPin }));
           try {
@@ -1907,6 +1857,20 @@ export default function App() {
               ? '📶 ऑफलाइन मोड: इंटरनेट डिस्कनेक्ट है - ऐप और डेटा सुरक्षित रूप से लोकल IndexedDB में चल रहा है।'
               : '📶 Offline Mode: Internet disconnected - App is operating safely with local IndexedDB cache.'}
           </span>
+        </div>
+      )}
+
+      {/* Global In-App Toast Notification (replaces native browser alert for Android WebView compatibility) */}
+      {appToast && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[120] w-[92%] max-w-md px-4 py-3 rounded-2xl border shadow-2xl flex items-start justify-between gap-3 bg-slate-900/95 backdrop-blur-md border-amber-500/50 text-amber-200 text-xs font-semibold">
+          <span className="leading-relaxed">{appToast.message}</span>
+          <button
+            type="button"
+            onClick={() => setAppToast(null)}
+            className="text-slate-400 hover:text-white font-bold shrink-0 px-1.5"
+          >
+            ✕
+          </button>
         </div>
       )}
 
@@ -2163,7 +2127,7 @@ export default function App() {
                 setLanguage(l);
               }}
               onResetData={handleResetData}
-              ownerPin={appOwnerConfig.ownerSecurityPin || '1234'}
+              ownerPin={appOwnerConfig.ownerSecurityPin || '123456'}
               onUpdateOwnerPin={(newPin) => {
                 setAppOwnerConfig((prev) => ({ ...prev, ownerSecurityPin: newPin }));
                 try {
@@ -2250,7 +2214,7 @@ export default function App() {
                 setIsOwnerSession(true);
                 setActiveView('owner');
               }}
-              ownerPin={appOwnerConfig.ownerSecurityPin || '1234'}
+              ownerPin={appOwnerConfig.ownerSecurityPin || '123456'}
               onUpdateOwnerPin={(newPin) => {
                 setAppOwnerConfig((prev) => ({ ...prev, ownerSecurityPin: newPin }));
                 try {
@@ -2293,7 +2257,7 @@ export default function App() {
                 onUpdateConfig={(newCfg) => {
                   setAppOwnerConfig(newCfg);
                   syncAppConfigToFirestore(newCfg);
-                  if (newCfg.ownerSecurityPin && newCfg.ownerSecurityPin.trim().length >= 4) {
+                  if (newCfg.ownerSecurityPin && /^\d{6}$/.test(newCfg.ownerSecurityPin.trim())) {
                     try {
                       safeStorage.setItem('smart_india_owner_pin', newCfg.ownerSecurityPin.trim());
                       SecurityShieldService.setMasterPin(newCfg.ownerSecurityPin.trim());
@@ -2340,7 +2304,7 @@ export default function App() {
         onUpdateConfig={(newCfg) => {
           setAppOwnerConfig(newCfg);
           syncAppConfigToFirestore(newCfg);
-          if (newCfg.ownerSecurityPin && newCfg.ownerSecurityPin.trim().length >= 4) {
+          if (newCfg.ownerSecurityPin && /^\d{6}$/.test(newCfg.ownerSecurityPin.trim())) {
             try {
               safeStorage.setItem('smart_india_owner_pin', newCfg.ownerSecurityPin.trim());
               SecurityShieldService.setMasterPin(newCfg.ownerSecurityPin.trim());

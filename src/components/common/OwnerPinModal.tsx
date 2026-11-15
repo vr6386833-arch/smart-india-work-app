@@ -18,7 +18,7 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
   onClose,
   onSuccess,
   language,
-  ownerPin = '1234',
+  ownerPin = '123456',
   onUpdatePin,
 }) => {
   const [mode, setMode] = useState<'enter' | 'change'>('enter');
@@ -33,19 +33,20 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Retrieve effective PIN strictly from storage/props (no hardcoded bypasses)
+  // Retrieve effective 6-digit PIN strictly from storage/props (upgrades legacy 4-digit default cleanly)
   const getEffectivePin = (): string => {
     try {
-      const stored = safeStorage.getItem('smart_india_owner_pin');
-      if (stored && stored.trim().length >= 4) return stored.trim();
-      const master = SecurityShieldService.getMasterPin();
-      if (master && master.trim().length >= 4 && master !== '1234') return master.trim();
+      const stored = (safeStorage.getItem('smart_india_owner_pin') || '').trim();
+      if (/^\d{6}$/.test(stored)) return stored;
+      const master = (SecurityShieldService.getMasterPin() || '').trim();
+      if (/^\d{6}$/.test(master) && master !== '123456') return master;
     } catch {}
-    return (ownerPin || '1234').trim();
+    const propPin = (ownerPin || '').trim();
+    return /^\d{6}$/.test(propPin) ? propPin : '123456';
   };
 
   const effectivePin = getEffectivePin();
-  const isDefaultPin = effectivePin === '1234';
+  const isDefaultPin = effectivePin === '123456';
 
   const handleUnlockSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -60,8 +61,8 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
       soundManager.playWarning();
       setError(
         language === 'hi'
-          ? 'गलत पिन! कृपया अपना सेट किया हुआ सही पिन दर्ज करें।'
-          : 'Incorrect PIN! Please enter your configured Owner PIN.'
+          ? 'गलत पिन! कृपया अपना 6-अंकों का सही ओनर पिन दर्ज करें।'
+          : 'Incorrect PIN! Please enter your 6-digit Owner PIN.'
       );
       setPin('');
     }
@@ -78,9 +79,9 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
     }
 
     const cleanedNew = newPinInput.trim();
-    if (!cleanedNew || cleanedNew.length < 4) {
+    if (!/^\d{6}$/.test(cleanedNew)) {
       soundManager.playWarning();
-      setError(language === 'hi' ? 'नया पिन कम से कम 4 अंकों का होना चाहिए!' : 'New PIN must be at least 4 digits!');
+      setError(language === 'hi' ? 'नया पिन ठीक 6 अंकों (0-9) का होना चाहिए!' : 'New PIN must be exactly 6 numeric digits!');
       return;
     }
 
@@ -146,14 +147,14 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
           {mode === 'enter' ? (
             language === 'hi'
               ? (isDefaultPin
-                  ? '🔐 सामान्य ग्राहकों को यह स्क्रीन नहीं दिखती। मालिक पोर्टल खोलने हेतु गुप्त 4-अंकों का पिन डालें (डिफ़ॉल्ट पिन: 1234)'
-                  : '🔐 मालिक पोर्टल सुरक्षित है। पोर्टल खोलने के लिए अपना नया सेट किया हुआ गुप्त पिन डालें।')
+                  ? '🔐 सामान्य ग्राहकों को यह स्क्रीन नहीं दिखती। मालिक पोर्टल खोलने हेतु गुप्त 6-अंकों का पिन डालें (डिफ़ॉल्ट पिन: 123456)'
+                  : '🔐 मालिक पोर्टल सुरक्षित है। पोर्टल खोलने के लिए अपना सेट किया हुआ 6-अंकों का गुप्त पिन डालें।')
               : (isDefaultPin
-                  ? '🔐 This portal is hidden from regular users. Enter your 4-digit secret PIN (Default: 1234)'
-                  : '🔐 Owner portal is PIN protected. Enter your custom secret PIN to unlock.')
+                  ? '🔐 This portal is hidden from regular users. Enter your 6-digit secret PIN (Default: 123456)'
+                  : '🔐 Owner portal is PIN protected. Enter your custom 6-digit secret PIN to unlock.')
           ) : (
             language === 'hi'
-              ? '🛡️ सुरक्षा नियम: नया पिन सेव करने के बाद पुराना पिन (1234 आदि) काम करना बंद कर देगा।'
+              ? '🛡️ सुरक्षा नियम: नया 6-अंकों का पिन सेव करने के बाद पुराना पिन (123456 आदि) काम करना बंद कर देगा।'
               : '🛡️ Security rule: Once changed, old PINs will no longer work.'
           )}
         </div>
@@ -164,7 +165,7 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
               <label className="block text-xs font-bold text-slate-300 mb-1.5 flex items-center justify-between">
                 <span className="flex items-center gap-1.5">
                   <KeyRound className="w-3.5 h-3.5 text-amber-400" />
-                  <span>{language === 'hi' ? 'मालिक का 4-अंकों का पिन दर्ज करें' : 'Enter 4-Digit Owner PIN'}</span>
+                  <span>{language === 'hi' ? 'मालिक का 6-अंकों का पिन दर्ज करें' : 'Enter 6-Digit Owner PIN'}</span>
                 </span>
                 <button
                   type="button"
@@ -186,12 +187,12 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
                 value={pin}
                 onChange={(e) => {
                   setError(null);
-                  setPin(e.target.value);
+                  setPin(e.target.value.replace(/\D/g, '').slice(0, 6));
                 }}
-                placeholder="••••"
+                placeholder="••••••"
                 className={`w-full bg-slate-950 border ${
                   error ? 'border-rose-500 ring-2 ring-rose-500/30' : 'border-slate-800 focus:border-amber-500'
-                } rounded-xl px-4 py-3 text-center text-xl tracking-[0.5em] font-mono text-white focus:outline-none transition-all`}
+                } rounded-xl px-4 py-3 text-center text-xl tracking-[0.45em] font-mono text-white focus:outline-none transition-all`}
               />
               {error && (
                 <p className="text-xs text-rose-400 font-semibold mt-1.5 text-center">
@@ -226,14 +227,14 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
                   {language === 'hi' ? 'पिन सफलतापूर्वक बदल गया!' : 'PIN Updated Successfully!'}
                 </h4>
                 <p className="text-[10px] text-slate-400">
-                  {language === 'hi' ? 'अब आप नए पिन से लॉगिन कर सकते हैं।' : 'You can now log in using your new PIN.'}
+                  {language === 'hi' ? 'अब आप नए 6-अंकों के पिन से लॉगिन कर सकते हैं।' : 'You can now log in using your new 6-digit PIN.'}
                 </p>
               </div>
             ) : (
               <>
                 <div>
                   <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                    {language === 'hi' ? 'वर्तमान (पुराना) पिन डालें' : 'Current PIN'}
+                    {language === 'hi' ? 'वर्तमान (पुराना) 6-अंकों का पिन डालें' : 'Current 6-Digit PIN'}
                   </label>
                   <input
                     type="password"
@@ -242,9 +243,9 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
                     value={currentPinInput}
                     onChange={(e) => {
                       setError(null);
-                      setCurrentPinInput(e.target.value);
+                      setCurrentPinInput(e.target.value.replace(/\D/g, '').slice(0, 6));
                     }}
-                    placeholder={isDefaultPin ? 'डिफ़ॉल्ट 1234' : 'वर्तमान पिन डालें'}
+                    placeholder={isDefaultPin ? 'डिफ़ॉल्ट 123456' : 'वर्तमान पिन डालें'}
                     className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-3 py-2 text-center text-sm font-mono text-white focus:outline-none"
                     required
                   />
@@ -252,7 +253,7 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
 
                 <div>
                   <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                    {language === 'hi' ? 'नया 4-अंकों का गुप्त पिन' : 'New 4-Digit Secret PIN'}
+                    {language === 'hi' ? 'नया 6-अंकों का गुप्त पिन' : 'New 6-Digit Secret PIN'}
                   </label>
                   <input
                     type="password"
@@ -261,9 +262,9 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
                     value={newPinInput}
                     onChange={(e) => {
                       setError(null);
-                      setNewPinInput(e.target.value);
+                      setNewPinInput(e.target.value.replace(/\D/g, '').slice(0, 6));
                     }}
-                    placeholder="उदाहरण: 8492"
+                    placeholder="उदाहरण: 849210"
                     className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-3 py-2 text-center text-sm font-mono text-white focus:outline-none"
                     required
                   />
@@ -271,7 +272,7 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
 
                 <div>
                   <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                    {language === 'hi' ? 'नया पिन पुनः दर्ज करें (Confirm)' : 'Confirm New PIN'}
+                    {language === 'hi' ? 'नया 6-अंकों का पिन पुनः दर्ज करें (Confirm)' : 'Confirm New 6-Digit PIN'}
                   </label>
                   <input
                     type="password"
@@ -280,7 +281,7 @@ export const OwnerPinModal: React.FC<OwnerPinModalProps> = ({
                     value={confirmPinInput}
                     onChange={(e) => {
                       setError(null);
-                      setConfirmPinInput(e.target.value);
+                      setConfirmPinInput(e.target.value.replace(/\D/g, '').slice(0, 6));
                     }}
                     placeholder="पुनः दर्ज करें"
                     className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-3 py-2 text-center text-sm font-mono text-white focus:outline-none"

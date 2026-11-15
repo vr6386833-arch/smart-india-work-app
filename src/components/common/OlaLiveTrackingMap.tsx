@@ -199,6 +199,7 @@ export const OlaLiveTrackingMap: React.FC<OlaLiveTrackingMapProps> = ({
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [isCopiedOtp, setIsCopiedOtp] = useState<boolean>(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
+  const [shareFeedbackMsg, setShareFeedbackMsg] = useState<string | null>(null);
   const [mapTheme, setMapTheme] = useState<'dark' | 'light'>('dark');
   const [cameraMode, setCameraMode] = useState<'auto' | 'driver' | 'customer' | 'overview'>('auto');
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
@@ -1076,6 +1077,12 @@ Tracking Link: https://smartindia.work/track/${booking.id}`;
               </p>
             </div>
 
+            {shareFeedbackMsg && (
+              <div className="p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
+                {shareFeedbackMsg}
+              </div>
+            )}
+
             {/* Share Live Location */}
             <div className="space-y-2">
               <button
@@ -1088,7 +1095,7 @@ Tracking Link: https://smartindia.work/track/${booking.id}`;
                     }).catch(() => {});
                   } else {
                     navigator.clipboard.writeText(shareText);
-                    alert('Live trip details copied to clipboard! Share on WhatsApp or SMS.');
+                    setShareFeedbackMsg('✓ Live trip details copied to clipboard! Share on WhatsApp or SMS.');
                   }
                 }}
                 className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2"
@@ -1100,7 +1107,7 @@ Tracking Link: https://smartindia.work/track/${booking.id}`;
               <button
                 onClick={() => {
                   soundManager.playError();
-                  alert('Emergency Helpline 112 alerted. Smart India Safety Team has recorded this trip.');
+                  setShareFeedbackMsg('🚨 Emergency Helpline 112 alerted. Smart India Safety Team has recorded this trip.');
                 }}
                 className="w-full py-2.5 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/40 font-bold text-xs flex items-center justify-center gap-2"
               >

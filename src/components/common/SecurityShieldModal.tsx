@@ -43,15 +43,15 @@ export const SecurityShieldModal: React.FC<SecurityShieldModalProps> = ({
   const handleUpdatePin = () => {
     soundManager.playTap();
     const cleaned = newPinInput.trim();
-    if (cleaned.length < 4) {
-      setPinChangeMsg({ text: 'PIN कम से कम 4 अंकों का होना चाहिए!', error: true });
+    if (!/^\d{6}$/.test(cleaned)) {
+      setPinChangeMsg({ text: 'PIN ठीक 6 अंकों (0-9) का होना चाहिए!', error: true });
       return;
     }
     const success = SecurityShieldService.setMasterPin(cleaned);
     if (success) {
       setCurrentPin(cleaned);
       setNewPinInput('');
-      setPinChangeMsg({ text: 'Master Security PIN सफलता पूर्वक बदल दिया गया!', error: false });
+      setPinChangeMsg({ text: '6-अंकों का Master Security PIN सफलतापूर्वक बदल दिया गया!', error: false });
       onPinUpdated?.(cleaned);
       soundManager.playSuccessCoin();
       setLogs(SecurityShieldService.getSecurityLogs());
@@ -158,7 +158,7 @@ export const SecurityShieldModal: React.FC<SecurityShieldModalProps> = ({
             </div>
             <div className="flex items-center gap-2">
               <span className="font-mono text-sm font-black text-emerald-400 bg-slate-950 px-2 py-0.5 rounded border border-slate-700">
-                {showPin ? currentPin : '••••'}
+                {showPin ? currentPin : '••••••'}
               </span>
               <button
                 onClick={() => setShowPin(!showPin)}
@@ -170,16 +170,17 @@ export const SecurityShieldModal: React.FC<SecurityShieldModalProps> = ({
             </div>
           </div>
           <p className="text-[10px] text-slate-400 leading-relaxed">
-            यह पिन आपके मालिक ऐप और UPI बैंक सेटिंग्स को सुरक्षित रखता है ताकि आपके फोन को छूने पर भी कोई आपकी कमाई का खाता न बदल सके।
+            यह 6-अंकों का पिन आपके मालिक ऐप और UPI बैंक सेटिंग्स को सुरक्षित रखता है ताकि आपके फोन को छूने पर भी कोई आपकी कमाई का खाता न बदल सके।
           </p>
 
           <div className="flex items-center gap-2 pt-1">
             <input
               type="password"
+              inputMode="numeric"
               maxLength={6}
-              placeholder="नया 4-अंकों का PIN डालें"
+              placeholder="नया 6-अंकों का PIN डालें"
               value={newPinInput}
-              onChange={(e) => setNewPinInput(e.target.value.replace(/\D/g, ''))}
+              onChange={(e) => setNewPinInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
               className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
             />
             <button

@@ -15,8 +15,66 @@ import {
 import firebaseConfigJson from '../../firebase-applet-config.json';
 import { Booking, WorkerProfile, CustomerProfile, CommissionRecord, OwnerPayoutRecord, JobPost, ChatMessage, AppOwnerPaymentConfig } from '../types';
 
-// Baseline timestamp (2026-11-15) to ignore legacy pre-launch test records in Firestore
-export const CLEAN_LAUNCH_CUTOFF_MS = 1794717100000;
+// Baseline timestamp is 0 by default so live records on any real device clock always sync; legacy demo IDs are filtered explicitly
+export const CLEAN_LAUNCH_CUTOFF_MS = 0;
+
+export function isLegacyDemoWorker(w: Partial<WorkerProfile>): boolean {
+  const name = w.name || '';
+  return (
+    w.id === 'wrk_standby_live' ||
+    /^w\d{1,2}$/.test(w.id || '') ||
+    name.includes('Brijesh') ||
+    name.includes('Rameshwar') ||
+    name.includes('Dharmendra') ||
+    name.includes('Sunil Sharma') ||
+    name.includes('Mohammed Arif') ||
+    name.includes('Balwant Singh') ||
+    name.includes('Radhe Shyam') ||
+    name.includes('Chandan Kumar') ||
+    name.includes('Santosh Tiles') ||
+    name.includes('Suresh Kumar AC') ||
+    name.includes('Jagdish Halwai') ||
+    name.includes('Kallu DJ') ||
+    name.includes('Lalji Vishwakarma') ||
+    name.includes('Munna Bhai') ||
+    name.includes('Aslam POP') ||
+    name.includes('Surendra Waterproofing') ||
+    name.includes('Subhash Rawat')
+  );
+}
+
+export function isLegacyDemoCustomer(c: Partial<CustomerProfile>): boolean {
+  const name = c.name || '';
+  return (
+    c.id === 'c1' ||
+    /^c\d{1,2}$/.test(c.id || '') ||
+    c.id === 'c_new_guest' ||
+    name.includes('Vipin Rajput') ||
+    name.includes('Anil Gupta') ||
+    name.includes('Rajesh Kumar') ||
+    name.includes('Sunita Devi') ||
+    name.includes('Vikram Malhotra') ||
+    name.includes('Kavita Verma') ||
+    name.includes('Manoj Tiwari') ||
+    name.includes('Deepika Joshi')
+  );
+}
+
+export function isLegacyDemoJob(j: Partial<JobPost>): boolean {
+  const id = j.id || '';
+  return id.startsWith('job_dhalai_101') || /^job_10\d{0,2}$/.test(id);
+}
+
+export function isLegacyDemoBooking(b: Partial<Booking>): boolean {
+  const id = b.id || '';
+  return (
+    !id ||
+    id.startsWith('BK_9081') ||
+    id.startsWith('BK_88') ||
+    Boolean(b.workerName?.includes('Mukesh')) ||
+    Boolean(b.workerName?.includes('Rameshwar'))
+  );
+}
 
 export function extractRecordTimeMs(id?: string, createdAt?: unknown, updatedAt?: unknown): number {
   const tryTimestamp = (ts: unknown): number => {
@@ -175,8 +233,9 @@ export function listenToWorkers(callback: (workers: WorkerProfile[]) => void, cu
       const list: WorkerProfile[] = [];
       snapshot.forEach((docSnap) => {
         const raw = docSnap.data() as WorkerProfile & { updatedAt?: unknown; createdAt?: unknown };
+        if (isLegacyDemoWorker(raw)) return;
         const tsMs = extractRecordTimeMs(raw.id, raw.createdAt, raw.updatedAt);
-        if (tsMs >= cutoffMs) {
+        if (cutoffMs <= 0 || tsMs >= cutoffMs) {
           list.push(raw);
         }
       });
@@ -200,8 +259,9 @@ export function listenToCustomers(callback: (customers: CustomerProfile[]) => vo
       const list: CustomerProfile[] = [];
       snapshot.forEach((docSnap) => {
         const raw = docSnap.data() as CustomerProfile & { updatedAt?: unknown; createdAt?: unknown };
+        if (isLegacyDemoCustomer(raw)) return;
         const tsMs = extractRecordTimeMs(raw.id, raw.createdAt, raw.updatedAt);
-        if (tsMs >= cutoffMs) {
+        if (cutoffMs <= 0 || tsMs >= cutoffMs) {
           list.push(raw);
         }
       });
@@ -225,8 +285,9 @@ export function listenToJobs(callback: (jobs: JobPost[]) => void, cutoffMs: numb
       const list: JobPost[] = [];
       snapshot.forEach((docSnap) => {
         const raw = docSnap.data() as JobPost & { updatedAt?: unknown; createdAt?: unknown };
+        if (isLegacyDemoJob(raw)) return;
         const tsMs = extractRecordTimeMs(raw.id, raw.createdAt, raw.updatedAt);
-        if (tsMs >= cutoffMs) {
+        if (cutoffMs <= 0 || tsMs >= cutoffMs) {
           list.push(raw);
         }
       });
@@ -250,13 +311,7 @@ export function listenToBookings(callback: (bookings: Booking[]) => void): () =>
       const list: Booking[] = [];
       snapshot.forEach((docSnap) => {
         const data = docSnap.data() as Booking & { updatedAtMs?: number };
-        if (
-          data?.id &&
-          !data.id.startsWith('BK_9081') &&
-          !data.id.startsWith('BK_88') &&
-          !data.workerName?.includes('Mukesh') &&
-          !data.workerName?.includes('Rameshwar')
-        ) {
+        if (!isLegacyDemoBooking(data)) {
           list.push(data);
         }
       });
@@ -281,8 +336,9 @@ export function listenToCommissions(callback: (records: CommissionRecord[]) => v
       snapshot.forEach((docSnap) => {
         const raw = docSnap.data() as CommissionRecord & { createdAt?: unknown; updatedAt?: unknown };
         const tsMs = extractRecordTimeMs(raw.id, raw.createdAt, raw.updatedAt);
-        // Ignore legacy 10% test commissions (e.g. ₹95) and pre-cutoff test records
-        if (tsMs >= cutoffMs && raw.commissionAmount !== 95) {
+        // Ignore legacy 10% test commissions (e.g. ₹95) or mock short IDs
+        const isMockCommission = raw.commissionAmount === 95 || !/\d{10,}/.test(raw.id || '');
+        if (!isMockCommission && (cutoffMs <= 0 || tsMs >= cutoffMs)) {
           list.push(raw);
         }
       });
@@ -307,7 +363,8 @@ export function listenToPayouts(callback: (payouts: OwnerPayoutRecord[]) => void
       snapshot.forEach((docSnap) => {
         const raw = docSnap.data() as OwnerPayoutRecord & { createdAt?: unknown; updatedAt?: unknown };
         const tsMs = extractRecordTimeMs(raw.id, raw.createdAt, raw.updatedAt);
-        if (tsMs >= cutoffMs) {
+        const isMockPayout = !/\d{10,}/.test(raw.id || '');
+        if (!isMockPayout && (cutoffMs <= 0 || tsMs >= cutoffMs)) {
           list.push(raw);
         }
       });

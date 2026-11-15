@@ -28,6 +28,7 @@ export const ShareAppModal: React.FC<ShareAppModalProps> = ({
   language,
 }) => {
   const [copied, setCopied] = useState(false);
+  const [installHint, setInstallHint] = useState<string | null>(null);
   const { isInstallable, install } = usePWAInstall();
 
   if (!isOpen) return null;
@@ -53,9 +54,8 @@ export const ShareAppModal: React.FC<ShareAppModalProps> = ({
         onClose();
       }
     } else {
-      // If prompt isn't directly ready, tell them to tap 3-dots
-      alert(language === 'hi' 
-        ? 'ऊपर दाएँ कोने में 3-बिंदु (⋮) पर टैप करके "Install app" या "Add to Home screen" दबाएँ।' 
+      setInstallHint(language === 'hi'
+        ? 'ऊपर दाएँ कोने में 3-बिंदु (⋮) पर टैप करके "Install app" या "Add to Home screen" दबाएँ।'
         : 'Tap the 3 dots (⋮) in the top-right corner and select "Install app" or "Add to Home screen".');
     }
   };
@@ -152,6 +152,12 @@ export const ShareAppModal: React.FC<ShareAppModalProps> = ({
             <Download className="w-4 h-4 stroke-[2.5]" />
             <span>{language === 'hi' ? '📲 अभी ऐप इंस्टॉल करें (Install App)' : '📲 Install App Now'}</span>
           </button>
+
+          {installHint && (
+            <div className="p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[11px] font-semibold">
+              {installHint}
+            </div>
+          )}
 
           <div className="flex items-center gap-2 text-amber-400 text-xs font-bold pt-1">
             <Smartphone className="w-4 h-4" />

@@ -149,6 +149,8 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
   const [newOwnerPin, setNewOwnerPin] = useState('');
   const [pinUpdateMsg, setPinUpdateMsg] = useState<string | null>(null);
   const [qrStatusMsg, setQrStatusMsg] = useState<string | null>(null);
+  const [transferErrorMsg, setTransferErrorMsg] = useState<string | null>(null);
+  const [bankStatusMsg, setBankStatusMsg] = useState<string | null>(null);
   const [isUploadingQr, setIsUploadingQr] = useState(false);
   const qrFileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -203,18 +205,21 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
   // Handle Instant Bank Withdrawal
   const handleInitiateBankTransfer = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    setTransferErrorMsg(null);
     const amountNum = parseFloat(withdrawAmount);
 
     if (isNaN(amountNum) || amountNum <= 0) {
-      alert(language === 'hi' ? 'कृपया सही राशि दर्ज करें' : 'Please enter a valid amount');
+      soundManager.playWarning();
+      setTransferErrorMsg(language === 'hi' ? '⚠️ कृपया सही राशि दर्ज करें' : '⚠️ Please enter a valid amount');
       return;
     }
 
     if (amountNum > availableToWithdraw) {
-      alert(
+      soundManager.playWarning();
+      setTransferErrorMsg(
         language === 'hi'
-          ? `आपके पास केवल ₹${availableToWithdraw} उपलब्ध हैं`
-          : `Insufficient balance! Available: ₹${availableToWithdraw}`
+          ? `⚠️ आपके पास केवल ₹${availableToWithdraw} उपलब्ध हैं`
+          : `⚠️ Insufficient balance! Available: ₹${availableToWithdraw}`
       );
       return;
     }
@@ -280,8 +285,10 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
   // Save Bank & UPI QR Details
   const handleSaveBankConfig = (e: React.FormEvent) => {
     e.preventDefault();
+    setBankStatusMsg(null);
     if (tempBankConfig.bankAccountNumber !== tempBankConfig.confirmAccountNumber) {
-      alert(language === 'hi' ? 'खाता संख्या मेल नहीं खाती' : 'Account numbers do not match');
+      soundManager.playWarning();
+      setBankStatusMsg(language === 'hi' ? '⚠️ खाता संख्या मेल नहीं खाती' : '⚠️ Account numbers do not match');
       return;
     }
 
@@ -299,7 +306,7 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
 
     setIsEditBankModalOpen(false);
     soundManager.playSuccessCoin();
-    alert(
+    setBankStatusMsg(
       language === 'hi'
         ? '✓ बैंक खाता, UPI ID और QR कोड सफलतापूर्वक अपडेट हो गए!'
         : '✓ Bank account, UPI ID & QR code updated successfully!'
@@ -1297,6 +1304,12 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
               />
             </div>
 
+            {transferErrorMsg && (
+              <div className="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs font-semibold">
+                {transferErrorMsg}
+              </div>
+            )}
+
             {/* CTA Button */}
             <button
               type="submit"
@@ -1339,23 +1352,23 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
                 </h4>
               </div>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                4-Digit PIN
+                6-Digit PIN
               </span>
             </div>
 
             <p className="text-[11px] text-slate-400">
               {language === 'hi'
-                ? 'यह पिन ग्राहक ऐप से ओनर पोर्टल खोलने के लिए उपयोग होता है। आप इसे कभी भी बदल सकते हैं।'
-                : 'This PIN is required to open the Owner & Admin portal from the Customer profile. You can change it anytime.'}
+                ? 'यह 6-अंकों का पिन ग्राहक ऐप से ओनर पोर्टल खोलने के लिए उपयोग होता है। आप इसे कभी भी बदल सकते हैं।'
+                : 'This 6-digit PIN is required to open the Owner & Admin portal. You can change it anytime.'}
             </p>
 
             <form
               onSubmit={(e) => {
                 e.preventDefault();
                 const cleaned = newOwnerPin.trim();
-                if (!cleaned || cleaned.length < 4) {
+                if (!/^\d{6}$/.test(cleaned)) {
                   soundManager.playWarning();
-                  setPinUpdateMsg(language === 'hi' ? 'पिन कम से कम 4 अंकों का होना चाहिए!' : 'PIN must be at least 4 digits!');
+                  setPinUpdateMsg(language === 'hi' ? 'पिन ठीक 6 अंकों (0-9) का होना चाहिए!' : 'PIN must be exactly 6 numeric digits!');
                   return;
                 }
                 soundManager.playSuccessCoin();
@@ -1367,7 +1380,7 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
                   safeStorage.setItem('smart_india_owner_pin', cleaned);
                   SecurityShieldService.setMasterPin(cleaned);
                 } catch {}
-                setPinUpdateMsg(language === 'hi' ? '✓ नया पिन सफलतापूर्वक सेव हो गया! अब पुराना पिन काम नहीं करेगा।' : '✓ PIN updated successfully! Old PINs are now disabled.');
+                setPinUpdateMsg(language === 'hi' ? '✓ नया 6-अंकों का पिन सफलतापूर्वक सेव हो गया! अब पुराना पिन काम नहीं करेगा।' : '✓ 6-digit PIN updated successfully! Old PINs are now disabled.');
                 setNewOwnerPin('');
                 setTimeout(() => setPinUpdateMsg(null), 3500);
               }}
@@ -1381,9 +1394,9 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
                   value={newOwnerPin}
                   onChange={(e) => {
                     setPinUpdateMsg(null);
-                    setNewOwnerPin(e.target.value);
+                    setNewOwnerPin(e.target.value.replace(/\D/g, '').slice(0, 6));
                   }}
-                  placeholder={language === 'hi' ? 'नया 4-अंकों का पिन डालें' : 'Enter new 4-digit PIN'}
+                  placeholder={language === 'hi' ? 'नया 6-अंकों का पिन डालें' : 'Enter new 6-digit PIN'}
                   className="flex-1 bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none"
                   required
                 />
@@ -1820,6 +1833,16 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
               />
             </div>
           </div>
+
+          {bankStatusMsg && (
+            <div className={`p-2.5 rounded-xl text-[11px] font-bold border ${
+              bankStatusMsg.startsWith('✓')
+                ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                : 'bg-rose-500/15 border-rose-500/30 text-rose-300'
+            }`}>
+              {bankStatusMsg}
+            </div>
+          )}
 
           <button
             type="submit"
@@ -2345,6 +2368,12 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
                   />
                 </div>
               </div>
+
+              {bankStatusMsg && !bankStatusMsg.startsWith('✓') && (
+                <div className="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-[11px] font-bold">
+                  {bankStatusMsg}
+                </div>
+              )}
 
               <div className="pt-2 flex items-center justify-end gap-2">
                 <button

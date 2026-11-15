@@ -85,6 +85,7 @@ export const AdminPanelOverview: React.FC<AdminPanelOverviewProps> = ({
   const [withdrawNote, setWithdrawNote] = useState<string>('Company QR Revenue Withdrawal');
   const [isProcessingWithdrawal, setIsProcessingWithdrawal] = useState(false);
   const [payoutSuccessMessage, setPayoutSuccessMessage] = useState<string | null>(null);
+  const [payoutErrorMessage, setPayoutErrorMessage] = useState<string | null>(null);
 
   // Worker filter
   const [workerFilter, setWorkerFilter] = useState<'all' | 'locked' | 'active'>('all');
@@ -129,10 +130,12 @@ export const AdminPanelOverview: React.FC<AdminPanelOverviewProps> = ({
 
   const handleWithdraw = (e: React.FormEvent) => {
     e.preventDefault();
+    setPayoutErrorMessage(null);
     const amt = parseFloat(withdrawAmount);
     if (isNaN(amt) || amt <= 0) return;
     if (amt > availableToWithdraw) {
-      alert(language === 'hi' ? 'निकासी राशि उपलब्ध बैलेंस से अधिक नहीं हो सकती।' : 'Withdrawal amount exceeds available balance.');
+      soundManager.playWarning();
+      setPayoutErrorMessage(language === 'hi' ? 'निकासी राशि उपलब्ध बैलेंस से अधिक नहीं हो सकती।' : 'Withdrawal amount exceeds available balance.');
       return;
     }
 
@@ -905,11 +908,16 @@ export const AdminPanelOverview: React.FC<AdminPanelOverviewProps> = ({
                 </div>
               </div>
 
-              {/* Success Notification Alert */}
+              {/* Success / Error Notification Alert */}
               {payoutSuccessMessage && (
                 <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                   <span>{payoutSuccessMessage}</span>
+                </div>
+              )}
+              {payoutErrorMessage && (
+                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-semibold">
+                  ⚠️ {payoutErrorMessage}
                 </div>
               )}
 

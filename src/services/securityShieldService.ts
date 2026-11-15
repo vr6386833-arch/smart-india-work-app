@@ -21,7 +21,7 @@ export interface SecurityEvent {
 
 const STORAGE_KEY_SECURITY_LOGS = 'smart_india_security_logs_v1';
 const STORAGE_KEY_MASTER_PIN = 'smart_india_owner_master_pin_v1';
-const DEFAULT_MASTER_PIN = '1234'; // Default PIN, owner can change anytime
+const DEFAULT_MASTER_PIN = '123456'; // Default 6-digit PIN, owner can change anytime
 
 export class SecurityShieldService {
   private static rateLimitMap: Map<string, { count: number; resetTime: number }> = new Map();
@@ -119,26 +119,26 @@ export class SecurityShieldService {
   }
 
   /**
-   * 4. Master Security PIN for Owner & Admin Controls
+   * 4. Master Security PIN for Owner & Admin Controls (Strictly 6 digits)
    */
   public static getMasterPin(): string {
-    const primary = safeStorage.getItem('smart_india_owner_pin');
-    if (primary && primary.trim().length >= 4) return primary.trim();
-    const legacy = safeStorage.getItem(STORAGE_KEY_MASTER_PIN);
-    if (legacy && legacy.trim().length >= 4) return legacy.trim();
+    const primary = (safeStorage.getItem('smart_india_owner_pin') || '').trim();
+    if (/^\d{6}$/.test(primary)) return primary;
+    const legacy = (safeStorage.getItem(STORAGE_KEY_MASTER_PIN) || '').trim();
+    if (/^\d{6}$/.test(legacy)) return legacy;
     return DEFAULT_MASTER_PIN;
   }
 
   public static setMasterPin(newPin: string): boolean {
     const cleaned = (newPin || '').trim();
-    if (cleaned.length < 4) return false;
+    if (!/^\d{6}$/.test(cleaned)) return false;
     safeStorage.setItem(STORAGE_KEY_MASTER_PIN, cleaned);
     safeStorage.setItem('smart_india_owner_pin', cleaned);
     this.logSecurityEvent({
       id: `pin_update_${Date.now()}`,
       type: 'pin_success',
       severity: 'low',
-      details: 'Owner Master Security PIN updated successfully.',
+      details: 'Owner Master 6-Digit Security PIN updated successfully.',
       timestamp: new Date().toLocaleTimeString('en-IN'),
     });
     return true;
