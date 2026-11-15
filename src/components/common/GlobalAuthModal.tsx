@@ -15,11 +15,15 @@ import {
   Copy,
   Check,
   Building,
-  MapPin
+  MapPin,
+  Camera,
+  Upload,
+  Trash2
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { CustomerProfile, WorkerProfile, Language } from '../../types';
 import { soundManager } from '../../services/soundEffects';
+import { compressDocumentImageFile } from '../../utils/qrImageHelper';
 
 interface GlobalAuthModalProps {
   isOpen: boolean;
@@ -69,6 +73,9 @@ export const GlobalAuthModal: React.FC<GlobalAuthModalProps> = ({
   const [address, setAddress] = useState('');
   const [workerAge, setWorkerAge] = useState<number | ''>(28);
   const [workerAadhaar, setWorkerAadhaar] = useState('');
+  const [workerAadhaarFrontPhoto, setWorkerAadhaarFrontPhoto] = useState('');
+  const [workerAadhaarBackPhoto, setWorkerAadhaarBackPhoto] = useState('');
+  const [isUploadingAadhaar, setIsUploadingAadhaar] = useState(false);
   const [workerCategory, setWorkerCategory] = useState('mistry');
 
   // Custom Gmail input
@@ -223,9 +230,28 @@ export const GlobalAuthModal: React.FC<GlobalAuthModalProps> = ({
         savedAddresses: [{ label: 'Home', address: address.trim() || 'Sector 62, Noida' }]
       });
     } else {
-      const codeNum = Math.floor(10000 + Math.random() * 90000);
       const cleanedAadhaar = workerAadhaar.replace(/\D/g, '');
-      const formattedAadhaar = cleanedAadhaar.length === 12 ? `XXXX-XXXX-${cleanedAadhaar.slice(8)}` : 'XXXX-XXXX-4819';
+      if (cleanedAadhaar.length !== 12) {
+        setOtpError(
+          language === 'hi'
+            ? 'कृपया पूरे 12 अंकों का सही आधार कार्ड नंबर दर्ज करें'
+            : 'Please enter a valid 12-digit Aadhaar card number'
+        );
+        soundManager.playWarning();
+        return;
+      }
+      if (!workerAadhaarFrontPhoto) {
+        setOtpError(
+          language === 'hi'
+            ? 'नकली ID रोकने के लिए आधार कार्ड की आगे की फोटो अपलोड करना अनिवार्य है'
+            : 'Uploading Aadhaar Card Front Photo is mandatory'
+        );
+        soundManager.playWarning();
+        return;
+      }
+
+      const codeNum = Math.floor(10000 + Math.random() * 90000);
+      const formattedAadhaar = `XXXX-XXXX-${cleanedAadhaar.slice(8)}`;
 
       onAddWorker({
         name: finalName,
@@ -233,9 +259,9 @@ export const GlobalAuthModal: React.FC<GlobalAuthModalProps> = ({
         age: Number(workerAge) || 28,
         phone: formattedPhone,
         avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=400&q=80',
-        rating: 4.9,
-        reviewsCount: 1,
-        experienceYears: 4,
+        rating: 5.0,
+        reviewsCount: 0,
+        experienceYears: 1,
         category: workerCategory,
         subSkills: ['General Work', 'Maintenance'],
         city: 'Delhi NCR',
@@ -246,10 +272,12 @@ export const GlobalAuthModal: React.FC<GlobalAuthModalProps> = ({
         isAadhaarVerified: true,
         isPanVerified: true,
         isOnline: true,
-        walletBalance: 150,
+        walletBalance: 0,
         completedJobsCount: 0,
         workerIdCode: `SI-WRK-2026-${codeNum}`,
         aadhaarNumber: formattedAadhaar,
+        aadhaarFrontPhoto: workerAadhaarFrontPhoto,
+        aadhaarBackPhoto: workerAadhaarBackPhoto || undefined,
         registeredDate: 'Today',
         isPhoneVerified: true,
         loginMethod: 'otp',
@@ -259,6 +287,32 @@ export const GlobalAuthModal: React.FC<GlobalAuthModalProps> = ({
 
     soundManager.playSuccess();
     onClose();
+  };
+
+  const handleGlobalAadhaarPhotoUpload = async (
+    side: 'front' | 'back',
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingAadhaar(true);
+    setOtpError('');
+    try {
+      const compressed = await compressDocumentImageFile(file);
+      if (side === 'front') setWorkerAadhaarFrontPhoto(compressed);
+      else setWorkerAadhaarBackPhoto(compressed);
+      soundManager.playSuccess();
+    } catch {
+      soundManager.playWarning();
+      setOtpError(
+        language === 'hi'
+          ? 'आधार फोटो पढ़ने में समस्या आई, कृपया दूसरी साफ फोटो चुनें'
+          : 'Could not read Aadhaar photo'
+      );
+    } finally {
+      setIsUploadingAadhaar(false);
+      if (e.target) e.target.value = '';
+    }
   };
 
   const handleCustomGmailLogin = (e: React.FormEvent) => {
@@ -690,18 +744,83 @@ export const GlobalAuthModal: React.FC<GlobalAuthModalProps> = ({
                           </div>
                         </div>
 
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-300 block mb-0.5">
-                            {language === 'hi' ? 'आधार कार्ड नंबर (12-अंक):' : 'Aadhaar Number (12 digits):'}
-                          </label>
-                          <input
-                            type="text"
-                            maxLength={14}
-                            value={workerAadhaar}
-                            onChange={(e) => setWorkerAadhaar(e.target.value)}
-                            placeholder="XXXX-XXXX-4819"
-                            className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs font-mono"
-                          />
+                        <div className="space-y-2">
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-300 block mb-0.5">
+                              {language === 'hi' ? 'आधार कार्ड नंबर (12-अंक) *:' : 'Aadhaar Number (12 digits) *:'}
+                            </label>
+                            <input
+                              type="tel"
+                              maxLength={12}
+                              required
+                              value={workerAadhaar}
+                              onChange={(e) => setWorkerAadhaar(e.target.value.replace(/\D/g, '').slice(0, 12))}
+                              placeholder={language === 'hi' ? '12 अंकों का आधार नंबर' : '12-digit Aadhaar'}
+                              className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs font-mono"
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2">
+                            {workerAadhaarFrontPhoto ? (
+                              <div className="relative rounded-xl overflow-hidden border border-emerald-500/50 bg-slate-900 h-20">
+                                <img src={workerAadhaarFrontPhoto} alt="Aadhaar Front" className="w-full h-full object-cover" />
+                                <button
+                                  type="button"
+                                  onClick={() => setWorkerAadhaarFrontPhoto('')}
+                                  className="absolute top-1 right-1 p-1 rounded bg-rose-600 text-white"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                                <span className="absolute bottom-1 left-1 px-1 py-0.2 rounded bg-emerald-600/90 text-[8px] font-bold text-white">
+                                  ✓ Front
+                                </span>
+                              </div>
+                            ) : (
+                              <label className="flex flex-col items-center justify-center gap-0.5 h-20 rounded-xl border-2 border-dashed border-emerald-500/40 bg-slate-900 cursor-pointer text-center p-1">
+                                <Camera className="w-4 h-4 text-emerald-400" />
+                                <span className="text-[9px] font-bold text-emerald-300">
+                                  {isUploadingAadhaar ? '...' : (language === 'hi' ? 'आधार आगे फोटो *' : 'Front Photo *')}
+                                </span>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  capture="environment"
+                                  onChange={(e) => handleGlobalAadhaarPhotoUpload('front', e)}
+                                  className="hidden"
+                                />
+                              </label>
+                            )}
+
+                            {workerAadhaarBackPhoto ? (
+                              <div className="relative rounded-xl overflow-hidden border border-emerald-500/40 bg-slate-900 h-20">
+                                <img src={workerAadhaarBackPhoto} alt="Aadhaar Back" className="w-full h-full object-cover" />
+                                <button
+                                  type="button"
+                                  onClick={() => setWorkerAadhaarBackPhoto('')}
+                                  className="absolute top-1 right-1 p-1 rounded bg-rose-600 text-white"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                                <span className="absolute bottom-1 left-1 px-1 py-0.2 rounded bg-emerald-600/90 text-[8px] font-bold text-white">
+                                  ✓ Back
+                                </span>
+                              </div>
+                            ) : (
+                              <label className="flex flex-col items-center justify-center gap-0.5 h-20 rounded-xl border border-dashed border-slate-700 bg-slate-900/60 cursor-pointer text-center p-1">
+                                <Upload className="w-4 h-4 text-slate-400" />
+                                <span className="text-[9px] font-bold text-slate-300">
+                                  {language === 'hi' ? 'आधार पीछे फोटो' : 'Back Photo'}
+                                </span>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  capture="environment"
+                                  onChange={(e) => handleGlobalAadhaarPhotoUpload('back', e)}
+                                  className="hidden"
+                                />
+                              </label>
+                            )}
+                          </div>
                         </div>
                       </>
                     ) : (

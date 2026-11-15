@@ -15,6 +15,27 @@ import {
 import firebaseConfigJson from '../../firebase-applet-config.json';
 import { Booking, WorkerProfile, CustomerProfile, CommissionRecord, OwnerPayoutRecord, JobPost, ChatMessage, AppOwnerPaymentConfig } from '../types';
 
+// Baseline timestamp (2026-11-15) to ignore legacy pre-launch test records in Firestore
+export const CLEAN_LAUNCH_CUTOFF_MS = 1794717100000;
+
+export function extractRecordTimeMs(id?: string, createdAt?: unknown, updatedAt?: unknown): number {
+  const tryTimestamp = (ts: unknown): number => {
+    if (ts && typeof ts === 'object' && 'toMillis' in ts && typeof (ts as { toMillis: () => number }).toMillis === 'function') {
+      return (ts as { toMillis: () => number }).toMillis();
+    }
+    return 0;
+  };
+  const fromCreated = tryTimestamp(createdAt);
+  if (fromCreated > 0) return fromCreated;
+  const fromUpdated = tryTimestamp(updatedAt);
+  if (fromUpdated > 0) return fromUpdated;
+  if (id) {
+    const match = id.match(/(\d{13})/);
+    if (match) return Number(match[1]);
+  }
+  return 0;
+}
+
 let app: FirebaseApp;
 let db: Firestore;
 
@@ -54,13 +75,19 @@ export async function testFirestoreConnection(): Promise<boolean> {
   }
 }
 
+function stripUndefined<T extends object>(data: T): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(data).filter(([, value]) => value !== undefined)
+  );
+}
+
 // Sync booking to cloud Firestore
 export async function syncBookingToFirestore(booking: Booking): Promise<void> {
   if (!db) return;
   try {
     const bookingRef = doc(db, 'bookings', booking.id);
     await setDoc(bookingRef, {
-      ...booking,
+      ...stripUndefined(booking),
       updatedAtMs: Date.now(),
       updatedAt: serverTimestamp(),
     }, { merge: true });
@@ -75,7 +102,7 @@ export async function syncJobToFirestore(job: JobPost): Promise<void> {
   try {
     const jobRef = doc(db, 'jobs', job.id);
     await setDoc(jobRef, {
-      ...job,
+      ...stripUndefined(job),
       updatedAt: serverTimestamp(),
     }, { merge: true });
   } catch (err) {
@@ -89,7 +116,7 @@ export async function syncWorkerToFirestore(worker: WorkerProfile): Promise<void
   try {
     const workerRef = doc(db, 'workers', worker.id);
     await setDoc(workerRef, {
-      ...worker,
+      ...stripUndefined(worker),
       updatedAt: serverTimestamp(),
     }, { merge: true });
   } catch (err) {
@@ -103,7 +130,7 @@ export async function syncCustomerToFirestore(customer: CustomerProfile): Promis
   try {
     const custRef = doc(db, 'customers', customer.id);
     await setDoc(custRef, {
-      ...customer,
+      ...stripUndefined(customer),
       updatedAt: serverTimestamp(),
     }, { merge: true });
   } catch (err) {
@@ -117,7 +144,7 @@ export async function syncCommissionToFirestore(record: CommissionRecord): Promi
   try {
     const commRef = doc(db, 'commissions', record.id);
     await setDoc(commRef, {
-      ...record,
+      ...stripUndefined(record),
       createdAt: serverTimestamp(),
     }, { merge: true });
   } catch (err) {
@@ -131,7 +158,7 @@ export async function syncPayoutToFirestore(payout: OwnerPayoutRecord): Promise<
   try {
     const payoutRef = doc(db, 'owner_payouts', payout.id);
     await setDoc(payoutRef, {
-      ...payout,
+      ...stripUndefined(payout),
       createdAt: serverTimestamp(),
     }, { merge: true });
   } catch (err) {
@@ -140,18 +167,20 @@ export async function syncPayoutToFirestore(payout: OwnerPayoutRecord): Promise<
 }
 
 // Real-time listener for Workers in Firestore
-export function listenToWorkers(callback: (workers: WorkerProfile[]) => void): () => void {
+export function listenToWorkers(callback: (workers: WorkerProfile[]) => void, cutoffMs: number = CLEAN_LAUNCH_CUTOFF_MS): () => void {
   if (!db) return () => {};
   try {
     const workersCol = collection(db, 'workers');
     const unsub = onSnapshot(workersCol, (snapshot) => {
       const list: WorkerProfile[] = [];
-      snapshot.forEach((doc) => {
-        list.push(doc.data() as WorkerProfile);
+      snapshot.forEach((docSnap) => {
+        const raw = docSnap.data() as WorkerProfile & { updatedAt?: unknown; createdAt?: unknown };
+        const tsMs = extractRecordTimeMs(raw.id, raw.createdAt, raw.updatedAt);
+        if (tsMs >= cutoffMs) {
+          list.push(raw);
+        }
       });
-      if (list.length > 0) {
-        callback(list);
-      }
+      callback(list);
     }, (err) => {
       console.warn('Firestore workers subscription notice:', err);
     });
@@ -163,18 +192,20 @@ export function listenToWorkers(callback: (workers: WorkerProfile[]) => void): (
 }
 
 // Real-time listener for Customers in Firestore
-export function listenToCustomers(callback: (customers: CustomerProfile[]) => void): () => void {
+export function listenToCustomers(callback: (customers: CustomerProfile[]) => void, cutoffMs: number = CLEAN_LAUNCH_CUTOFF_MS): () => void {
   if (!db) return () => {};
   try {
     const custCol = collection(db, 'customers');
     const unsub = onSnapshot(custCol, (snapshot) => {
       const list: CustomerProfile[] = [];
-      snapshot.forEach((doc) => {
-        list.push(doc.data() as CustomerProfile);
+      snapshot.forEach((docSnap) => {
+        const raw = docSnap.data() as CustomerProfile & { updatedAt?: unknown; createdAt?: unknown };
+        const tsMs = extractRecordTimeMs(raw.id, raw.createdAt, raw.updatedAt);
+        if (tsMs >= cutoffMs) {
+          list.push(raw);
+        }
       });
-      if (list.length > 0) {
-        callback(list);
-      }
+      callback(list);
     }, (err) => {
       console.warn('Firestore customers subscription notice:', err);
     });
@@ -186,18 +217,20 @@ export function listenToCustomers(callback: (customers: CustomerProfile[]) => vo
 }
 
 // Real-time listener for Jobs in Firestore
-export function listenToJobs(callback: (jobs: JobPost[]) => void): () => void {
+export function listenToJobs(callback: (jobs: JobPost[]) => void, cutoffMs: number = CLEAN_LAUNCH_CUTOFF_MS): () => void {
   if (!db) return () => {};
   try {
     const jobsCol = collection(db, 'jobs');
     const unsub = onSnapshot(jobsCol, (snapshot) => {
       const list: JobPost[] = [];
       snapshot.forEach((docSnap) => {
-        list.push(docSnap.data() as JobPost);
+        const raw = docSnap.data() as JobPost & { updatedAt?: unknown; createdAt?: unknown };
+        const tsMs = extractRecordTimeMs(raw.id, raw.createdAt, raw.updatedAt);
+        if (tsMs >= cutoffMs) {
+          list.push(raw);
+        }
       });
-      if (list.length > 0) {
-        callback(list);
-      }
+      callback(list);
     }, (err) => {
       console.warn('Firestore jobs subscription notice:', err);
     });
@@ -239,18 +272,21 @@ export function listenToBookings(callback: (bookings: Booking[]) => void): () =>
 }
 
 // Real-time listener for Platform Commissions in Firestore
-export function listenToCommissions(callback: (records: CommissionRecord[]) => void): () => void {
+export function listenToCommissions(callback: (records: CommissionRecord[]) => void, cutoffMs: number = CLEAN_LAUNCH_CUTOFF_MS): () => void {
   if (!db) return () => {};
   try {
     const commCol = collection(db, 'commissions');
     const unsub = onSnapshot(commCol, (snapshot) => {
       const list: CommissionRecord[] = [];
       snapshot.forEach((docSnap) => {
-        list.push(docSnap.data() as CommissionRecord);
+        const raw = docSnap.data() as CommissionRecord & { createdAt?: unknown; updatedAt?: unknown };
+        const tsMs = extractRecordTimeMs(raw.id, raw.createdAt, raw.updatedAt);
+        // Ignore legacy 10% test commissions (e.g. ₹95) and pre-cutoff test records
+        if (tsMs >= cutoffMs && raw.commissionAmount !== 95) {
+          list.push(raw);
+        }
       });
-      if (list.length > 0) {
-        callback(list);
-      }
+      callback(list);
     }, (err) => {
       console.warn('Firestore commissions subscription notice:', err);
     });
@@ -262,18 +298,20 @@ export function listenToCommissions(callback: (records: CommissionRecord[]) => v
 }
 
 // Real-time listener for Owner Bank Payouts in Firestore
-export function listenToPayouts(callback: (payouts: OwnerPayoutRecord[]) => void): () => void {
+export function listenToPayouts(callback: (payouts: OwnerPayoutRecord[]) => void, cutoffMs: number = CLEAN_LAUNCH_CUTOFF_MS): () => void {
   if (!db) return () => {};
   try {
     const payoutCol = collection(db, 'owner_payouts');
     const unsub = onSnapshot(payoutCol, (snapshot) => {
       const list: OwnerPayoutRecord[] = [];
       snapshot.forEach((docSnap) => {
-        list.push(docSnap.data() as OwnerPayoutRecord);
+        const raw = docSnap.data() as OwnerPayoutRecord & { createdAt?: unknown; updatedAt?: unknown };
+        const tsMs = extractRecordTimeMs(raw.id, raw.createdAt, raw.updatedAt);
+        if (tsMs >= cutoffMs) {
+          list.push(raw);
+        }
       });
-      if (list.length > 0) {
-        callback(list);
-      }
+      callback(list);
     }, (err) => {
       console.warn('Firestore payouts subscription notice:', err);
     });
@@ -341,6 +379,7 @@ export async function syncAppConfigToFirestore(config: AppOwnerPaymentConfig): P
       commissionRatePercent: config.commissionRatePercent,
       autoDeductFromWallet: config.autoDeductFromWallet,
       totalWithdrawnToBank: config.totalWithdrawnToBank || 0,
+      cleanResetAtMs: config.cleanResetAtMs || 0,
       updatedAt: serverTimestamp(),
     }, { merge: true });
   } catch (err) {

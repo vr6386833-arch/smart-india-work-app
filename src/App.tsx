@@ -32,6 +32,8 @@ import {
 import { StorageService } from './services/storageService';
 import { safeStorage } from './services/safeStorage';
 import { 
+  CLEAN_LAUNCH_CUTOFF_MS,
+  extractRecordTimeMs,
   testFirestoreConnection, 
   syncBookingToFirestore, 
   syncJobToFirestore,
@@ -79,6 +81,56 @@ import { SmsDispatchService } from './services/smsDispatchService';
 import { IndexedDbSyncService } from './services/indexedDbSyncService';
 import { Sparkles, RefreshCw, Zap, ShieldCheck } from 'lucide-react';
 
+// One-time synchronous migration to wipe pre-launch test records from localStorage before first render
+function ensureCleanLaunchV5Migration() {
+  try {
+    if (safeStorage.getItem('smart_india_live_fresh_v5_ready')) return;
+    const keysToPurge = [
+      'smart_india_active_booking',
+      'smart_india_active_booking_v2',
+      'smart_india_active_booking_v3',
+      'smart_india_workers',
+      'smart_india_workers_v2',
+      'smart_india_workers_v3',
+      'smart_india_active_worker_id_v4',
+      'smart_india_jobs',
+      'smart_india_jobs_v2',
+      'smart_india_jobs_v3',
+      'smart_india_customers',
+      'smart_india_customers_v2',
+      'smart_india_customers_v3',
+      'smart_india_active_customer_id_v4',
+      'smart_india_worker_notifs',
+      'smart_india_worker_notifs_v2',
+      'smart_india_worker_notifs_v3',
+      'smart_india_transactions',
+      'smart_india_tickets',
+      'smart_india_commission_records',
+      'smart_india_owner_payouts',
+    ];
+    keysToPurge.forEach((k) => safeStorage.removeItem(k));
+
+    // Preserve owner's UPI ID, custom QR image, bank details & PIN while resetting test payout totals
+    const rawCfg = safeStorage.getItem('smart_india_owner_config_v1');
+    if (rawCfg) {
+      const parsed = JSON.parse(rawCfg);
+      if (parsed && typeof parsed === 'object') {
+        safeStorage.setItem(
+          'smart_india_owner_config_v1',
+          JSON.stringify({
+            ...parsed,
+            totalWithdrawnToBank: 0,
+            payoutHistory: [],
+          })
+        );
+      }
+    }
+    safeStorage.setItem('smart_india_live_fresh_v5_ready', 'true');
+  } catch {}
+}
+
+ensureCleanLaunchV5Migration();
+
 export default function App() {
   const [activeView, setActiveView] = useState<'dual' | 'customer' | 'worker' | 'owner' | 'admin' | 'studio'>(() => {
     try {
@@ -94,6 +146,7 @@ export default function App() {
       return true;
     }
   });
+  const [isOwnerSession, setIsOwnerSession] = useState<boolean>(false);
   const [isOnboardingOwnerPinOpen, setIsOnboardingOwnerPinOpen] = useState(false);
   const [language, setLanguage] = useState<Language>('en');
   const [isGlobalIdCardOpen, setIsGlobalIdCardOpen] = useState(false);
@@ -205,8 +258,8 @@ export default function App() {
         return;
       }
 
-      if (activeView === 'worker' || activeView === 'owner' || activeView === 'admin' || activeView === 'studio') {
-        setActiveView('customer');
+      if (isOwnerSession && (activeView === 'worker' || activeView === 'customer' || activeView === 'dual' || activeView === 'admin' || activeView === 'studio')) {
+        setActiveView('owner');
       }
     };
 
@@ -225,6 +278,7 @@ export default function App() {
     isProductionServicesOpen,
     isTestingGuideOpen,
     activeView,
+    isOwnerSession,
   ]);
 
   // App Owner receiving payment configuration (UPI, Bank, Commission %, persisted Security PIN)
@@ -464,78 +518,91 @@ export default function App() {
     activeViewRef.current = activeView;
   }, [activeView]);
 
-  // Real-time Firestore sync listeners (cross-device live sync)
+  const effectiveCutoffMs = Math.max(CLEAN_LAUNCH_CUTOFF_MS, appOwnerConfig.cleanResetAtMs || 0);
+
+  // Real-time App Owner Config listener (UPI ID, QR Photo, Reset Timestamp)
+  React.useEffect(() => {
+    const unsubConfig = listenToAppConfig((cloudCfg) => {
+      if (cloudCfg && cloudCfg.upiId) {
+        setAppOwnerConfig((prev) => ({
+          ...prev,
+          ...cloudCfg,
+          ownerSecurityPin: prev.ownerSecurityPin, // Keep device PIN authority local unless explicitly changed
+        }));
+      }
+    });
+    return () => unsubConfig();
+  }, []);
+
+  // Real-time Firestore sync listeners (cross-device live sync, filtered strictly by effectiveCutoffMs)
   React.useEffect(() => {
     const unsubWorkers = listenToWorkers((cloudWorkers) => {
-      if (cloudWorkers && cloudWorkers.length > 0) {
-        const cleanCloud = cloudWorkers.filter((w) =>
-          w.id !== 'wrk_standby_live' &&
-          !w.name?.includes('Brijesh') &&
-          !w.name?.includes('Rameshwar') &&
-          !w.name?.includes('Dharmendra') &&
-          !w.name?.includes('Sunil Sharma') &&
-          !w.name?.includes('Mohammed Arif') &&
-          !w.name?.includes('Balwant Singh') &&
-          !w.name?.includes('Radhe Shyam') &&
-          !w.name?.includes('Chandan Kumar') &&
-          !w.name?.includes('Santosh Tiles') &&
-          !w.name?.includes('Suresh Kumar AC') &&
-          !w.name?.includes('Jagdish Halwai') &&
-          !w.name?.includes('Kallu DJ') &&
-          !w.name?.includes('Lalji Vishwakarma') &&
-          !w.name?.includes('Munna Bhai') &&
-          !w.name?.includes('Aslam POP') &&
-          !w.name?.includes('Surendra Waterproofing') &&
-          !w.name?.includes('Subhash Rawat')
-        );
-        if (cleanCloud.length > 0) {
-          setWorkers((prev) => {
-            const map = new Map(prev.map((w) => [w.id, w]));
-            cleanCloud.forEach((w) => map.set(w.id, { ...map.get(w.id), ...w }));
-            return Array.from(map.values());
-          });
-        }
-      }
-    });
+      const cleanCloud = (cloudWorkers || []).filter((w) =>
+        w.id !== 'wrk_standby_live' &&
+        !w.name?.includes('Brijesh') &&
+        !w.name?.includes('Rameshwar') &&
+        !w.name?.includes('Dharmendra') &&
+        !w.name?.includes('Sunil Sharma') &&
+        !w.name?.includes('Mohammed Arif') &&
+        !w.name?.includes('Balwant Singh') &&
+        !w.name?.includes('Radhe Shyam') &&
+        !w.name?.includes('Chandan Kumar') &&
+        !w.name?.includes('Santosh Tiles') &&
+        !w.name?.includes('Suresh Kumar AC') &&
+        !w.name?.includes('Jagdish Halwai') &&
+        !w.name?.includes('Kallu DJ') &&
+        !w.name?.includes('Lalji Vishwakarma') &&
+        !w.name?.includes('Munna Bhai') &&
+        !w.name?.includes('Aslam POP') &&
+        !w.name?.includes('Surendra Waterproofing') &&
+        !w.name?.includes('Subhash Rawat')
+      );
+      setWorkers((prev) => {
+        const recentLocal = prev.filter((w) => extractRecordTimeMs(w.id) >= effectiveCutoffMs);
+        const map = new Map(recentLocal.map((w) => [w.id, w]));
+        cleanCloud.forEach((w) => map.set(w.id, { ...map.get(w.id), ...w }));
+        return Array.from(map.values());
+      });
+    }, effectiveCutoffMs);
 
     const unsubCustomers = listenToCustomers((cloudCustomers) => {
-      if (cloudCustomers && cloudCustomers.length > 0) {
-        const cleanCloud = cloudCustomers.filter((c) =>
-          c.id !== 'c1' &&
-          c.id !== 'c_new_guest' &&
-          !c.name?.includes('Vipin Rajput') &&
-          c.email !== 'vr6386833@gmail.com' &&
-          !c.name?.includes('Anil Gupta') &&
-          !c.name?.includes('Rajesh Kumar') &&
-          !c.name?.includes('Sunita Devi') &&
-          !c.name?.includes('Vikram Malhotra') &&
-          !c.name?.includes('Kavita Verma') &&
-          !c.name?.includes('Manoj Tiwari') &&
-          !c.name?.includes('Deepika Joshi')
-        );
-        if (cleanCloud.length > 0) {
-          setCustomers((prev) => {
-            const map = new Map(prev.map((c) => [c.id, c]));
-            cleanCloud.forEach((c) => map.set(c.id, { ...map.get(c.id), ...c }));
-            return Array.from(map.values());
-          });
-        }
-      }
-    });
+      const cleanCloud = (cloudCustomers || []).filter((c) =>
+        c.id !== 'c1' &&
+        c.id !== 'c_new_guest' &&
+        !c.name?.includes('Vipin Rajput') &&
+        c.email !== 'vr6386833@gmail.com' &&
+        !c.name?.includes('Anil Gupta') &&
+        !c.name?.includes('Rajesh Kumar') &&
+        !c.name?.includes('Sunita Devi') &&
+        !c.name?.includes('Vikram Malhotra') &&
+        !c.name?.includes('Kavita Verma') &&
+        !c.name?.includes('Manoj Tiwari') &&
+        !c.name?.includes('Deepika Joshi')
+      );
+      setCustomers((prev) => {
+        const recentLocal = prev.filter((c) => extractRecordTimeMs(c.id) >= effectiveCutoffMs);
+        const map = new Map(recentLocal.map((c) => [c.id, c]));
+        cleanCloud.forEach((c) => map.set(c.id, { ...map.get(c.id), ...c }));
+        return Array.from(map.values());
+      });
+    }, effectiveCutoffMs);
 
     const unsubJobs = listenToJobs((cloudJobs) => {
-      if (cloudJobs && cloudJobs.length > 0) {
-        setJobs((prev) => {
-          const map = new Map(prev.map((j) => [j.id, j]));
-          cloudJobs.forEach((j) => map.set(j.id, { ...map.get(j.id), ...j }));
-          return Array.from(map.values());
-        });
-      }
-    });
+      setJobs((prev) => {
+        const recentLocal = prev.filter((j) => extractRecordTimeMs(j.id) >= effectiveCutoffMs);
+        const map = new Map(recentLocal.map((j) => [j.id, j]));
+        (cloudJobs || []).forEach((j) => map.set(j.id, { ...map.get(j.id), ...j }));
+        return Array.from(map.values());
+      });
+    }, effectiveCutoffMs);
 
     const unsubBookings = listenToBookings((cloudBookings) => {
-      if (!cloudBookings || cloudBookings.length === 0) return;
-      const sorted = [...cloudBookings].sort(
+      const freshBookings = (cloudBookings || []).filter((b: Booking & { updatedAtMs?: number }) => {
+        const tsMs = b.updatedAtMs || extractRecordTimeMs(b.id);
+        return tsMs >= effectiveCutoffMs;
+      });
+      if (freshBookings.length === 0) return;
+      const sorted = [...freshBookings].sort(
         (a: Booking & { updatedAtMs?: number }, b: Booking & { updatedAtMs?: number }) =>
           (b.updatedAtMs || 0) - (a.updatedAtMs || 0)
       );
@@ -608,39 +675,29 @@ export default function App() {
     });
 
     const unsubCommissions = listenToCommissions((cloudRecords) => {
-      if (cloudRecords && cloudRecords.length > 0) {
-        setCommissionRecords((prev) => {
-          const map = new Map(prev.map((r) => [r.id, r]));
-          cloudRecords.forEach((r) => map.set(r.id, { ...map.get(r.id), ...r }));
-          return Array.from(map.values());
-        });
-      }
-    });
+      setCommissionRecords((prev) => {
+        const recentLocal = prev.filter((r) => extractRecordTimeMs(r.id) >= effectiveCutoffMs && r.commissionAmount !== 95);
+        const map = new Map(recentLocal.map((r) => [r.id, r]));
+        (cloudRecords || []).forEach((r) => map.set(r.id, { ...map.get(r.id), ...r }));
+        return Array.from(map.values());
+      });
+    }, effectiveCutoffMs);
 
     const unsubPayouts = listenToPayouts((cloudPayouts) => {
-      if (cloudPayouts && cloudPayouts.length > 0) {
-        setOwnerPayouts((prev) => {
-          const map = new Map(prev.map((p) => [p.id, p]));
-          cloudPayouts.forEach((p) => map.set(p.id, { ...map.get(p.id), ...p }));
-          return Array.from(map.values());
-        });
-      }
-    });
+      setOwnerPayouts((prev) => {
+        const recentLocal = prev.filter((p) => extractRecordTimeMs(p.id) >= effectiveCutoffMs);
+        const map = new Map(recentLocal.map((p) => [p.id, p]));
+        (cloudPayouts || []).forEach((p) => map.set(p.id, { ...map.get(p.id), ...p }));
+        return Array.from(map.values());
+      });
+    }, effectiveCutoffMs);
 
     const unsubChat = listenToChatMessages((cloudMsgs) => {
-      if (cloudMsgs && cloudMsgs.length > 0) {
-        setChatMessages(cloudMsgs);
-      }
-    });
-
-    const unsubConfig = listenToAppConfig((cloudCfg) => {
-      if (cloudCfg && cloudCfg.upiId) {
-        setAppOwnerConfig((prev) => ({
-          ...prev,
-          ...cloudCfg,
-          ownerSecurityPin: prev.ownerSecurityPin, // Keep device PIN authority local unless explicitly changed
-        }));
-      }
+      const freshMsgs = (cloudMsgs || []).filter((m: ChatMessage & { createdAtMs?: number }) => {
+        const tsMs = m.createdAtMs || extractRecordTimeMs(m.id);
+        return tsMs >= effectiveCutoffMs;
+      });
+      setChatMessages(freshMsgs);
     });
 
     return () => {
@@ -651,9 +708,8 @@ export default function App() {
       unsubCommissions();
       unsubPayouts();
       unsubChat();
-      unsubConfig();
     };
-  }, []);
+  }, [effectiveCutoffMs]);
 
   const handleMarkNotificationAsRead = (id: string) => {
     setWorkerNotifications((prev) =>
@@ -1471,12 +1527,24 @@ export default function App() {
     setWalletTransactions((prev) => [newTx, ...prev]);
   };
 
-  // 11. Worker KYC update
-  const handleUpdateKyc = (aadhar: string, pan: string) => {
+  // 11. Worker KYC update (with Aadhaar Front & Back Photos)
+  const handleUpdateKyc = (
+    aadhar: string,
+    pan: string,
+    aadhaarFrontPhoto?: string,
+    aadhaarBackPhoto?: string
+  ) => {
     setWorkers((prev) =>
       prev.map((w) => {
         if (w.id === activeWorker.id) {
-          const updated = { ...w, isAadhaarVerified: true, isPanVerified: true };
+          const updated: WorkerProfile = {
+            ...w,
+            aadhaarNumber: aadhar || w.aadhaarNumber,
+            aadhaarFrontPhoto: aadhaarFrontPhoto ?? w.aadhaarFrontPhoto,
+            aadhaarBackPhoto: aadhaarBackPhoto ?? w.aadhaarBackPhoto,
+            isAadhaarVerified: Boolean(aadhaarFrontPhoto ?? w.aadhaarFrontPhoto),
+            isPanVerified: Boolean(pan?.trim()) || w.isPanVerified,
+          };
           syncWorkerToFirestore(updated);
           return updated;
         }
@@ -1591,6 +1659,9 @@ export default function App() {
     setActiveCustomerId(newId);
     try {
       safeStorage.setItem('smart_india_active_customer_id_v4', newId);
+      if (!isOwnerSession) {
+        safeStorage.setItem('smart_india_preferred_role_v4', 'customer');
+      }
     } catch {}
     syncCustomerToFirestore(newCustomer);
     soundManager.playSuccess();
@@ -1634,7 +1705,7 @@ export default function App() {
       rating: newWorkerData.rating || 5.0,
       reviewsCount: newWorkerData.reviewsCount || 0,
       completedJobsCount: newWorkerData.completedJobsCount || 0,
-      walletBalance: newWorkerData.walletBalance ?? 100,
+      walletBalance: newWorkerData.walletBalance ?? 0,
       isOnline: true,
       portfolio: newWorkerData.portfolio || [],
       currentLocation: newWorkerData.currentLocation || { lat: 28.5355, lng: 77.3910 }
@@ -1643,6 +1714,9 @@ export default function App() {
     setActiveWorkerId(newWorkerId);
     try {
       safeStorage.setItem('smart_india_active_worker_id_v4', newWorkerId);
+      if (!isOwnerSession) {
+        safeStorage.setItem('smart_india_preferred_role_v4', 'worker');
+      }
     } catch {}
     syncWorkerToFirestore(newWorker);
     soundManager.playSuccess();
@@ -1774,6 +1848,7 @@ export default function App() {
               safeStorage.setItem('smart_india_onboarded_v4', 'true');
               safeStorage.setItem('smart_india_preferred_role_v4', 'customer');
             } catch {}
+            setIsOwnerSession(false);
             setActiveView('customer');
             setShowOnboarding(false);
           }}
@@ -1783,6 +1858,7 @@ export default function App() {
               safeStorage.setItem('smart_india_onboarded_v4', 'true');
               safeStorage.setItem('smart_india_preferred_role_v4', 'worker');
             } catch {}
+            setIsOwnerSession(false);
             setActiveView('worker');
             setShowOnboarding(false);
           }}
@@ -1791,6 +1867,7 @@ export default function App() {
               safeStorage.setItem('smart_india_onboarded_v4', 'true');
               safeStorage.setItem('smart_india_preferred_role_v4', 'customer');
             } catch {}
+            setIsOwnerSession(false);
             setActiveView('customer');
             setShowOnboarding(false);
           }}
@@ -1807,6 +1884,7 @@ export default function App() {
             safeStorage.setItem('smart_india_onboarded_v4', 'true');
           } catch {}
           setShowOnboarding(false);
+          setIsOwnerSession(true);
           setActiveView('owner');
         }}
         language={language}
@@ -2062,15 +2140,14 @@ export default function App() {
                 soundManager.playTap();
                 setIsSosModalOpen(true);
               }}
-              onSwitchToWorker={() => {
+              isOwnerSession={isOwnerSession}
+              onSwitchToWorker={isOwnerSession ? () => {
                 soundManager.playTap();
-                try {
-                  safeStorage.setItem('smart_india_preferred_role_v4', 'worker');
-                } catch {}
                 setActiveView('worker');
-              }}
+              } : undefined}
               onSwitchToOwner={() => {
                 soundManager.playTap();
+                setIsOwnerSession(true);
                 setActiveView('owner');
               }}
               onOpenLegalTerms={() => {
@@ -2094,10 +2171,10 @@ export default function App() {
                   SecurityShieldService.setMasterPin(newPin);
                 } catch {}
               }}
-              onOpenOnboarding={() => {
+              onOpenOnboarding={(isOwnerSession || customer.id === DEFAULT_GUEST_CUSTOMER.id) ? () => {
                 soundManager.playTap();
                 setShowOnboarding(true);
-              }}
+              } : undefined}
             />
           </div>
         )}
@@ -2163,17 +2240,28 @@ export default function App() {
                 soundManager.playTap();
                 setIsSosModalOpen(true);
               }}
-              onNavigateToCustomer={() => {
+              isOwnerSession={isOwnerSession}
+              onNavigateToCustomer={isOwnerSession ? () => {
                 soundManager.playTap();
-                try {
-                  safeStorage.setItem('smart_india_preferred_role_v4', 'customer');
-                } catch {}
                 setActiveView('customer');
+              } : undefined}
+              onSwitchToOwner={() => {
+                soundManager.playTap();
+                setIsOwnerSession(true);
+                setActiveView('owner');
               }}
-              onOpenOnboarding={() => {
+              ownerPin={appOwnerConfig.ownerSecurityPin || '1234'}
+              onUpdateOwnerPin={(newPin) => {
+                setAppOwnerConfig((prev) => ({ ...prev, ownerSecurityPin: newPin }));
+                try {
+                  safeStorage.setItem('smart_india_owner_pin', newPin);
+                  SecurityShieldService.setMasterPin(newPin);
+                } catch {}
+              }}
+              onOpenOnboarding={(isOwnerSession || activeWorker.id === DEFAULT_STANDBY_WORKER.id) ? () => {
                 soundManager.playTap();
                 setShowOnboarding(true);
-              }}
+              } : undefined}
             />
           </div>
         )}
@@ -2214,8 +2302,30 @@ export default function App() {
                 }}
                 onPayoutToBank={handleOwnerWithdrawToBank}
                 onUnlockWorker={handleUnlockWorkerByAdmin}
-                onNavigateToView={(view) => setActiveView(view)}
+                onNavigateToView={(view) => {
+                  setIsOwnerSession(true);
+                  setActiveView(view);
+                }}
+                onExitOwnerMode={() => {
+                  setIsOwnerSession(false);
+                  const savedRole = safeStorage.getItem('smart_india_preferred_role_v4');
+                  setActiveView(savedRole === 'worker' ? 'worker' : 'customer');
+                }}
                 payoutHistory={ownerPayouts}
+                onResetAllData={() => {
+                  handleResetData();
+                  setCommissionRecords([]);
+                  setOwnerPayouts([]);
+                  setChatMessages([]);
+                  const resetCfg: AppOwnerPaymentConfig = {
+                    ...appOwnerConfig,
+                    totalWithdrawnToBank: 0,
+                    payoutHistory: [],
+                    cleanResetAtMs: Date.now(),
+                  };
+                  setAppOwnerConfig(resetCfg);
+                  syncAppConfigToFirestore(resetCfg);
+                }}
               />
             </div>
           </div>

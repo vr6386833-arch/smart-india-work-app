@@ -62,6 +62,7 @@ export const CompanyQrPaymentModal: React.FC<CompanyQrPaymentModalProps> = ({
   const [selectedAmount, setSelectedAmount] = useState<number>(defaultAmt);
   const [customAmountInput, setCustomAmountInput] = useState<string>(defaultAmt.toString());
   const [utrNumber, setUtrNumber] = useState<string>('');
+  const [utrError, setUtrError] = useState<string>('');
   const [selectedPaymentApp, setSelectedPaymentApp] = useState<'any' | 'gpay' | 'phonepe' | 'paytm' | 'bhim'>('any');
 
   // Reset when opened or worker state changes
@@ -161,12 +162,22 @@ export const CompanyQrPaymentModal: React.FC<CompanyQrPaymentModalProps> = ({
   };
 
   const handleSimulatePaymentSubmission = () => {
+    const cleanUtr = utrNumber.trim();
+    if (cleanUtr.length < 6) {
+      soundManager.playWarning();
+      setUtrError(
+        language === 'hi'
+          ? '⚠️ कृपया पहले QR या UPI ऐप से भुगतान करें और कम से कम 6 अंकों का UTR / Ref नंबर दर्ज करें।'
+          : '⚠️ Please complete UPI payment first and enter at least a 6-digit UTR / Reference number.'
+      );
+      return;
+    }
+
+    setUtrError('');
     soundManager.playTap();
     setIsProcessing(true);
 
-    const generatedTxn = utrNumber.trim() 
-      ? `UTR/${utrNumber.trim()}` 
-      : `UPI/CORP/${Date.now().toString().slice(-6)}/${Math.floor(100000 + Math.random() * 900000)}`;
+    const generatedTxn = `UTR/${cleanUtr}`;
     const invoiceNumber = `SI-INV-${Date.now().toString().slice(-6)}`;
 
     setTimeout(() => {
@@ -657,20 +668,29 @@ export const CompanyQrPaymentModal: React.FC<CompanyQrPaymentModalProps> = ({
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5">
                     <FileCheck className="w-3.5 h-3.5 text-indigo-400" />
-                    Enter UPI Reference / UTR Number (Optional):
+                    {language === 'hi'
+                      ? 'पेमेंट के बाद 12-अंकों का UTR / Ref नंबर दर्ज करें *'
+                      : 'Enter UPI Reference / UTR Number (Required) *'}
                   </span>
-                  <span className="text-[9px] text-slate-500">12 Digits</span>
+                  <span className="text-[9px] text-amber-400 font-bold">Required</span>
                 </div>
 
                 <div className="flex gap-2">
                   <input
                     type="text"
-                    placeholder="e.g. 423891048291 or leave empty for auto-verify"
+                    placeholder={language === 'hi' ? 'उदा. 423891048291 (PhonePe/GPay UTR)' : 'e.g. 423891048291 (12-digit UTR)'}
                     value={utrNumber}
-                    onChange={(e) => setUtrNumber(e.target.value)}
-                    className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                    onChange={(e) => {
+                      setUtrError('');
+                      setUtrNumber(e.target.value);
+                    }}
+                    className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
                   />
                 </div>
+
+                {utrError && (
+                  <p className="text-[11px] font-bold text-rose-400">{utrError}</p>
+                )}
               </div>
 
               {/* Instant Verification & Submit Button */}

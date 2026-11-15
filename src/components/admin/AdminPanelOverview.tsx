@@ -81,7 +81,7 @@ export const AdminPanelOverview: React.FC<AdminPanelOverviewProps> = ({
   const [dailyJobsSlider, setDailyJobsSlider] = useState<number>(150);
   
   // Bank Withdrawal form state
-  const [withdrawAmount, setWithdrawAmount] = useState<string>('500');
+  const [withdrawAmount, setWithdrawAmount] = useState<string>('0');
   const [withdrawNote, setWithdrawNote] = useState<string>('Company QR Revenue Withdrawal');
   const [isProcessingWithdrawal, setIsProcessingWithdrawal] = useState(false);
   const [payoutSuccessMessage, setPayoutSuccessMessage] = useState<string | null>(null);
@@ -96,6 +96,10 @@ export const AdminPanelOverview: React.FC<AdminPanelOverviewProps> = ({
   const availableToWithdraw = Math.max(0, totalEarned - totalWithdrawn);
   const totalCompletedBookings = commissionRecords.length;
   const payoutHistory = appOwnerConfig.payoutHistory || [];
+
+  React.useEffect(() => {
+    setWithdrawAmount(availableToWithdraw > 0 ? String(availableToWithdraw) : '0');
+  }, [availableToWithdraw]);
 
   // Worker lock statistics
   const lockedWorkers = workers.filter(w => Boolean(w.isBlockedDueToUnpaidFee));

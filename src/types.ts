@@ -54,6 +54,8 @@ export interface WorkerProfile {
   completedJobsCount: number;
   workerIdCode?: string;
   aadhaarNumber?: string;
+  aadhaarFrontPhoto?: string;
+  aadhaarBackPhoto?: string;
   bloodGroup?: string;
   emergencyContact?: string;
   registeredDate?: string;
@@ -270,6 +272,7 @@ export interface AppOwnerPaymentConfig {
   autoSettlementEnabled?: boolean;
   autoSettlementTime?: string;
   ownerSecurityPin?: string; // 4-digit secret PIN for Owner & Admin access
+  cleanResetAtMs?: number; // Epoch ms baseline for filtering pre-launch test records
 }
 
 // Platform Commission & Fee Settlement Record

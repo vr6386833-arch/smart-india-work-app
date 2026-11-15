@@ -20,12 +20,14 @@ import {
   Check,
   Smartphone,
   RefreshCw,
-  Zap
+  Zap,
+  Trash2
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { WorkerProfile, Language } from '../../types';
 import { CATEGORIES } from '../../data/mockData';
 import { soundManager } from '../../services/soundEffects';
+import { compressDocumentImageFile } from '../../utils/qrImageHelper';
 
 interface AddWorkerModalProps {
   isOpen: boolean;
@@ -74,7 +76,9 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
   const [city, setCity] = useState('Delhi NCR');
   const [locality, setLocality] = useState('Sector 62, Noida');
   const [avatar, setAvatar] = useState(SAMPLE_AVATARS[0]);
-  const [isAadhaarVerified, setIsAadhaarVerified] = useState(true);
+  const [aadhaarFrontPhoto, setAadhaarFrontPhoto] = useState('');
+  const [aadhaarBackPhoto, setAadhaarBackPhoto] = useState('');
+  const [isUploadingAadhaar, setIsUploadingAadhaar] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
   // OTP Verification state for Worker ID signup
@@ -243,6 +247,32 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
     }
   };
 
+  const handleAadhaarPhotoSelect = async (
+    side: 'front' | 'back',
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingAadhaar(true);
+    setErrorMsg('');
+    try {
+      const compressed = await compressDocumentImageFile(file);
+      if (side === 'front') setAadhaarFrontPhoto(compressed);
+      else setAadhaarBackPhoto(compressed);
+      soundManager.playSuccess();
+    } catch {
+      soundManager.playWarning();
+      setErrorMsg(
+        language === 'hi'
+          ? 'आधार कार्ड की फोटो पढ़ने में समस्या आई। कृपया दूसरी साफ फोटो चुनें।'
+          : 'Could not read Aadhaar photo. Please select another clear image.'
+      );
+    } finally {
+      setIsUploadingAadhaar(false);
+      if (e.target) e.target.value = '';
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -262,11 +292,20 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
     }
 
     const cleanedAadhaar = aadhaarNumber.replace(/\D/g, '');
-    if (cleanedAadhaar.length > 0 && cleanedAadhaar.length < 12) {
+    if (cleanedAadhaar.length !== 12) {
       setErrorMsg(
         language === 'hi'
-          ? 'आधार कार्ड नंबर पूरे 12 अंकों का होना चाहिए।'
-          : 'Aadhaar number must be exactly 12 digits.'
+          ? 'कृपया पूरे 12 अंकों का सही आधार कार्ड नंबर दर्ज करें।'
+          : 'Please enter a valid 12-digit Aadhaar card number.'
+      );
+      return;
+    }
+
+    if (!aadhaarFrontPhoto) {
+      setErrorMsg(
+        language === 'hi'
+          ? 'नकली ID रोकने के लिए आधार कार्ड की आगे की साफ फोटो अपलोड करना अनिवार्य है।'
+          : 'Uploading Aadhaar Card Front Photo is mandatory to prevent fake IDs.'
       );
       return;
     }
@@ -313,9 +352,9 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
       age: Number(age),
       phone: formattedPhone,
       avatar,
-      rating: 4.85,
-      reviewsCount: 12,
-      experienceYears: Number(experienceYears) || 4,
+      rating: 5.0,
+      reviewsCount: 0,
+      experienceYears: Number(experienceYears) || 1,
       category,
       subSkills: currentCat.subcategories.slice(0, 4),
       city: city.trim() || 'Delhi NCR',
@@ -323,13 +362,15 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
       distanceKm: 1.2,
       hourlyRate: Number(hourlyRate) || 150,
       dailyRate: Number(dailyRate) || 900,
-      isAadhaarVerified: Boolean(isAadhaarVerified || cleanedAadhaar.length === 12),
+      isAadhaarVerified: Boolean(aadhaarFrontPhoto && cleanedAadhaar.length === 12),
       isPanVerified: true,
       isOnline: true,
-      walletBalance: 150,
-      completedJobsCount: 18,
+      walletBalance: 0,
+      completedJobsCount: 0,
       workerIdCode,
       aadhaarNumber: formattedAadhaar,
+      aadhaarFrontPhoto,
+      aadhaarBackPhoto: aadhaarBackPhoto || undefined,
       registeredDate: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
       bloodGroup: 'B+',
       emergencyContact: '+91 98765 00000',
@@ -530,7 +571,7 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
               />
               <p className="text-[10px] text-slate-400">
                 {language === 'hi' 
-                  ? '12 अंकों का आधार (सुरक्षित रूप से एन्क्रिप्ट किया जाएगा)' 
+                  ? '12 अंकों का आधार (फोटो के साथ सत्यापित होगा)' 
                   : '12-digit Indian Aadhaar card number'}
               </p>
             </div>
@@ -561,6 +602,95 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
               <p className="text-[10px] text-slate-400">
                 {language === 'hi' ? 'ग्राहक से संपर्क व OTP प्राप्ति हेतु' : 'For booking alerts & OTP arrivals'}
               </p>
+            </div>
+          </div>
+
+          {/* 2B. Mandatory Aadhaar Card Photo Upload (Prevents Fake IDs) */}
+          <div className="p-3.5 rounded-2xl bg-slate-950/90 border border-emerald-500/30 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
+                <Camera className="w-4 h-4 text-emerald-400" />
+                <span>
+                  {language === 'hi'
+                    ? 'आधार कार्ड की असली फोटो अपलोड करें (अनिवार्य) *'
+                    : 'Upload Real Aadhaar Card Photo (Mandatory) *'}
+                </span>
+              </span>
+              <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 font-bold border border-emerald-500/30">
+                Anti-Fake KYC
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              {language === 'hi'
+                ? 'ताकि कोई गलत आधार नंबर डालकर नकली कारीगर ID न बना सके — अपने आधार कार्ड की आगे की साफ फोटो खींचें या अपलोड करें।'
+                : 'Required to verify the Aadhaar number matches a real government ID card.'}
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              {aadhaarFrontPhoto ? (
+                <div className="relative rounded-xl overflow-hidden border border-emerald-500/50 bg-slate-900 h-28">
+                  <img src={aadhaarFrontPhoto} alt="Aadhaar Front" className="w-full h-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => setAadhaarFrontPhoto('')}
+                    className="absolute top-1.5 right-1.5 p-1 rounded-lg bg-rose-600/90 text-white shadow"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded bg-emerald-600/90 text-[10px] font-bold text-white">
+                    ✓ Front Uploaded
+                  </span>
+                </div>
+              ) : (
+                <label className="flex flex-col items-center justify-center gap-1 h-28 rounded-xl border-2 border-dashed border-emerald-500/40 bg-slate-900/70 hover:bg-slate-900 cursor-pointer text-center p-2 transition-colors">
+                  <Camera className="w-5 h-5 text-emerald-400" />
+                  <span className="text-[11px] font-bold text-emerald-300">
+                    {isUploadingAadhaar ? '...' : (language === 'hi' ? 'आधार आगे फोटो *' : 'Aadhaar Front *')}
+                  </span>
+                  <span className="text-[9px] text-slate-400">
+                    {language === 'hi' ? 'कैमरा / गैलरी' : 'Camera / Gallery'}
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={(e) => handleAadhaarPhotoSelect('front', e)}
+                    className="hidden"
+                  />
+                </label>
+              )}
+
+              {aadhaarBackPhoto ? (
+                <div className="relative rounded-xl overflow-hidden border border-emerald-500/40 bg-slate-900 h-28">
+                  <img src={aadhaarBackPhoto} alt="Aadhaar Back" className="w-full h-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => setAadhaarBackPhoto('')}
+                    className="absolute top-1.5 right-1.5 p-1 rounded-lg bg-rose-600/90 text-white shadow"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded bg-emerald-600/90 text-[10px] font-bold text-white">
+                    ✓ Back Uploaded
+                  </span>
+                </div>
+              ) : (
+                <label className="flex flex-col items-center justify-center gap-1 h-28 rounded-xl border border-dashed border-slate-700 bg-slate-900/50 hover:bg-slate-900 cursor-pointer text-center p-2 transition-colors">
+                  <Upload className="w-5 h-5 text-slate-400" />
+                  <span className="text-[11px] font-bold text-slate-300">
+                    {language === 'hi' ? 'आधार पीछे फोटो' : 'Aadhaar Back'}
+                  </span>
+                  <span className="text-[9px] text-slate-500">
+                    {language === 'hi' ? '(वैकल्पिक / Optional)' : '(Optional)'}
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={(e) => handleAadhaarPhotoSelect('back', e)}
+                    className="hidden"
+                  />
+                </label>
+              )}
             </div>
           </div>
 

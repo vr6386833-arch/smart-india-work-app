@@ -40,7 +40,8 @@ import {
   PauseCircle,
   PlayCircle,
   BellOff,
-  Coffee
+  Coffee,
+  Crown
 } from 'lucide-react';
 import { WorkerProfile, JobPost, Booking, WalletTransaction, Language, ChatMessage, AppOwnerPaymentConfig, CommissionRecord, WorkerJobRecord, WorkerNotification } from '../../types';
 import { OtpVerificationDialog } from './OtpVerificationDialog';
@@ -52,6 +53,7 @@ import { CompanyQrPaymentModal } from './CompanyQrPaymentModal';
 import { PayAppOwnerModal } from './PayAppOwnerModal';
 import { ChatCallModal } from '../customer/ChatCallModal';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
+import { OwnerPinModal } from '../common/OwnerPinModal';
 import { WorkerIdCardModal } from './WorkerIdCardModal';
 import { WorkerIdPauseModal } from './WorkerIdPauseModal';
 import { AddWorkerModal } from './AddWorkerModal';
@@ -81,7 +83,7 @@ interface WorkerAppProps {
   onVerifyOtp: (record?: CommissionRecord, method?: 'upi_direct' | 'wallet_deduct') => void;
   onCompleteJob: (amount?: number, method?: 'upi' | 'cash', txnId?: string) => void;
   onRechargeWallet: (amount: number) => void;
-  onUpdateKyc: (aadhar: string, pan: string) => void;
+  onUpdateKyc: (aadhar: string, pan: string, aadhaarFrontPhoto?: string, aadhaarBackPhoto?: string) => void;
   onAddPortfolio: (title: string, tag: string, desc: string, img: string) => void;
   onUpdateWorker?: (updated: WorkerProfile) => void;
   chatMessages: ChatMessage[];
@@ -105,6 +107,10 @@ interface WorkerAppProps {
   onTogglePauseId?: (workerId: string, isPaused: boolean, reason?: string, pauseUntil?: string) => void;
   onNavigateToCustomer?: () => void;
   onOpenOnboarding?: () => void;
+  isOwnerSession?: boolean;
+  onSwitchToOwner?: () => void;
+  ownerPin?: string;
+  onUpdateOwnerPin?: (newPin: string) => void;
 }
 
 export const WorkerApp: React.FC<WorkerAppProps> = ({
@@ -150,6 +156,10 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
   onTriggerSos,
   onOpenReviews,
   onOpenOnboarding,
+  isOwnerSession = false,
+  onSwitchToOwner,
+  ownerPin,
+  onUpdateOwnerPin,
 }) => {
   const [activeTab, setActiveTab] = useState<'radar' | 'active' | 'wallet' | 'profile'>('radar');
   
@@ -208,10 +218,12 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
   const [isPortfolioModalOpen, setIsPortfolioModalOpen] = useState(false);
   const [isUpiQrModalOpen, setIsUpiQrModalOpen] = useState(false);
   const [isCompanyQrModalOpen, setIsCompanyQrModalOpen] = useState(false);
+  const [walletRechargeAmount, setWalletRechargeAmount] = useState<number>(200);
   const [isPayAppOwnerOpen, setIsPayAppOwnerOpen] = useState(false);
   const [isWorkerNavModalOpen, setIsWorkerNavModalOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isCallOpen, setIsCallOpen] = useState(false);
+  const [isOwnerPinOpen, setIsOwnerPinOpen] = useState(false);
   const [lightboxData, setLightboxData] = useState<{ url: string; title: string; subtitle?: string; tag?: string } | null>(null);
   const [workerWorkPhotos, setWorkerWorkPhotos] = useState<string[]>([
     'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?auto=format&fit=crop&w=800&q=80'
@@ -345,8 +357,8 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
               <Power className="w-4 h-4" />
             </button>
 
-            {/* Switch to Customer App Button */}
-            {onNavigateToCustomer && (
+            {/* Switch to Customer App Button (Visible ONLY in Owner Session) */}
+            {isOwnerSession && onNavigateToCustomer && (
               <button
                 onClick={() => {
                   soundManager.playTap();
@@ -357,6 +369,21 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
               >
                 <User className="w-3.5 h-3.5" />
                 <span>{language === 'hi' ? 'ग्राहक' : 'Customer'}</span>
+              </button>
+            )}
+
+            {/* Return to Owner App Button (Visible ONLY in Owner Session) */}
+            {isOwnerSession && onSwitchToOwner && (
+              <button
+                onClick={() => {
+                  soundManager.playTap();
+                  onSwitchToOwner();
+                }}
+                className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[11px] font-bold transition-all"
+                title={language === 'hi' ? 'ओनर ऐप पर वापस जाएं' : 'Back to Owner App'}
+              >
+                <Crown className="w-3.5 h-3.5" />
+                <span>{language === 'hi' ? 'ओनर' : 'Owner'}</span>
               </button>
             )}
           </div>
@@ -377,7 +404,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
             </button>
           )}
 
-          {onAddWorker && (
+          {(isOwnerSession || isStandbyWorker) && onAddWorker && (
             <button
               onClick={() => {
                 soundManager.playTap();
@@ -1583,15 +1610,15 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                       {language === 'hi' ? 'स्मार्ट इंडिया ऐप मालिक को कमीशन' : 'Pay Smart India Work App Owner'}
                     </h5>
                     <span className="text-[10px] text-amber-400 font-semibold">
-                      {appOwnerConfig?.commissionRatePercent || 10}% Commission • Direct UPI Settlement
+                      ₹{appOwnerConfig?.perJobFeeRupees || 10} Flat Lead Fee • 0% Commission
                     </span>
                   </div>
                 </div>
               </div>
               <p className="text-[11px] text-slate-400 leading-relaxed">
                 {language === 'hi'
-                  ? `प्रत्येक काम का ${appOwnerConfig?.commissionRatePercent || 10}% कमीशन सीधे ऐप मालिक के UPI (${appOwnerConfig?.upiId || 'smartindia.official@icici'}) में PhonePe, GPay, Paytm या वॉलेट से जमा करें।`
-                  : `Pay platform commission per completed job directly to App Owner (${appOwnerConfig?.upiId || 'smartindia.official@icici'}) via UPI QR, GPay, PhonePe, or Wallet balance.`}
+                  ? `प्रत्येक काम पर सिर्फ ₹${appOwnerConfig?.perJobFeeRupees || 10} फिक्स फीस (0% कमीशन) सीधे ऐप मालिक के UPI (${appOwnerConfig?.upiId || 'smartindia.official@icici'}) में PhonePe, GPay, Paytm या वॉलेट से जमा करें।`
+                  : `Pay flat ₹${appOwnerConfig?.perJobFeeRupees || 10} lead fee per job (0% commission) directly to App Owner (${appOwnerConfig?.upiId || 'smartindia.official@icici'}) via UPI QR, GPay, PhonePe, or Wallet balance.`}
               </p>
               <button
                 onClick={() => {
@@ -1754,7 +1781,8 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                 </div>
               </div>
 
-              {/* Action buttons: Add Worker & Switch Worker */}
+              {/* Action buttons: Only Owner can add/switch multiple workers; regular Worker sees only their own Worker ID */}
+              {(isOwnerSession || isStandbyWorker) && (
               <div className="flex items-center gap-2 pt-1">
                 {onAddWorker && (
                   <button
@@ -1768,7 +1796,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                     <span>{language === 'hi' ? '+ नया कारीगर जोड़ें' : '+ Register New Worker'}</span>
                   </button>
                 )}
-                {workers && workers.length > 1 && onSelectWorker && (
+                {isOwnerSession && workers && workers.length > 1 && onSelectWorker && (
                   <button
                     onClick={() => {
                       soundManager.playTap();
@@ -1782,9 +1810,10 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                   </button>
                 )}
               </div>
+              )}
 
-              {/* Worker Switcher Dropdown (if open) */}
-              {isWorkerSwitcherOpen && workers && workers.length > 0 && onSelectWorker && (
+              {/* Worker Switcher Dropdown (Owner Only) */}
+              {isOwnerSession && isWorkerSwitcherOpen && workers && workers.length > 0 && onSelectWorker && (
                 <div className="p-2 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5 animate-in fade-in">
                   <span className="text-[10px] text-slate-400 font-bold px-1 block">
                     {language === 'hi' ? 'कारीगर बदलें (Switch Active Worker):' : 'Select Active Worker:'}
@@ -1961,30 +1990,63 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
             </div>
 
             {/* KYC Aadhaar / PAN Status Card */}
-            <div className="bg-slate-900 rounded-2xl p-3.5 border border-slate-800 space-y-2">
+            <div className="bg-slate-900 rounded-2xl p-3.5 border border-slate-800 space-y-2.5">
               <div className="flex items-center justify-between">
                 <h5 className="font-bold text-white flex items-center gap-1.5">
                   <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                  Government KYC ID Documents
+                  {language === 'hi' ? 'सरकारी आधार KYC व फोटो' : 'Government Aadhaar Photo & KYC'}
                 </h5>
                 <button
                   onClick={() => setIsKycModalOpen(true)}
                   className="text-emerald-400 text-[10px] font-bold hover:underline"
                 >
-                  Edit / View
+                  {worker.aadhaarFrontPhoto
+                    ? (language === 'hi' ? 'देखें / बदलें' : 'Edit / View')
+                    : (language === 'hi' ? '+ फोटो अपलोड करें' : '+ Upload Photo')}
                 </button>
               </div>
 
               <div className="grid grid-cols-2 gap-2 text-[11px]">
                 <div className="p-2 rounded-xl bg-slate-950 border border-slate-800">
-                  <span className="text-slate-500 block text-[9px]">Aadhaar Status</span>
-                  <span className="font-bold text-emerald-400">✓ Verified</span>
+                  <span className="text-slate-500 block text-[9px]">Aadhaar Photo</span>
+                  {worker.aadhaarFrontPhoto ? (
+                    <span className="font-bold text-emerald-400">✓ {language === 'hi' ? 'फोटो सत्यापित' : 'Photo Uploaded'}</span>
+                  ) : (
+                    <span className="font-bold text-amber-400">⚠️ {language === 'hi' ? 'फोटो बाकी है' : 'Photo Pending'}</span>
+                  )}
                 </div>
                 <div className="p-2 rounded-xl bg-slate-950 border border-slate-800">
-                  <span className="text-slate-500 block text-[9px]">PAN Status</span>
-                  <span className="font-bold text-emerald-400">✓ Verified</span>
+                  <span className="text-slate-500 block text-[9px]">Aadhaar Number</span>
+                  <span className="font-bold font-mono text-slate-200">{worker.aadhaarNumber || 'Not Added'}</span>
                 </div>
               </div>
+
+              {(worker.aadhaarFrontPhoto || worker.aadhaarBackPhoto) && (
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  {worker.aadhaarFrontPhoto && (
+                    <div
+                      onClick={() => setIsKycModalOpen(true)}
+                      className="relative rounded-xl overflow-hidden border border-emerald-500/30 h-20 cursor-pointer"
+                    >
+                      <img src={worker.aadhaarFrontPhoto} alt="Aadhaar Front" className="w-full h-full object-cover" />
+                      <span className="absolute bottom-1 left-1 px-1.5 py-0.2 rounded bg-slate-950/80 text-[9px] text-emerald-300 font-bold">
+                        Front
+                      </span>
+                    </div>
+                  )}
+                  {worker.aadhaarBackPhoto && (
+                    <div
+                      onClick={() => setIsKycModalOpen(true)}
+                      className="relative rounded-xl overflow-hidden border border-slate-700 h-20 cursor-pointer"
+                    >
+                      <img src={worker.aadhaarBackPhoto} alt="Aadhaar Back" className="w-full h-full object-cover" />
+                      <span className="absolute bottom-1 left-1 px-1.5 py-0.2 rounded bg-slate-950/80 text-[9px] text-slate-300 font-bold">
+                        Back
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Work Portfolio */}
@@ -2015,7 +2077,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
               </div>
             </div>
 
-            {onOpenOnboarding && (
+            {(isOwnerSession || isStandbyWorker) && onOpenOnboarding && (
               <button
                 type="button"
                 onClick={() => {
@@ -2029,6 +2091,28 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                   <span>{language === 'hi' ? '🆔 नई Customer / Worker ID चुनें' : '🆔 Switch / Create Role ID'}</span>
                 </span>
                 <ChevronRight className="w-4 h-4" />
+              </button>
+            )}
+
+            {/* Protected App Owner Portal Access (PIN Required) */}
+            {onSwitchToOwner && (
+              <button
+                type="button"
+                onClick={() => {
+                  soundManager.playTap();
+                  if (isOwnerSession) {
+                    onSwitchToOwner();
+                  } else {
+                    setIsOwnerPinOpen(true);
+                  }
+                }}
+                className="w-full py-2.5 px-3 rounded-2xl bg-amber-950/30 hover:bg-amber-950/60 border border-amber-500/30 text-amber-300 font-bold text-xs flex items-center justify-between transition-all"
+              >
+                <span className="flex items-center gap-2">
+                  <Crown className="w-4 h-4 text-amber-400" />
+                  <span>{language === 'hi' ? '👑 ऐप ओनर पोर्टल (PIN)' : '👑 App Owner Portal (PIN)'}</span>
+                </span>
+                <Lock className="w-3.5 h-3.5 text-amber-400" />
               </button>
             )}
           </div>
@@ -2176,7 +2260,8 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
         transactions={walletTransactions}
         language={language}
         onRecharge={onRechargeWallet}
-        onOpenCompanyQr={() => {
+        onOpenCompanyQr={(amt) => {
+          setWalletRechargeAmount(amt || 200);
           setIsWalletModalOpen(false);
           setIsCompanyQrModalOpen(true);
         }}
@@ -2204,7 +2289,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
         appOwnerConfig={appOwnerConfig}
         language={language}
         initialPurpose={isAccountBlocked ? 'unpaid_fee' : 'wallet'}
-        initialAmount={isAccountBlocked ? unpaidFeeAmount : 200}
+        initialAmount={isAccountBlocked ? unpaidFeeAmount : walletRechargeAmount}
         onClearUnpaidFee={(amt, txnId) => {
           if (onClearUnpaidFee) {
             onClearUnpaidFee(worker.id, amt, 'upi_direct', txnId);
@@ -2469,6 +2554,18 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
             });
           }
         }}
+      />
+
+      {/* PIN-Protected App Owner Unlock Modal */}
+      <OwnerPinModal
+        isOpen={isOwnerPinOpen}
+        onClose={() => setIsOwnerPinOpen(false)}
+        onSuccess={() => {
+          onSwitchToOwner?.();
+        }}
+        language={language}
+        ownerPin={ownerPin}
+        onUpdatePin={onUpdateOwnerPin}
       />
     </div>
   );

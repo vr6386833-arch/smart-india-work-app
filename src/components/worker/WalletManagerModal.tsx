@@ -24,7 +24,7 @@ interface WalletManagerModalProps {
   transactions: WalletTransaction[];
   language: Language;
   onRecharge: (amount: number) => void;
-  onOpenCompanyQr?: () => void;
+  onOpenCompanyQr?: (amount?: number) => void;
   onOpenImpsPayout?: () => void;
 }
 
@@ -40,42 +40,16 @@ export const WalletManagerModal: React.FC<WalletManagerModalProps> = ({
 }) => {
   const [selectedAmount, setSelectedAmount] = useState<number>(100);
   const [selectedApp, setSelectedApp] = useState<'phonepe' | 'gpay' | 'paytm' | 'bhim'>('phonepe');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [gatewayStep, setGatewayStep] = useState<string>('');
-  const [successMsg, setSuccessMsg] = useState(false);
 
   if (!isOpen) return null;
 
   const quickAmounts = [50, 100, 200, 500];
 
-  const handleInstantGatewayTopup = () => {
+  const handleProceedToRealUpiQr = () => {
     soundManager.playTap();
-    setIsProcessing(true);
-    setGatewayStep('1/3 Connecting to NPCI UPI Gateway...');
-
-    setTimeout(() => {
-      setGatewayStep(`2/3 Authorizing ₹${selectedAmount} via ${selectedApp.toUpperCase()}...`);
-      setTimeout(() => {
-        setGatewayStep('3/3 Instant Webhook Confirmed! Crediting Wallet...');
-        setTimeout(() => {
-          soundManager.playSuccessCoin();
-          try {
-            confetti({
-              particleCount: 50,
-              spread: 60,
-              origin: { y: 0.7 },
-            });
-          } catch {}
-          onRecharge(selectedAmount);
-          setIsProcessing(false);
-          setSuccessMsg(true);
-          setGatewayStep('');
-          setTimeout(() => {
-            setSuccessMsg(false);
-          }, 3000);
-        }, 600);
-      }, 700);
-    }, 600);
+    if (onOpenCompanyQr) {
+      onOpenCompanyQr(selectedAmount);
+    }
   };
 
   return (
@@ -192,49 +166,27 @@ export const WalletManagerModal: React.FC<WalletManagerModalProps> = ({
               </div>
             </div>
 
-            {/* Gateway Processing Progress Bar */}
-            {isProcessing && (
-              <div className="p-2.5 rounded-xl bg-slate-900 border border-emerald-500/40 space-y-1.5 animate-pulse">
-                <div className="flex items-center justify-between text-[11px] text-emerald-400 font-bold">
-                  <span>{gatewayStep}</span>
-                  <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-spin" />
-                </div>
-                <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-400 animate-[pulse_1s_infinite] w-full" />
-                </div>
-              </div>
-            )}
-
-            <button
-              onClick={handleInstantGatewayTopup}
-              disabled={isProcessing}
-              className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 active:scale-98 transition-all disabled:opacity-50"
-            >
-              <Zap className="w-4 h-4 text-amber-300" />
-              <span>{isProcessing ? 'Contacting Bank Gateway...' : `Instant Auto-Recharge +₹${selectedAmount}`}</span>
-            </button>
-
-            {/* Official Company QR Pay Terminal Option */}
+            {/* Official Owner UPI / QR Pay Action (No fake free credit) */}
             {onOpenCompanyQr && (
               <button
                 type="button"
-                onClick={() => {
-                  soundManager.playTap();
-                  onOpenCompanyQr();
-                }}
-                className="w-full py-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white font-bold text-xs shadow-sm flex items-center justify-center gap-2 transition-all"
+                onClick={handleProceedToRealUpiQr}
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 active:scale-98 transition-all"
               >
-                <QrCode className="w-4 h-4 text-indigo-400" />
-                <span>Pay via Official Company QR (Manual UTR)</span>
+                <QrCode className="w-4 h-4 text-amber-300" />
+                <span>
+                  {language === 'hi'
+                    ? `₹${selectedAmount} Owner UPI / QR से भरें (${selectedApp.toUpperCase()})`
+                    : `Pay ₹${selectedAmount} via Owner UPI / QR`}
+                </span>
               </button>
             )}
 
-            {successMsg && (
-              <div className="p-2.5 bg-emerald-500/20 border border-emerald-500/40 rounded-xl text-emerald-300 text-xs text-center font-bold animate-in fade-in flex items-center justify-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                <span>Wallet Credited Successfully! +₹{selectedAmount} Added via Webhook.</span>
-              </div>
-            )}
+            <p className="text-[10px] text-slate-400 text-center leading-snug">
+              {language === 'hi'
+                ? 'नोट: बिना असली UPI पेमेंट और UTR नंबर डाले वॉलेट में पैसे नहीं जुड़ेंगे।'
+                : 'Note: Wallet balance is credited only after completing UPI payment & entering UTR.'}
+            </p>
           </div>
 
           {/* Micro-Fee Rules Info */}

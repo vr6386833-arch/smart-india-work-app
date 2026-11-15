@@ -13,12 +13,17 @@ import {
   Globe,
   Sparkles,
   IndianRupee,
-  Building
+  Building,
+  Camera,
+  Upload,
+  Trash2,
+  CreditCard
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { CATEGORIES } from '../../data/mockData';
 import { CustomerProfile, WorkerProfile, Language } from '../../types';
 import { soundManager } from '../../services/soundEffects';
+import { compressDocumentImageFile } from '../../utils/qrImageHelper';
 
 interface OnboardingAuthScreenProps {
   language: Language;
@@ -67,6 +72,35 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
   const [wrkCity, setWrkCity] = useState('Noida');
   const [wrkLocality, setWrkLocality] = useState('');
   const [wrkAadhaar, setWrkAadhaar] = useState('');
+  const [wrkAadhaarFrontPhoto, setWrkAadhaarFrontPhoto] = useState('');
+  const [wrkAadhaarBackPhoto, setWrkAadhaarBackPhoto] = useState('');
+  const [isCompressingAadhaar, setIsCompressingAadhaar] = useState(false);
+
+  const handleOnboardingAadhaarUpload = async (
+    side: 'front' | 'back',
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsCompressingAadhaar(true);
+    setErrorMsg(null);
+    try {
+      const compressed = await compressDocumentImageFile(file);
+      if (side === 'front') setWrkAadhaarFrontPhoto(compressed);
+      else setWrkAadhaarBackPhoto(compressed);
+      soundManager.playSuccess();
+    } catch {
+      soundManager.playWarning();
+      setErrorMsg(
+        language === 'hi'
+          ? 'आधार फोटो पढ़ने में समस्या आई, कृपया दूसरी साफ फोटो चुनें'
+          : 'Could not read Aadhaar photo, please select a clear image'
+      );
+    } finally {
+      setIsCompressingAadhaar(false);
+      if (e.target) e.target.value = '';
+    }
+  };
 
   const handleCustomerSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -142,6 +176,26 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
       return;
     }
 
+    const cleanAadhaar = wrkAadhaar.replace(/\D/g, '');
+    if (cleanAadhaar.length !== 12) {
+      setErrorMsg(
+        language === 'hi'
+          ? 'कृपया पूरे 12 अंकों का सही आधार कार्ड नंबर दर्ज करें'
+          : 'Please enter a valid 12-digit Aadhaar card number'
+      );
+      soundManager.playWarning();
+      return;
+    }
+    if (!wrkAadhaarFrontPhoto) {
+      setErrorMsg(
+        language === 'hi'
+          ? 'नकली ID रोकने के लिए आधार कार्ड की साफ फोटो (आगे की साइड) अपलोड करना अनिवार्य है'
+          : 'Uploading a clear Aadhaar Card Front Photo is mandatory to prevent fake IDs'
+      );
+      soundManager.playWarning();
+      return;
+    }
+
     setErrorMsg(null);
     soundManager.playPaymentSuccess();
     try {
@@ -150,8 +204,7 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
 
     const selectedCat = CATEGORIES.find((c) => c.id === wrkCategory);
     const formattedPhone = `+91 ${cleanPhone.slice(0, 5)} ${cleanPhone.slice(5)}`;
-    const cleanAadhaar = wrkAadhaar.replace(/\D/g, '');
-    const maskedAadhaar = cleanAadhaar.length >= 4 ? `XXXX-XXXX-${cleanAadhaar.slice(-4)}` : 'XXXX-XXXX-0000';
+    const maskedAadhaar = `XXXX-XXXX-${cleanAadhaar.slice(-4)}`;
     const randomCode = Math.floor(10000 + Math.random() * 90000);
 
     onCreateWorker({
@@ -170,13 +223,15 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
       distanceKm: 0.8,
       hourlyRate: Math.round(parsedRate / 6),
       dailyRate: parsedRate,
-      isAadhaarVerified: cleanAadhaar.length >= 4,
+      isAadhaarVerified: true,
       isPanVerified: false,
       isOnline: true,
-      walletBalance: 100,
+      walletBalance: 0,
       completedJobsCount: 0,
       workerIdCode: `SI-WRK-${randomCode}`,
       aadhaarNumber: maskedAadhaar,
+      aadhaarFrontPhoto: wrkAadhaarFrontPhoto,
+      aadhaarBackPhoto: wrkAadhaarBackPhoto || undefined,
       registeredDate: 'आज (Live)',
       isPhoneVerified: true,
       loginMethod: 'otp',
@@ -652,18 +707,112 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
                 </div>
               </div>
 
-              <div>
-                <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                  {language === 'hi' ? 'आधार अंतिम 4 अंक (KYC हेतु - वैकल्पिक)' : 'Aadhaar Last 4 Digits (Optional)'}
-                </label>
+              <div className="space-y-2.5 p-3 rounded-2xl bg-slate-950/90 border border-emerald-500/30">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-emerald-300 flex items-center gap-1.5">
+                    <CreditCard className="w-3.5 h-3.5" />
+                    <span>{language === 'hi' ? 'आधार कार्ड नंबर व फोटो (अनिवार्य) *' : 'Aadhaar Number & Photo (Required) *'}</span>
+                  </label>
+                  <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 font-bold border border-emerald-500/30">
+                    Fake ID Stop
+                  </span>
+                </div>
+
                 <input
                   type="tel"
                   maxLength={12}
                   value={wrkAadhaar}
                   onChange={(e) => setWrkAadhaar(e.target.value.replace(/\D/g, '').slice(0, 12))}
-                  placeholder="XXXX-XXXX-1234"
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none"
+                  placeholder={language === 'hi' ? '12 अंकों का आधार नंबर डालें' : 'Enter 12-digit Aadhaar number'}
+                  className="w-full bg-slate-900 border border-slate-700 focus:border-emerald-500 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none"
+                  required
                 />
+
+                <div className="grid grid-cols-2 gap-2">
+                  {/* Front Photo */}
+                  <div className="space-y-1">
+                    {wrkAadhaarFrontPhoto ? (
+                      <div className="relative rounded-xl overflow-hidden border border-emerald-500/50 bg-slate-900 h-24">
+                        <img
+                          src={wrkAadhaarFrontPhoto}
+                          alt="Aadhaar Front"
+                          className="w-full h-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setWrkAadhaarFrontPhoto('')}
+                          className="absolute top-1 right-1 p-1 rounded-lg bg-rose-600/90 text-white shadow"
+                          title="Remove"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                        <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-emerald-600/90 text-[9px] font-bold text-white">
+                          ✓ Front
+                        </span>
+                      </div>
+                    ) : (
+                      <label className="flex flex-col items-center justify-center gap-1 h-24 rounded-xl border-2 border-dashed border-emerald-500/40 bg-slate-900/70 hover:bg-slate-900 cursor-pointer text-center p-2 transition-colors">
+                        <Camera className="w-5 h-5 text-emerald-400" />
+                        <span className="text-[10px] font-bold text-emerald-300 leading-tight">
+                          {isCompressingAadhaar
+                            ? (language === 'hi' ? 'लोड हो रहा...' : 'Loading...')
+                            : (language === 'hi' ? 'आधार आगे फोटो *' : 'Aadhaar Front *')}
+                        </span>
+                        <span className="text-[9px] text-slate-400">
+                          {language === 'hi' ? 'कैमरा / गैलरी' : 'Camera / Gallery'}
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          onChange={(e) => handleOnboardingAadhaarUpload('front', e)}
+                          className="hidden"
+                        />
+                      </label>
+                    )}
+                  </div>
+
+                  {/* Back Photo */}
+                  <div className="space-y-1">
+                    {wrkAadhaarBackPhoto ? (
+                      <div className="relative rounded-xl overflow-hidden border border-emerald-500/40 bg-slate-900 h-24">
+                        <img
+                          src={wrkAadhaarBackPhoto}
+                          alt="Aadhaar Back"
+                          className="w-full h-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setWrkAadhaarBackPhoto('')}
+                          className="absolute top-1 right-1 p-1 rounded-lg bg-rose-600/90 text-white shadow"
+                          title="Remove"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                        <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-emerald-600/90 text-[9px] font-bold text-white">
+                          ✓ Back
+                        </span>
+                      </div>
+                    ) : (
+                      <label className="flex flex-col items-center justify-center gap-1 h-24 rounded-xl border border-dashed border-slate-700 bg-slate-900/50 hover:bg-slate-900 cursor-pointer text-center p-2 transition-colors">
+                        <Upload className="w-5 h-5 text-slate-400" />
+                        <span className="text-[10px] font-bold text-slate-300 leading-tight">
+                          {language === 'hi' ? 'आधार पीछे फोटो' : 'Aadhaar Back'}
+                        </span>
+                        <span className="text-[9px] text-slate-500">
+                          {language === 'hi' ? '(वैकल्पिक / Optional)' : '(Optional)'}
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          onChange={(e) => handleOnboardingAadhaarUpload('back', e)}
+                          className="hidden"
+                        />
+                      </label>
+                    )}
+                  </div>
+                </div>
               </div>
 
               <button

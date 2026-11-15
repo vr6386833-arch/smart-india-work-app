@@ -833,7 +833,7 @@ export const DEFAULT_STANDBY_WORKER: WorkerProfile = {
   isAadhaarVerified: false,
   isPanVerified: false,
   isOnline: true,
-  walletBalance: 100,
+  walletBalance: 0,
   completedJobsCount: 0,
   workerIdCode: 'SI-NEW-ID',
   aadhaarNumber: 'XXXX-XXXX-0000',

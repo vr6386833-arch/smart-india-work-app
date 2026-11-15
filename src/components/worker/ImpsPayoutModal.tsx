@@ -36,7 +36,7 @@ export const ImpsPayoutModal: React.FC<ImpsPayoutModalProps> = ({
   const [bankDetails, setBankDetails] = useState<BankAccountDetails>(
     ImpsPayoutService.getSavedBankDetails(worker.name)
   );
-  const [amount, setAmount] = useState<number>(Math.min(worker.walletBalance, 500) || 100);
+  const [amount, setAmount] = useState<number>(Math.min(worker.walletBalance, 500) || 0);
   const [transferMode, setTransferMode] = useState<'IMPS' | 'UPI_INSTANT'>('IMPS');
   const [isProcessing, setIsProcessing] = useState(false);
   const [completedRecord, setCompletedRecord] = useState<ImpsTransferRecord | null>(null);

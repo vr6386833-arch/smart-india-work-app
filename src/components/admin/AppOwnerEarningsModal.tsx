@@ -71,7 +71,7 @@ export const AppOwnerEarningsModal: React.FC<AppOwnerEarningsModalProps> = ({
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Bank Withdrawal State (Transfer Company QR Money to Owner Personal Account)
-  const [withdrawAmount, setWithdrawAmount] = useState<string>('500');
+  const [withdrawAmount, setWithdrawAmount] = useState<string>('0');
   const [withdrawNote, setWithdrawNote] = useState<string>('Company QR Platform Earnings Withdrawal');
   const [isTransferring, setIsTransferring] = useState(false);
   const [lastPayoutReceipt, setLastPayoutReceipt] = useState<OwnerPayoutRecord | null>(null);
@@ -108,6 +108,10 @@ export const AppOwnerEarningsModal: React.FC<AppOwnerEarningsModalProps> = ({
   const totalJobsCompleted = commissionRecords.length;
   const fixedPerJobFee = appOwnerConfig.perJobFeeRupees || 10;
   const payoutsList = appOwnerConfig.payoutHistory || formData.payoutHistory || [];
+
+  useEffect(() => {
+    setWithdrawAmount(availableToWithdraw > 0 ? String(availableToWithdraw) : '0');
+  }, [availableToWithdraw]);
 
   // Count workers with unpaid fee locks
   const lockedWorkers = workers.filter(w => w.isBlockedDueToUnpaidFee || (w.pendingCommissionDues && w.pendingCommissionDues > 0));

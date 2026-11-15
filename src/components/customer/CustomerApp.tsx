@@ -87,6 +87,7 @@ interface CustomerAppProps {
   ownerPin?: string;
   onUpdateOwnerPin?: (newPin: string) => void;
   onOpenOnboarding?: () => void;
+  isOwnerSession?: boolean;
 }
 
 export const CustomerApp: React.FC<CustomerAppProps> = ({
@@ -124,6 +125,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
   ownerPin,
   onUpdateOwnerPin,
   onOpenOnboarding,
+  isOwnerSession = false,
 }) => {
   // Purge any legacy demo booking so customer view starts completely pristine
   const isMockBooking = activeBooking?.id === 'BK_9081' || 
@@ -239,126 +241,166 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
 
   return (
     <div className="flex-1 flex flex-col h-full min-h-0 bg-slate-950 text-slate-100 overflow-hidden select-none">
-      {/* Top Customer App Bar */}
-      <div 
-        className="bg-slate-900 border-b border-slate-800 px-3 sm:px-4 pb-2.5 flex items-center justify-between gap-2 z-20 shrink-0"
-        style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), 2.25rem)' }}
-      >
-        <div className="flex items-center gap-2 min-w-0">
-          {/* Brand Logo & Customer Account / New ID trigger */}
-          <div 
-            onClick={() => {
-              soundManager.playTap();
-              if (isGuestCustomer) {
-                setIsAddCustomerOpen(true);
-              } else {
-                setIsAccountModalOpen(true);
-              }
-            }}
-            className="flex items-center gap-2 cursor-pointer hover:bg-slate-800/80 p-1 pr-2 rounded-xl transition-all border border-transparent hover:border-slate-700/80 group min-w-0"
-            title={isGuestCustomer ? (language === 'hi' ? 'नई ग्राहक ID बनाएं' : 'Create New Customer ID') : (language === 'hi' ? 'मेरा खाता और प्रोफ़ाइल देखें' : 'My Account & Profile')}
-          >
-            <div className="relative shrink-0">
-              <img 
-                src={customer.avatar} 
-                alt={customer.name} 
-                className="w-9 h-9 rounded-xl object-cover ring-2 ring-blue-500/40 group-hover:ring-blue-400 transition-all"
-              />
-              <span className={`w-2.5 h-2.5 rounded-full absolute -bottom-0.5 -right-0.5 border border-slate-950 ${isGuestCustomer ? 'bg-amber-400' : 'bg-blue-500'}`} />
-            </div>
-            <div className="text-left min-w-0">
-              <div className="flex items-center gap-1 text-[11px] text-slate-400">
-                <span className="font-bold text-white group-hover:text-blue-300 transition-colors truncate max-w-[125px]">
-                  {isGuestCustomer ? 'New Customer ID' : customer.name.split(' ')[0]}
-                </span>
-                <ChevronDown className="w-3 h-3 text-slate-400 group-hover:text-blue-400 shrink-0" />
-              </div>
-              <div className="flex items-center gap-0.5 text-[10px] text-slate-300">
-                <MapPin className="w-2.5 h-2.5 text-orange-400 shrink-0" />
-                <span className="truncate max-w-[115px] text-slate-400 font-medium">
-                  {isGuestCustomer
-                    ? (language === 'hi' ? 'टैप कर ID बनाएं' : 'Tap to Create ID')
-                    : (customer.locality || 'India').split(',')[0]}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Action Buttons: Switch to Worker & Post Requirement */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          {onSwitchToWorker && (
-            <button
-              onClick={() => {
-                soundManager.playTap();
-                onSwitchToWorker();
-              }}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-950/80 border border-emerald-500/40 hover:border-emerald-400 text-xs font-bold text-emerald-300 shadow-sm transition-all"
-              title="कारीगर / पार्टनर ऐप मोड में बदलें"
-            >
-              <HardHat className="w-3.5 h-3.5 text-emerald-400" />
-              <span>{language === 'hi' ? 'कारीगर' : 'Worker'}</span>
-            </button>
-          )}
-
-          <button
-            onClick={() => {
-              soundManager.playTap();
-              setIsPostJobOpen(true);
-            }}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 text-slate-950 font-bold text-xs shadow-md shadow-orange-500/20 hover:scale-105 active:scale-95 transition-all"
-          >
-            <PlusCircle className="w-3.5 h-3.5" />
-            <span>Post Job</span>
-          </button>
-        </div>
-      </div>
-
       {/* Main Tab Views */}
-      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain flex flex-col">
+      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
         {activeTab === 'home' && (
-          <div className="p-4 space-y-4">
-            {/* Search Input */}
-            <div className="space-y-2">
-              <div className="relative">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={language === 'hi' ? 'कैटरिंग, हलवाई, फॉल्स सीलिंग, टाइल्स, एसी, मिस्त्री खोजें...' : 'Search Catering & Halwai, False Ceiling, Tiles, AC...'}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-2xl pl-9 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 shadow-inner"
-                />
-              </div>
-
-              {/* Quick Search Tag Chips */}
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar text-[11px]">
-                <span className="text-slate-500 font-semibold text-[10px] shrink-0">
-                  {language === 'hi' ? 'लोकप्रिय:' : 'Popular:'}
-                </span>
-                {[
-                  { label: language === 'hi' ? 'कैटरिंग व हलवाई' : 'Catering & Halwai', catId: 'catering' },
-                  { label: language === 'hi' ? 'फॉल्स सीलिंग' : 'False Ceiling', catId: 'false_ceiling' },
-                  { label: language === 'hi' ? 'टाइल्स व पत्थर' : 'Tiles & Pathar', catId: 'tiles_granite_pathar' },
-                  { label: language === 'hi' ? 'छत ढलाई मशीन' : 'Roof Slab Dhalai', catId: 'slab_dhalai_machine' },
-                  { label: language === 'hi' ? 'एसी रिपेयर' : 'AC Repair', catId: 'ac_service' }
-                ].map((chip, idx) => (
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            {/* Fixed Non-Scrolling Search Bar & Category Filter Bar */}
+            <div
+              className="shrink-0 bg-slate-950 border-b border-slate-800/80 px-3.5 pb-2.5 space-y-2.5 z-20"
+              style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), 2.25rem)' }}
+            >
+              {/* Owner-Only Quick Return Strip (hidden for regular customers) */}
+              {isOwnerSession && onSwitchToOwner && (
+                <div className="flex items-center justify-between gap-2 pb-1">
                   <button
-                    key={idx}
                     type="button"
                     onClick={() => {
                       soundManager.playTap();
-                      setSelectedCategoryFilter(chip.catId);
-                      setActiveTab('search');
+                      onSwitchToOwner();
                     }}
-                    className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-amber-500/50 hover:bg-slate-800/80 whitespace-nowrap transition-all text-[10px] font-medium"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-[11px] font-bold text-amber-300 transition-all"
                   >
-                    {chip.label}
+                    <Crown className="w-3.5 h-3.5" />
+                    <span>{language === 'hi' ? '← ओनर ऐप' : '← Owner App'}</span>
                   </button>
-                ))}
+                  {onSwitchToWorker && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        soundManager.playTap();
+                        onSwitchToWorker();
+                      }}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-[11px] font-bold text-emerald-300 transition-all"
+                    >
+                      <HardHat className="w-3.5 h-3.5" />
+                      <span>{language === 'hi' ? 'वर्कर ऐप' : 'Worker App'}</span>
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Search Input */}
+              <div className="space-y-2">
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder={language === 'hi' ? 'कैटरिंग, हलवाई, फॉल्स सीलिंग, टाइल्स, एसी, मिस्त्री खोजें...' : 'Search Catering & Halwai, False Ceiling, Tiles, AC...'}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-2xl pl-9 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 shadow-inner"
+                  />
+                </div>
+
+                {/* Quick Search Tag Chips */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar text-[11px]">
+                  <span className="text-slate-500 font-semibold text-[10px] shrink-0">
+                    {language === 'hi' ? 'लोकप्रिय:' : 'Popular:'}
+                  </span>
+                  {[
+                    { label: language === 'hi' ? 'कैटरिंग व हलवाई' : 'Catering & Halwai', catId: 'catering' },
+                    { label: language === 'hi' ? 'फॉल्स सीलिंग' : 'False Ceiling', catId: 'false_ceiling' },
+                    { label: language === 'hi' ? 'टाइल्स व पत्थर' : 'Tiles & Pathar', catId: 'tiles_granite_pathar' },
+                    { label: language === 'hi' ? 'छत ढलाई मशीन' : 'Roof Slab Dhalai', catId: 'slab_dhalai_machine' },
+                    { label: language === 'hi' ? 'एसी रिपेयर' : 'AC Repair', catId: 'ac_service' }
+                  ].map((chip, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        soundManager.playTap();
+                        setSelectedCategoryFilter(chip.catId);
+                        setActiveTab('search');
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-amber-500/50 hover:bg-slate-800/80 whitespace-nowrap transition-all text-[10px] font-medium"
+                    >
+                      {chip.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Category Filter Pills (Fixed - Never Scrolls Up/Down) */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
+                <button
+                  onClick={() => {
+                    soundManager.playTap();
+                    setSelectedGroup('all');
+                  }}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                    selectedGroup === 'all'
+                      ? 'bg-blue-600 text-white shadow-md'
+                      : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
+                  }`}
+                >
+                  All Services
+                </button>
+
+                <button
+                  onClick={() => {
+                    soundManager.playTap();
+                    setSelectedGroup('construction');
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                    selectedGroup === 'construction'
+                      ? 'bg-amber-600 text-white shadow-md'
+                      : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
+                  }`}
+                >
+                  <HardHat className="w-3.5 h-3.5" />
+                  <span>Construction & Labor</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    soundManager.playTap();
+                    setSelectedGroup('appliance');
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                    selectedGroup === 'appliance'
+                      ? 'bg-cyan-600 text-white shadow-md'
+                      : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
+                  }`}
+                >
+                  <Tv className="w-3.5 h-3.5" />
+                  <span>Appliance Repair</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    soundManager.playTap();
+                    setSelectedGroup('events');
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                    selectedGroup === 'events'
+                      ? 'bg-purple-600 text-white shadow-md'
+                      : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
+                  }`}
+                >
+                  <Utensils className="w-3.5 h-3.5" />
+                  <span>{language === 'hi' ? 'कैटरिंग व इवेंट्स' : 'Catering & Events'}</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    soundManager.playTap();
+                    setSelectedGroup('home_services');
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                    selectedGroup === 'home_services'
+                      ? 'bg-emerald-600 text-white shadow-md'
+                      : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>{language === 'hi' ? 'घरेलू कार्य व सफाई' : 'Home & Household (घरेलू कार्य)'}</span>
+                </button>
               </div>
             </div>
 
+            {/* Scrollable Service Cards Feed */}
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3.5 space-y-4">
             {/* Active Booking Live Mini-Banner (if in progress or pending acceptance) */}
             {safeActiveBooking && (
               <div 
@@ -461,83 +503,6 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                 </div>
               </div>
             )}
-
-            {/* Category Filter Pills (3 Main Categories) */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
-              <button
-                onClick={() => {
-                  soundManager.playTap();
-                  setSelectedGroup('all');
-                }}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-                  selectedGroup === 'all'
-                    ? 'bg-blue-600 text-white shadow-md'
-                    : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
-                }`}
-              >
-                All Services
-              </button>
-
-              <button
-                onClick={() => {
-                  soundManager.playTap();
-                  setSelectedGroup('construction');
-                }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-                  selectedGroup === 'construction'
-                    ? 'bg-amber-600 text-white shadow-md'
-                    : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
-                }`}
-              >
-                <HardHat className="w-3.5 h-3.5" />
-                <span>Construction & Labor</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  soundManager.playTap();
-                  setSelectedGroup('appliance');
-                }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-                  selectedGroup === 'appliance'
-                    ? 'bg-cyan-600 text-white shadow-md'
-                    : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
-                }`}
-              >
-                <Tv className="w-3.5 h-3.5" />
-                <span>Appliance Repair</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  soundManager.playTap();
-                  setSelectedGroup('events');
-                }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-                  selectedGroup === 'events'
-                    ? 'bg-purple-600 text-white shadow-md'
-                    : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
-                }`}
-              >
-                <Utensils className="w-3.5 h-3.5" />
-                <span>{language === 'hi' ? 'कैटरिंग व इवेंट्स' : 'Catering & Events'}</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  soundManager.playTap();
-                  setSelectedGroup('home_services');
-                }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-                  selectedGroup === 'home_services'
-                    ? 'bg-emerald-600 text-white shadow-md'
-                    : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
-                }`}
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>{language === 'hi' ? 'घरेलू कार्य व सफाई' : 'Home & Household (घरेलू कार्य)'}</span>
-              </button>
-            </div>
 
             {/* Service Category Grid */}
             <div>
@@ -661,65 +626,73 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                 <span>Post Requirement Now</span>
               </button>
             </div>
+            </div>
           </div>
         )}
 
         {/* Tab 2: Search / Worker Directory */}
         {activeTab === 'search' && (
-          <div className="p-4 space-y-3.5">
-            {/* Filter Bar */}
-            <div className="flex items-center gap-2">
-              <select
-                value={selectedCategoryFilter}
-                onChange={(e) => setSelectedCategoryFilter(e.target.value)}
-                className="flex-1 bg-slate-900 border border-slate-800 rounded-xl p-2 text-xs text-white focus:outline-none"
-              >
-                <option value="all">All Categories ({CATEGORIES.length})</option>
-                {CATEGORIES.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            {/* Fixed Filter Header */}
+            <div
+              className="shrink-0 bg-slate-950 border-b border-slate-800/80 px-4 pb-3 space-y-2.5 z-20"
+              style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), 2.25rem)' }}
+            >
+              <div className="flex items-center gap-2">
+                <select
+                  value={selectedCategoryFilter}
+                  onChange={(e) => setSelectedCategoryFilter(e.target.value)}
+                  className="flex-1 bg-slate-900 border border-slate-800 rounded-xl p-2 text-xs text-white focus:outline-none"
+                >
+                  <option value="all">All Categories ({CATEGORIES.length})</option>
+                  {CATEGORIES.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
 
-              <button
-                onClick={() => setVerifiedOnly(!verifiedOnly)}
-                className={`flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-semibold border transition-all ${
-                  verifiedOnly
-                    ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
-                    : 'bg-slate-900 border-slate-800 text-slate-400'
-                }`}
-              >
-                <ShieldCheck className="w-3.5 h-3.5" />
-                <span>Aadhaar KYC</span>
-              </button>
-            </div>
+                <button
+                  onClick={() => setVerifiedOnly(!verifiedOnly)}
+                  className={`flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-semibold border transition-all ${
+                    verifiedOnly
+                      ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                      : 'bg-slate-900 border-slate-800 text-slate-400'
+                  }`}
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>Aadhaar KYC</span>
+                </button>
+              </div>
 
-            {/* Targeted Skill Dispatch Notice */}
-            <div className="p-3 rounded-2xl bg-gradient-to-r from-blue-950/70 via-slate-900 to-indigo-950/70 border border-blue-500/30 flex items-center justify-between text-[11px] text-blue-200 shadow-sm">
-              <div className="flex items-center gap-2.5">
-                <div className="p-1.5 rounded-xl bg-blue-500/20 text-blue-300 shrink-0">
-                  <Sparkles className="w-4 h-4 text-blue-400" />
-                </div>
-                <div>
-                  <span className="font-bold text-white block">
-                    {language === 'hi' ? '🎯 सुरक्षित कौशल-आधारित सूचना प्रणाली' : '🎯 Trade-Targeted Instant Dispatch'}
-                  </span>
-                  <span className="text-[10px] text-slate-300">
-                    {language === 'hi' 
-                      ? 'आप जो काम बुक करेंगे, घंटी व नोटिफिकेशन सिर्फ उसी काम के कारीगर को जाएगा।' 
-                      : 'Bookings ring and alert exclusively the specialists matching this selected work.'}
-                  </span>
-                </div>
+              {/* Workers Count */}
+              <div className="flex items-center justify-between text-[11px] text-slate-400 px-0.5">
+                <span>Found <strong>{filteredWorkers.length}</strong> verified partners nearby</span>
+                <span className="text-emerald-400 font-semibold">● Active GPS dispatch</span>
               </div>
             </div>
 
-            {/* Workers Count */}
-            <div className="flex items-center justify-between text-[11px] text-slate-400 px-1">
-              <span>Found <strong>{filteredWorkers.length}</strong> verified partners nearby</span>
-              <span className="text-emerald-400 font-semibold">● Active GPS dispatch</span>
-            </div>
+            {/* Scrollable Worker List */}
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 space-y-3.5">
+              {/* Targeted Skill Dispatch Notice */}
+              <div className="p-3 rounded-2xl bg-gradient-to-r from-blue-950/70 via-slate-900 to-indigo-950/70 border border-blue-500/30 flex items-center justify-between text-[11px] text-blue-200 shadow-sm">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-1.5 rounded-xl bg-blue-500/20 text-blue-300 shrink-0">
+                    <Sparkles className="w-4 h-4 text-blue-400" />
+                  </div>
+                  <div>
+                    <span className="font-bold text-white block">
+                      {language === 'hi' ? '🎯 सुरक्षित कौशल-आधारित सूचना प्रणाली' : '🎯 Trade-Targeted Instant Dispatch'}
+                    </span>
+                    <span className="text-[10px] text-slate-300">
+                      {language === 'hi' 
+                        ? 'आप जो काम बुक करेंगे, घंटी व नोटिफिकेशन सिर्फ उसी काम के कारीगर को जाएगा।' 
+                        : 'Bookings ring and alert exclusively the specialists matching this selected work.'}
+                    </span>
+                  </div>
+                </div>
+              </div>
 
-            {/* Worker List */}
-            <div className="space-y-3">
+              {/* Worker List */}
+              <div className="space-y-3">
               {filteredWorkers.map((worker) => (
                 <div
                   key={worker.id}
@@ -926,57 +899,66 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                 </div>
               )}
             </div>
+            </div>
           </div>
         )}
 
         {/* Tab 3: Bookings / Active Booking Details */}
         {activeTab === 'bookings' && (
-          safeActiveBooking ? (
-            <LiveTrackingView
-              booking={safeActiveBooking}
-              language={language}
-              onOpenChat={() => {
-                soundManager.playTap();
-                setIsChatOpen(true);
-              }}
-              onOpenCall={() => {
-                soundManager.playTap();
-                setIsCallOpen(true);
-              }}
-              onRateWorker={() => {
-                soundManager.playTap();
-                setIsRatingOpen(true);
-              }}
-              onProgressChange={onUpdateBookingProgress}
-              onWorkerArrived={onWorkerArrived}
-              onTriggerSos={onTriggerSos}
-              onSwitchToWorker={onSwitchToWorker}
-              onVerifyOtpDirect={onVerifyOtp}
-              onCompleteJobDirect={onCompleteJob}
-              onCancelBooking={onCancelBooking}
-            />
-          ) : (
-            <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-slate-400">
-              <ClipboardList className="w-12 h-12 text-slate-700 mb-3" />
-              <h4 className="text-sm font-bold text-slate-200">{language === 'hi' ? 'कोई सक्रिय बुकिंग नहीं' : 'No Active Bookings'}</h4>
-              <p className="text-xs text-slate-500 mt-1 max-w-xs">
-                {language === 'hi' 
-                  ? 'सेवा बुक करने के लिए कारीगर खोजें या नया काम पोस्ट करें।' 
-                  : 'Search verified workers or post a job to book services.'}
-              </p>
-              <button
-                onClick={() => setActiveTab('search')}
-                className="mt-4 px-4 py-2 rounded-xl bg-blue-600 text-white font-bold text-xs"
-              >
-                {language === 'hi' ? 'कारीगर खोजें' : 'Find Workers Now'}
-              </button>
-            </div>
-          )
+          <div
+            className="flex-1 min-h-0 overflow-y-auto overscroll-contain flex flex-col"
+            style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), 2.25rem)' }}
+          >
+            {safeActiveBooking ? (
+              <LiveTrackingView
+                booking={safeActiveBooking}
+                language={language}
+                onOpenChat={() => {
+                  soundManager.playTap();
+                  setIsChatOpen(true);
+                }}
+                onOpenCall={() => {
+                  soundManager.playTap();
+                  setIsCallOpen(true);
+                }}
+                onRateWorker={() => {
+                  soundManager.playTap();
+                  setIsRatingOpen(true);
+                }}
+                onProgressChange={onUpdateBookingProgress}
+                onWorkerArrived={onWorkerArrived}
+                onTriggerSos={onTriggerSos}
+                onSwitchToWorker={isOwnerSession ? onSwitchToWorker : undefined}
+                onVerifyOtpDirect={onVerifyOtp}
+                onCompleteJobDirect={onCompleteJob}
+                onCancelBooking={onCancelBooking}
+              />
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-slate-400">
+                <ClipboardList className="w-12 h-12 text-slate-700 mb-3" />
+                <h4 className="text-sm font-bold text-slate-200">{language === 'hi' ? 'कोई सक्रिय बुकिंग नहीं' : 'No Active Bookings'}</h4>
+                <p className="text-xs text-slate-500 mt-1 max-w-xs">
+                  {language === 'hi' 
+                    ? 'सेवा बुक करने के लिए कारीगर खोजें या नया काम पोस्ट करें।' 
+                    : 'Search verified workers or post a job to book services.'}
+                </p>
+                <button
+                  onClick={() => setActiveTab('search')}
+                  className="mt-4 px-4 py-2 rounded-xl bg-blue-600 text-white font-bold text-xs"
+                >
+                  {language === 'hi' ? 'कारीगर खोजें' : 'Find Workers Now'}
+                </button>
+              </div>
+            )}
+          </div>
         )}
 
         {/* Tab 4: Profile & Helpdesk */}
         {activeTab === 'profile' && (
-          <div className="p-4 space-y-4 text-xs">
+          <div
+            className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pb-4 space-y-4 text-xs"
+            style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), 2.25rem)' }}
+          >
             {/* User Profile Card */}
             <div className="bg-slate-900 rounded-2xl p-4 border border-slate-800 space-y-3">
               <div className="flex items-center gap-3.5">
@@ -1008,7 +990,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                 </div>
               </div>
 
-              {isGuestCustomer && (
+              {isGuestCustomer ? (
                 <button
                   type="button"
                   onClick={() => {
@@ -1020,10 +1002,23 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                   <UserPlus className="w-4 h-4" />
                   <span>{language === 'hi' ? 'अपनी New Customer ID अभी बनाएं' : 'Create Your New Customer ID Now'}</span>
                 </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundManager.playTap();
+                    setIsAccountModalOpen(true);
+                  }}
+                  className="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center justify-center gap-1.5 border border-slate-700"
+                >
+                  <User className="w-3.5 h-3.5 text-blue-400" />
+                  <span>{language === 'hi' ? 'अपनी Customer ID एडिट / मैनेज करें' : 'Edit & Manage Customer ID'}</span>
+                </button>
               )}
             </div>
 
-            {/* Switch & Add Customer Section */}
+            {/* Switch & Add Customer Section (Visible ONLY to App Owner) */}
+            {isOwnerSession && (
             <div className="bg-slate-900 rounded-2xl p-3.5 border border-slate-800 space-y-3">
               <div className="flex items-center justify-between">
                 <div>
@@ -1107,6 +1102,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                 })}
               </div>
             </div>
+            )}
 
             {/* Saved Addresses */}
             <div className="bg-slate-900 rounded-2xl p-3.5 border border-slate-800 space-y-2.5">
@@ -1276,8 +1272,8 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                 </button>
               )}
 
-              {/* Reopen Onboarding Role & ID Selection */}
-              {onOpenOnboarding && (
+              {/* Reopen Onboarding Role & ID Selection (Only for Owner or Guest who has not created an ID yet) */}
+              {(isOwnerSession || isGuestCustomer) && onOpenOnboarding && (
                 <button
                   type="button"
                   onClick={() => {

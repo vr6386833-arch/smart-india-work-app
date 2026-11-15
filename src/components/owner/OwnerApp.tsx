@@ -83,6 +83,8 @@ interface OwnerAppProps {
   onUnlockWorker?: (workerId: string) => void;
   onNavigateToView?: (view: 'dual' | 'customer' | 'worker') => void;
   payoutHistory?: OwnerPayoutRecord[];
+  onResetAllData?: () => void;
+  onExitOwnerMode?: () => void;
 }
 
 export const OwnerApp: React.FC<OwnerAppProps> = ({
@@ -96,7 +98,9 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
   onPayoutToBank,
   onUnlockWorker,
   onNavigateToView,
-  payoutHistory = []
+  payoutHistory = [],
+  onResetAllData,
+  onExitOwnerMode,
 }) => {
   // View mode toggle: 'dashboard' (wide full-screen) vs 'phone' (mobile app simulation)
   const [viewLayout, setViewLayout] = useState<'dashboard' | 'phone'>('dashboard');
@@ -114,7 +118,10 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
   const [userSearchQuery, setUserSearchQuery] = useState('');
 
   // Bank Withdrawal form states
-  const [withdrawAmount, setWithdrawAmount] = useState<string>('500');
+  const [withdrawAmount, setWithdrawAmount] = useState<string>('0');
+  const [confirmCleanReset, setConfirmCleanReset] = useState(false);
+  const [cleanResetDoneMsg, setCleanResetDoneMsg] = useState<string | null>(null);
+  const [inspectAadhaarWorker, setInspectAadhaarWorker] = useState<WorkerProfile | null>(null);
   const [withdrawNote, setWithdrawNote] = useState<string>('Worker Platform Fees Withdrawal');
   const [isProcessingTransfer, setIsProcessingTransfer] = useState(false);
   const [transferStep, setTransferStep] = useState<number>(0);
@@ -166,6 +173,10 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
   const totalWithdrawn = appOwnerConfig.totalWithdrawnToBank || 0;
   const availableToWithdraw = Math.max(0, totalEarned - totalWithdrawn);
   const totalAppUsersCount = customers.length + workers.length;
+
+  useEffect(() => {
+    setWithdrawAmount(availableToWithdraw > 0 ? String(availableToWithdraw) : '0');
+  }, [availableToWithdraw]);
 
   // Active and locked workers
   const lockedWorkers = workers.filter((w) => Boolean(w.isBlockedDueToUnpaidFee));
@@ -654,7 +665,7 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
                   </div>
                 </div>
                 <span className="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-300 text-[10px] font-bold">
-                  {cust.totalBookingsCount || 1} {language === 'hi' ? 'बुकिंग्स' : 'bookings'}
+                  {cust.totalBookingsCount || 0} {language === 'hi' ? 'बुकिंग्स' : 'bookings'}
                 </span>
               </div>
             ))}
@@ -949,11 +960,11 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
                     <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t border-slate-800/80">
                       <div>
                         <span className="text-[10px] text-slate-500 block">{language === 'hi' ? 'कुल बुकिंग्स' : 'Bookings'}</span>
-                        <strong className="text-white font-mono">{cust.totalBookingsCount || 3} काम</strong>
+                        <strong className="text-white font-mono">{cust.totalBookingsCount || 0} काम</strong>
                       </div>
                       <div>
                         <span className="text-[10px] text-slate-500 block">{language === 'hi' ? 'कुल खर्च' : 'Money Spent'}</span>
-                        <strong className="text-emerald-400 font-mono">₹{(cust.totalSpent || 2400).toLocaleString('en-IN')}</strong>
+                        <strong className="text-emerald-400 font-mono">₹{(cust.totalSpent || 0).toLocaleString('en-IN')}</strong>
                       </div>
                     </div>
 
@@ -1060,7 +1071,7 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
                           {language === 'hi' ? 'ओनर को दी फीस (₹10/काम)' : 'Fees Paid to Owner'}
                         </span>
                         <strong className="text-emerald-400 font-mono">
-                          ₹{((worker.completedJobsCount || 4) * 10).toLocaleString('en-IN')}
+                          ₹{((worker.completedJobsCount || 0) * 10).toLocaleString('en-IN')}
                         </strong>
                       </div>
                       <div>
@@ -1073,9 +1084,31 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
                       </div>
                     </div>
 
+                    <div className="flex items-center justify-between text-[11px] bg-slate-950/60 px-2.5 py-2 rounded-xl border border-slate-800/80">
+                      <span className="text-slate-400 font-mono">
+                        🪪 {worker.aadhaarNumber || 'N/A'}
+                      </span>
+                      {worker.aadhaarFrontPhoto ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            soundManager.playTap();
+                            setInspectAadhaarWorker(worker);
+                          }}
+                          className="px-2 py-0.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 font-bold text-[10px]"
+                        >
+                          {language === 'hi' ? '✓ आधार फोटो देखें' : '✓ View Aadhaar Photo'}
+                        </button>
+                      ) : (
+                        <span className="text-[10px] text-amber-400 font-semibold">
+                          {language === 'hi' ? '⚠️ फोटो पेंडिंग' : '⚠️ No Photo'}
+                        </span>
+                      )}
+                    </div>
+
                     <div className="flex items-center justify-between text-xs pt-1">
                       <span className="text-[11px] text-slate-400">
-                        {worker.completedJobsCount || 4} {language === 'hi' ? 'सफल काम' : 'jobs completed'}
+                        {worker.completedJobsCount || 0} {language === 'hi' ? 'सफल काम' : 'jobs completed'}
                       </span>
                       {worker.isBlockedDueToUnpaidFee ? (
                         <button
@@ -1796,6 +1829,78 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
           </button>
         </form>
       </div>
+
+      {/* Fresh Live Launch Data Reset Card */}
+      <div className="bg-slate-900/90 border border-rose-500/30 rounded-2xl p-6 shadow-xl space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h4 className="text-sm font-bold text-white flex items-center gap-2">
+              <RefreshCw className="w-4 h-4 text-rose-400" />
+              <span>{language === 'hi' ? 'टेस्ट डेटा ज़ीरो करें (Fresh Launch Reset)' : 'Reset Pre-Launch Test Data to ₹0'}</span>
+            </h4>
+            <p className="text-xs text-slate-400 mt-1">
+              {language === 'hi'
+                ? 'आपका UPI ID, अपलोड QR कोड, बैंक खाता और ओनर PIN सुरक्षित रहेगा — केवल पुराने टेस्ट काम, पुराने वर्कर और पुरानी कमाई ज़ीरो (₹0) हो जाएगी।'
+                : 'Your UPI ID, custom QR photo, bank details, and PIN stay saved — only test workers, test customers, and test earnings reset to ₹0.'}
+            </p>
+          </div>
+        </div>
+
+        {cleanResetDoneMsg && (
+          <div className="p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold">
+            {cleanResetDoneMsg}
+          </div>
+        )}
+
+        {!confirmCleanReset ? (
+          <button
+            type="button"
+            onClick={() => {
+              soundManager.playTap();
+              setConfirmCleanReset(true);
+            }}
+            className="w-full py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-300 font-bold text-xs transition-all"
+          >
+            {language === 'hi' ? '🧹 सारा टेस्ट डेटा ज़ीरो (₹0) करें' : '🧹 Reset Test Data to ₹0'}
+          </button>
+        ) : (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                soundManager.playSuccessCoin();
+                setConfirmCleanReset(false);
+                if (onResetAllData) {
+                  onResetAllData();
+                } else {
+                  onUpdateConfig({
+                    ...appOwnerConfig,
+                    totalWithdrawnToBank: 0,
+                    payoutHistory: [],
+                    cleanResetAtMs: Date.now()
+                  });
+                }
+                setCleanResetDoneMsg(
+                  language === 'hi'
+                    ? '✓ सारा टेस्ट डेटा ज़ीरो (₹0) हो गया! अब ऐप 100% फ्रेश लाइव है।'
+                    : '✓ All test data reset to ₹0! App is clean for live launch.'
+                );
+                setTimeout(() => setCleanResetDoneMsg(null), 4000);
+              }}
+              className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs shadow-md"
+            >
+              {language === 'hi' ? '✓ हाँ, ज़ीरो (₹0) कर दें' : '✓ Yes, Reset to ₹0'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmCleanReset(false)}
+              className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs"
+            >
+              {language === 'hi' ? 'रद्द करें' : 'Cancel'}
+            </button>
+          </div>
+        )}
+      </div>
     </div>
     );
   };
@@ -1825,18 +1930,54 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
           </div>
         </div>
 
-        {/* Layout Switcher: Mobile Phone App vs Full Dashboard */}
-        <div className="flex items-center gap-2">
+        {/* Layout Switcher & Owner Full-App Access */}
+        <div className="flex flex-wrap items-center gap-2">
           {onNavigateToView && (
+            <>
+              <button
+                onClick={() => {
+                  soundManager.playTap();
+                  onNavigateToView('customer');
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/40 text-xs font-bold transition-all active:scale-95"
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>{language === 'hi' ? 'ग्राहक ऐप' : 'Customer App'}</span>
+              </button>
+              <button
+                onClick={() => {
+                  soundManager.playTap();
+                  onNavigateToView('worker');
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/40 text-xs font-bold transition-all active:scale-95"
+              >
+                <HardHat className="w-3.5 h-3.5" />
+                <span>{language === 'hi' ? 'वर्कर ऐप' : 'Worker App'}</span>
+              </button>
+              <button
+                onClick={() => {
+                  soundManager.playTap();
+                  onNavigateToView('dual');
+                }}
+                className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/40 text-purple-300 border border-purple-500/40 text-xs font-bold transition-all active:scale-95"
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>{language === 'hi' ? 'डुअल व्यू' : 'Dual View'}</span>
+              </button>
+            </>
+          )}
+
+          {onExitOwnerMode && (
             <button
               onClick={() => {
                 soundManager.playTap();
-                onNavigateToView('customer');
+                onExitOwnerMode();
               }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/40 text-xs font-bold transition-all active:scale-95"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-bold transition-all active:scale-95"
+              title={language === 'hi' ? 'ओनर मोड लॉक करें' : 'Lock Owner Session'}
             >
-              <Users className="w-3.5 h-3.5" />
-              <span>{language === 'hi' ? '← ग्राहक ऐप' : '← Customer App'}</span>
+              <Lock className="w-3.5 h-3.5" />
+              <span>{language === 'hi' ? 'लॉक करें' : 'Lock'}</span>
             </button>
           )}
 
@@ -2221,6 +2362,69 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Worker Aadhaar Photo Inspection Modal for App Owner */}
+      {inspectAadhaarWorker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-slate-900 border border-emerald-500/40 rounded-3xl p-5 max-w-md w-full space-y-4 shadow-2xl relative">
+            <button
+              type="button"
+              onClick={() => setInspectAadhaarWorker(null)}
+              className="absolute right-4 top-4 text-slate-400 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-white">{inspectAadhaarWorker.name}</h3>
+                <p className="text-[11px] text-slate-400 font-mono">
+                  🪪 {inspectAadhaarWorker.aadhaarNumber || 'XXXX-XXXX-0000'} • {inspectAadhaarWorker.phone}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {inspectAadhaarWorker.aadhaarFrontPhoto && (
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold uppercase text-emerald-400">
+                    {language === 'hi' ? 'आधार कार्ड (आगे की फोटो / Front)' : 'Aadhaar Front Side'}
+                  </span>
+                  <img
+                    src={inspectAadhaarWorker.aadhaarFrontPhoto}
+                    alt="Worker Aadhaar Front"
+                    className="w-full max-h-56 object-contain rounded-2xl border border-slate-700 bg-slate-950"
+                  />
+                </div>
+              )}
+
+              {inspectAadhaarWorker.aadhaarBackPhoto && (
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold uppercase text-slate-400">
+                    {language === 'hi' ? 'आधार कार्ड (पीछे की फोटो / Back)' : 'Aadhaar Back Side'}
+                  </span>
+                  <img
+                    src={inspectAadhaarWorker.aadhaarBackPhoto}
+                    alt="Worker Aadhaar Back"
+                    className="w-full max-h-56 object-contain rounded-2xl border border-slate-700 bg-slate-950"
+                  />
+                </div>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setInspectAadhaarWorker(null)}
+              className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs"
+            >
+              {language === 'hi' ? 'सत्यापित / बंद करें' : 'Close'}
+            </button>
           </div>
         </div>
       )}

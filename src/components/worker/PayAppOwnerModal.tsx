@@ -47,6 +47,7 @@ export const PayAppOwnerModal: React.FC<PayAppOwnerModalProps> = ({
   const [isCopiedVpa, setIsCopiedVpa] = useState(false);
   const [isCopiedBank, setIsCopiedBank] = useState(false);
   const [utrNumber, setUtrNumber] = useState('');
+  const [utrError, setUtrError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [receiptRecord, setReceiptRecord] = useState<CommissionRecord | null>(null);
@@ -80,12 +81,21 @@ export const PayAppOwnerModal: React.FC<PayAppOwnerModalProps> = ({
   };
 
   const handleConfirmUpiPayment = () => {
+    const cleanedUtr = utrNumber.trim();
+    if (cleanedUtr.length < 6) {
+      soundManager.playWarning();
+      setUtrError(
+        language === 'hi'
+          ? '⚠️ कृपया भुगतान के बाद कम से कम 6 अंकों का असली UTR / Ref नंबर दर्ज करें।'
+          : '⚠️ Please enter at least a 6-character real UTR / Ref No after paying.'
+      );
+      return;
+    }
+    setUtrError(null);
     soundManager.playTap();
     setIsSubmitting(true);
 
-    const generatedTxn = utrNumber.trim() 
-      ? `UTR/${utrNumber.trim()}` 
-      : `UPI/COMM/${Date.now().toString().slice(-6)}/${Math.floor(100000 + Math.random() * 900000)}`;
+    const generatedTxn = `UTR/${cleanedUtr}`;
 
     const newRecord: CommissionRecord = {
       id: `comm_${Date.now()}`,
@@ -487,17 +497,23 @@ export const PayAppOwnerModal: React.FC<PayAppOwnerModalProps> = ({
                   {/* UTR Input / Confirmation */}
                   <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
                     <label className="text-[10px] text-slate-400 font-bold block">
-                      {language === 'hi' ? 'भुगतान के बाद UTR / Ref No दर्ज करें (वैकल्पिक):' : 'Enter 12-digit UTR / Ref No (Optional):'}
+                      {language === 'hi' ? 'भुगतान के बाद UTR / Ref No दर्ज करें (अनिवार्य):' : 'Enter UTR / Ref No after payment (Required):'}
                     </label>
                     <div className="flex gap-2">
                       <input
                         type="text"
                         placeholder="e.g. 402918492019"
                         value={utrNumber}
-                        onChange={(e) => setUtrNumber(e.target.value)}
+                        onChange={(e) => {
+                          setUtrError(null);
+                          setUtrNumber(e.target.value);
+                        }}
                         className="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
                       />
                     </div>
+                    {utrError && (
+                      <p className="text-[11px] font-semibold text-rose-400">{utrError}</p>
+                    )}
 
                     <button
                       type="button"
