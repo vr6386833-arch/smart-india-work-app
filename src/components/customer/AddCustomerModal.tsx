@@ -18,6 +18,8 @@ import {
 import confetti from 'canvas-confetti';
 import { CustomerProfile, Language } from '../../types';
 import { soundManager } from '../../services/soundEffects';
+import { validateIndianMobile10, signInCustomerWithGoogle, mapFirebaseAuthError } from '../../services/firebase';
+import { FirebasePhoneOtpBox } from '../common/FirebasePhoneOtpBox';
 
 interface AddCustomerModalProps {
   isOpen: boolean;
@@ -64,98 +66,58 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
   const [showCustomAvatarInput, setShowCustomAvatarInput] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // OTP Verification state
-  const [otpSent, setOtpSent] = useState(false);
-  const [generatedOtp, setGeneratedOtp] = useState('');
-  const [enteredOtp, setEnteredOtp] = useState(['', '', '', '']);
+  // Real Firebase OTP Verification state
   const [isOtpVerified, setIsOtpVerified] = useState(false);
-  const [countdown, setCountdown] = useState(30);
-  const [smsNotification, setSmsNotification] = useState<string | null>(null);
 
-  // Custom Gmail state
+  // Google Gmail + Verified Phone state
   const [customGmail, setCustomGmail] = useState('');
   const [customGmailName, setCustomGmailName] = useState('');
   const [customGmailPhone, setCustomGmailPhone] = useState('');
+  const [isGmailPhoneVerified, setIsGmailPhoneVerified] = useState(false);
+  const [isGoogleAuthenticated, setIsGoogleAuthenticated] = useState(false);
+  const [googleAuthLoading, setGoogleAuthLoading] = useState(false);
   const [customGmailLocality, setCustomGmailLocality] = useState('');
-
-  useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (otpSent && countdown > 0) {
-      timer = setInterval(() => setCountdown((c) => c - 1), 1000);
-    }
-    return () => clearInterval(timer);
-  }, [otpSent, countdown]);
 
   if (!isOpen) return null;
 
-  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const cleaned = e.target.value.replace(/\D/g, '').slice(0, 10);
-    setPhoneDigits(cleaned);
-    setOtpSent(false);
-    setIsOtpVerified(false);
-  };
-
-  const handleSendOtp = () => {
-    if (phoneDigits.length < 10) {
-      setErrorMsg(language === 'hi' ? 'कृपया 10 अंकों का वैध मोबाइल नंबर दर्ज करें' : 'Please enter valid 10-digit phone number');
-      return;
-    }
+  const handleGooglePopupSignIn = async () => {
     setErrorMsg('');
-    const code = Math.floor(1000 + Math.random() * 9000).toString();
-    setGeneratedOtp(code);
-    setOtpSent(true);
-    setCountdown(30);
-    soundManager.playLeadPing();
-
-    const msg = `Smart India Work: Aapka customer login OTP hai ${code}`;
-    setSmsNotification(msg);
-    setTimeout(() => setSmsNotification(null), 9000);
-  };
-
-  const handleOtpBoxChange = (idx: number, val: string) => {
-    const char = val.replace(/\D/g, '').slice(-1);
-    const newArr = [...enteredOtp];
-    newArr[idx] = char;
-    setEnteredOtp(newArr);
-
-    if (char && idx < 3) {
-      document.getElementById(`cust-otp-box-${idx + 1}`)?.focus();
+    setGoogleAuthLoading(true);
+    try {
+      const user = await signInCustomerWithGoogle();
+      if (user.email) setCustomGmail(user.email);
+      if (user.displayName && !customGmailName.trim()) setCustomGmailName(user.displayName);
+      if (user.photoURL) setSelectedAvatar(user.photoURL);
+      setIsGoogleAuthenticated(true);
+      soundManager.playSuccess();
+    } catch (err) {
+      setErrorMsg(mapFirebaseAuthError(err, language));
+      soundManager.playWarning();
+    } finally {
+      setGoogleAuthLoading(false);
     }
-
-    if (newArr.every((d) => d !== '')) {
-      const full = newArr.join('');
-      if (full === generatedOtp || full === '8492' || full === '1234') {
-        setIsOtpVerified(true);
-        setErrorMsg('');
-        soundManager.playPaymentSuccess();
-        try {
-          confetti({ particleCount: 35, spread: 45 });
-        } catch {
-          // ignore
-        }
-      } else {
-        setErrorMsg(language === 'hi' ? 'गलत OTP! कृपया SMS में आया कोड दर्ज करें।' : 'Incorrect OTP! Please check SMS.');
-        soundManager.playError();
-      }
-    }
-  };
-
-  const handleAutoFill = () => {
-    if (!generatedOtp) return;
-    setEnteredOtp(generatedOtp.split(''));
-    setIsOtpVerified(true);
-    setErrorMsg('');
-    soundManager.playPaymentSuccess();
   };
 
   const handleCustomGmailSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!customGmail.trim() || !customGmail.includes('@')) return;
+    setErrorMsg('');
+    if (!customGmail.trim() || !customGmail.includes('@')) {
+      setErrorMsg(language === 'hi' ? 'कृपया पहले Google Sign-In करें या सही Gmail डालें' : 'Please sign in with Google or enter valid Gmail');
+      return;
+    }
+    const cleanPhone = customGmailPhone.replace(/\D/g, '').slice(0, 10);
+    if (!validateIndianMobile10(cleanPhone) || !isGmailPhoneVerified) {
+      setErrorMsg(
+        language === 'hi'
+          ? 'कृपया मोबाइल नंबर पर असली 6-अंकों का SMS OTP सत्यापित करें'
+          : 'Please verify your 10-digit mobile number via real 6-digit SMS OTP'
+      );
+      return;
+    }
 
     const emailName = customGmailName.trim() || customGmail.split('@')[0].replace('.', ' ');
     const formattedName = emailName.charAt(0).toUpperCase() + emailName.slice(1);
-    const cleanPhone = customGmailPhone.replace(/\D/g, '').slice(0, 10);
-    const formattedPhone = cleanPhone.length === 10 ? `+91 ${cleanPhone.slice(0, 5)} ${cleanPhone.slice(5)}` : '+91 98000 00000';
+    const formattedPhone = `+91 ${cleanPhone.slice(0, 5)} ${cleanPhone.slice(5)}`;
     const userLocality = customGmailLocality.trim() || 'Sector 62, Noida';
 
     onCustomerAdded({
@@ -174,6 +136,8 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
     setCustomGmail('');
     setCustomGmailName('');
     setCustomGmailPhone('');
+    setIsGmailPhoneVerified(false);
+    setIsGoogleAuthenticated(false);
     setCustomGmailLocality('');
     soundManager.playPaymentSuccess();
     try {
@@ -210,13 +174,13 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
       return;
     }
 
-    if (phoneDigits.length < 10) {
-      setErrorMsg(language === 'hi' ? 'कृपया 10 अंकों का वैध मोबाइल नंबर दर्ज करें' : 'Please enter valid 10-digit phone number');
+    if (!validateIndianMobile10(phoneDigits)) {
+      setErrorMsg(language === 'hi' ? 'कृपया असली 10 अंकों का वैध भारतीय मोबाइल नंबर दर्ज करें' : 'Please enter a valid 10-digit Indian mobile number');
       return;
     }
 
     if (!isOtpVerified) {
-      setErrorMsg(language === 'hi' ? 'कृपया पहले मोबाइल नंबर पर भेजा गया OTP सत्यापित करें' : 'Please verify mobile number OTP first');
+      setErrorMsg(language === 'hi' ? 'कृपया पहले मोबाइल नंबर पर आया असली SMS OTP सत्यापित करें' : 'Please verify mobile number via real SMS OTP first');
       return;
     }
 
@@ -268,40 +232,6 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/85 backdrop-blur-sm animate-in fade-in duration-200">
-      {/* Simulated SMS banner */}
-      {smsNotification && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[60] w-full max-w-sm px-3 animate-in slide-in-from-top-4 duration-300">
-          <div className="bg-slate-900 border-2 border-emerald-500 rounded-2xl p-3 shadow-2xl shadow-emerald-500/20 text-slate-100 flex items-start gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0">
-              <Phone className="w-4 h-4" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] uppercase font-black text-emerald-400">
-                  SMS • Smart India Work
-                </span>
-                <span className="text-[9px] text-slate-400">Just now</span>
-              </div>
-              <p className="text-xs font-semibold text-white mt-0.5">{smsNotification}</p>
-              <div className="mt-1.5 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleAutoFill}
-                  className="px-2 py-0.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-[10px]"
-                >
-                  Auto-Fill
-                </button>
-                <span className="text-[10px] text-emerald-300 font-mono font-bold">
-                  Code: {generatedOtp}
-                </span>
-              </div>
-            </div>
-            <button onClick={() => setSmsNotification(null)} className="text-slate-400 hover:text-white text-xs">
-              ✕
-            </button>
-          </div>
-        </div>
-      )}
 
       <div 
         className="bg-slate-900 border border-slate-700/80 rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[92vh] text-slate-100"
@@ -409,6 +339,22 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
               </p>
             </div>
 
+            {errorMsg && (
+              <div className="p-2.5 rounded-xl bg-red-950/60 border border-red-500/50 text-red-300 font-semibold text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                <span>{errorMsg}</span>
+              </div>
+            )}
+
+            <button
+              type="button"
+              disabled={googleAuthLoading}
+              onClick={handleGooglePopupSignIn}
+              className="w-full py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-900 font-black text-xs shadow-md flex items-center justify-center gap-2 disabled:opacity-60"
+            >
+              <span>{googleAuthLoading ? '...' : isGoogleAuthenticated ? '✓ Google Verified' : (language === 'hi' ? 'Google से साइन इन करें (असली)' : 'Continue with Google (Real)')}</span>
+            </button>
+
             <form onSubmit={handleCustomGmailSubmit} className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
               <div>
                 <label className="text-[11px] font-bold text-slate-300 block mb-1">
@@ -438,39 +384,44 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <div>
-                  <label className="text-[11px] font-bold text-slate-300 block mb-1">
-                    {language === 'hi' ? 'मोबाइल नंबर *' : 'Mobile Number *'}
-                  </label>
-                  <input
-                    type="tel"
-                    maxLength={10}
-                    required
-                    value={customGmailPhone}
-                    onChange={(e) => setCustomGmailPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
-                    placeholder="9876543210"
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] font-bold text-slate-300 block mb-1">
-                    {language === 'hi' ? 'शहर / इलाका *' : 'City / Locality *'}
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={customGmailLocality}
-                    onChange={(e) => setCustomGmailLocality(e.target.value)}
-                    placeholder={language === 'hi' ? 'जैसे: गोमती नगर, लखनऊ' : 'e.g. Sector 62, Noida'}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
+              <div>
+                <label className="text-[11px] font-bold text-slate-300 block mb-1">
+                  {language === 'hi' ? 'मोबाइल नंबर + रियल SMS OTP सत्यापन *' : 'Mobile Number + Real SMS OTP *'}
+                </label>
+                <FirebasePhoneOtpBox
+                  phoneDigits={customGmailPhone}
+                  onPhoneChange={setCustomGmailPhone}
+                  isVerified={isGmailPhoneVerified}
+                  onVerified={(v) => {
+                    setCustomGmailPhone(v);
+                    setIsGmailPhoneVerified(true);
+                    setErrorMsg('');
+                  }}
+                  onResetVerification={() => setIsGmailPhoneVerified(false)}
+                  language={language}
+                  accentColor="blue"
+                  containerId="recaptcha-add-cust-gmail"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-300 block mb-1">
+                  {language === 'hi' ? 'शहर / इलाका *' : 'City / Locality *'}
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={customGmailLocality}
+                  onChange={(e) => setCustomGmailLocality(e.target.value)}
+                  placeholder={language === 'hi' ? 'जैसे: गोमती नगर, लखनऊ' : 'e.g. Sector 62, Noida'}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs focus:border-blue-500 focus:outline-none"
+                />
               </div>
 
               <button
                 type="submit"
-                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 text-white font-bold text-xs shadow-md"
+                disabled={!isGmailPhoneVerified}
+                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 text-white font-bold text-xs shadow-md disabled:opacity-45"
               >
                 {language === 'hi' ? '✓ New Customer ID बनाएं व खोलें' : '✓ Create & Open Customer ID'}
               </button>
@@ -488,95 +439,25 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
               </div>
             )}
 
-            {/* Mobile Number & OTP Section */}
-            <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
-              <div>
-                <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                  {language === 'hi' ? '1. मोबाइल नंबर दर्ज करें (OTP सत्यापन हेतु) *' : '1. Enter Mobile Number (for OTP verification) *'}
-                </label>
-                <div className="flex items-center gap-2">
-                  <div className="relative flex items-center flex-1">
-                    <span className="absolute left-3 text-slate-400 font-mono text-xs font-semibold">
-                      +91
-                    </span>
-                    <input
-                      type="tel"
-                      value={phoneDigits}
-                      onChange={handlePhoneChange}
-                      placeholder="98765 43210"
-                      maxLength={10}
-                      disabled={isOtpVerified}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-12 pr-3 py-2 text-white font-mono placeholder-slate-500 focus:outline-none focus:border-blue-500 text-xs font-bold"
-                      required
-                    />
-                  </div>
-                  {!isOtpVerified && (
-                    <button
-                      type="button"
-                      onClick={handleSendOtp}
-                      disabled={phoneDigits.length < 10}
-                      className={`px-3 py-2 rounded-xl text-xs font-black shrink-0 transition-all ${
-                        phoneDigits.length === 10
-                          ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-md active:scale-95'
-                          : 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                      }`}
-                    >
-                      {otpSent ? (language === 'hi' ? 'पुनः भेजें' : 'Resend') : (language === 'hi' ? 'OTP भेजें' : 'Send OTP')}
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* 4-digit OTP box if sent */}
-              {otpSent && !isOtpVerified && (
-                <div className="p-3 rounded-xl bg-slate-900 border border-blue-500/40 space-y-2.5 animate-in fade-in">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
-                      <KeyRound className="w-3.5 h-3.5" />
-                      {language === 'hi' ? 'प्राप्त 4-अंकों का OTP डालें:' : 'Enter 4-digit OTP received:'}
-                    </span>
-                    <span className="text-[10px] text-slate-400 font-mono">
-                      {countdown > 0 ? `${countdown}s` : 'Ready'}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-center gap-2">
-                    {[0, 1, 2, 3].map((idx) => (
-                      <input
-                        key={idx}
-                        id={`cust-otp-box-${idx}`}
-                        type="text"
-                        maxLength={1}
-                        value={enteredOtp[idx]}
-                        onChange={(e) => handleOtpBoxChange(idx, e.target.value)}
-                        className="w-10 h-10 rounded-xl bg-slate-950 border-2 border-slate-700 text-center text-lg font-mono font-black text-amber-400 focus:border-amber-400 focus:outline-none"
-                      />
-                    ))}
-                  </div>
-
-                  {generatedOtp && (
-                    <div className="flex items-center justify-between text-[10px] pt-1 border-t border-slate-800">
-                      <span className="text-slate-400">
-                        {language === 'hi' ? 'SMS कोड:' : 'SMS Code:'} <strong className="text-emerald-400 font-mono">{generatedOtp}</strong>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={handleAutoFill}
-                        className="text-amber-400 hover:text-amber-300 font-bold underline"
-                      >
-                        {language === 'hi' ? 'स्वतः भरें (Auto-Fill)' : 'Auto Fill'}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {isOtpVerified && (
-                <div className="flex items-center gap-2 p-2 rounded-xl bg-emerald-950/60 border border-emerald-500/50 text-emerald-300 text-xs font-bold animate-in fade-in">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span>{language === 'hi' ? '✓ मोबाइल नंबर OTP द्वारा सत्यापित!' : '✓ Mobile number OTP verified!'}</span>
-                </div>
-              )}
+            {/* Real Mobile Number & Firebase SMS OTP Section */}
+            <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
+              <label className="block text-[11px] font-bold text-slate-300">
+                {language === 'hi' ? '1. मोबाइल नंबर दर्ज करें (रियल SMS OTP सत्यापन हेतु) *' : '1. Enter Mobile Number (Real SMS OTP verification) *'}
+              </label>
+              <FirebasePhoneOtpBox
+                phoneDigits={phoneDigits}
+                onPhoneChange={setPhoneDigits}
+                isVerified={isOtpVerified}
+                onVerified={(v) => {
+                  setPhoneDigits(v);
+                  setIsOtpVerified(true);
+                  setErrorMsg('');
+                }}
+                onResetVerification={() => setIsOtpVerified(false)}
+                language={language}
+                accentColor="blue"
+                containerId="recaptcha-add-cust-otp"
+              />
             </div>
 
             {/* Avatar Selector */}

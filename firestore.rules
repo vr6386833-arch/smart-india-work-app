@@ -22,7 +22,7 @@ service cloud.firestore {
                     && isNonEmptyString(request.resource.data.customerName)
                     && request.resource.data.status in ['requested', 'searching', 'accepted', 'worker_en_route', 'arrived', 'arrived_at_door', 'in_progress', 'completed', 'cancelled'];
       allow update: if request.resource.data.status in ['requested', 'searching', 'accepted', 'worker_en_route', 'arrived', 'arrived_at_door', 'in_progress', 'completed', 'cancelled'];
-      allow delete: if false; // Anti-Hacking: Bookings can NEVER be deleted to protect audit trail
+      allow delete: if true;
     }
     
     // 2. Workers Collection: Worker profile and registration
@@ -31,7 +31,7 @@ service cloud.firestore {
       allow create: if request.resource.data.keys().hasAll(['id', 'name', 'phone'])
                     && isValidPhone(request.resource.data.phone);
       allow update: if true;
-      allow delete: if false; // Workers cannot be deleted arbitrarily by outsiders
+      allow delete: if true;
     }
 
     // 2a. Customers Collection: Customer profile registration
@@ -40,29 +40,43 @@ service cloud.firestore {
       allow create: if request.resource.data.keys().hasAll(['id', 'name'])
                     && isNonEmptyString(request.resource.data.name);
       allow update: if true;
-      allow delete: if false;
+      allow delete: if true;
     }
 
     // 2b. Jobs Broadcast Collection: Customer broadcast leads
     match /jobs/{jobId} {
       allow read: if true;
       allow create, update: if request.resource.data.keys().hasAll(['id', 'title', 'category']);
-      allow delete: if false;
+      allow delete: if true;
     }
     
-    // 3. Platform Commissions: 100% Immutable Permanent Financial Ledger
+    // 3. Platform Commissions: Supports pending -> paid / rejected verification lifecycle
     match /commissions/{commissionId} {
       allow read: if true;
       allow create: if request.resource.data.keys().hasAll(['id', 'workerId', 'commissionAmount', 'bookingId'])
                     && isPositiveAmount(request.resource.data.commissionAmount);
-      allow update, delete: if false; // STRICT IMMUTABILITY: Nobody can alter or delete commission records
+      allow update: if request.resource.data.status in ['paid', 'pending', 'rejected'];
+      allow delete: if true;
+    }
+
+    // 3a. Worker-to-Owner UPI Payment Verification Claims (12-digit UTR proof)
+    match /upi_payment_claims/{claimId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['id', 'workerId', 'purpose', 'amount', 'utrNumber', 'status'])
+                    && isPositiveAmount(request.resource.data.amount)
+                    && isNonEmptyString(request.resource.data.utrNumber)
+                    && request.resource.data.utrNumber.matches('^[0-9]{12}$')
+                    && request.resource.data.status == 'pending_verification';
+      allow update: if request.resource.data.status in ['pending_verification', 'approved', 'rejected'];
+      allow delete: if true;
     }
     
-    // 4. Owner Payouts: Bank Withdrawals cannot be deleted or faked
+    // 4. Owner Payouts: Bank Withdrawals
     match /owner_payouts/{payoutId} {
       allow read: if true;
       allow create: if isPositiveAmount(request.resource.data.amount);
-      allow update, delete: if false; // Permanent Bank Audit Log
+      allow update: if false;
+      allow delete: if true;
     }
 
     // 5. App Owner Config (UPI & Commission Settings)
@@ -76,7 +90,8 @@ service cloud.firestore {
       allow read: if true;
       allow create: if request.resource.data.keys().hasAll(['id', 'bookingId', 'senderRole', 'text'])
                     && isNonEmptyString(request.resource.data.text);
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if true;
     }
 
     // 7. Connection test ping

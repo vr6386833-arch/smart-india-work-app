@@ -291,7 +291,31 @@ export interface CommissionRecord {
   paymentMethod: 'upi_direct' | 'wallet_deduct' | 'cash_settled';
   upiTxnId: string;
   paidAt: string;
-  status: 'paid' | 'pending';
+  status: 'paid' | 'pending' | 'rejected';
+}
+
+// Real Worker-to-Owner UPI Payment Verification Claim (Pending -> Owner Approves/Rejects)
+export interface UpiPaymentRequest {
+  id: string;
+  workerId: string;
+  workerName: string;
+  workerPhone: string;
+  purpose: 'unpaid_fee' | 'wallet' | 'kyc' | 'pro' | 'lead_fee' | 'custom';
+  purposeLabel?: string;
+  note?: string;
+  amount: number;
+  utrNumber: string;
+  receiverUpiId?: string;
+  bookingId?: string;
+  commissionId?: string;
+  screenshotUrl?: string;
+  paymentScreenshot?: string;
+  status: 'pending_verification' | 'approved' | 'rejected';
+  submittedAt?: string;
+  submittedAtText: string;
+  submittedAtMs: number;
+  reviewedAt?: string;
+  rejectionReason?: string;
 }
 
 // Worker Data Saving System: Permanent Job Record & Ledger Entry

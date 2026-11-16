@@ -10,20 +10,21 @@ import {
   ShieldCheck, 
   CheckCircle2, 
   Sparkles,
-  Zap
+  Zap,
+  Clock,
+  AlertCircle
 } from 'lucide-react';
-import { WalletTransaction, Language } from '../../types';
+import { WalletTransaction, Language, UpiPaymentRequest } from '../../types';
 import { soundManager } from '../../services/soundEffects';
-import { Building2, Smartphone } from 'lucide-react';
-import confetti from 'canvas-confetti';
 
 interface WalletManagerModalProps {
   isOpen: boolean;
   onClose: () => void;
   balance: number;
   transactions: WalletTransaction[];
+  pendingClaims?: UpiPaymentRequest[];
   language: Language;
-  onRecharge: (amount: number) => void;
+  onRecharge?: (amount: number) => void;
   onOpenCompanyQr?: (amount?: number) => void;
   onOpenImpsPayout?: () => void;
 }
@@ -33,8 +34,8 @@ export const WalletManagerModal: React.FC<WalletManagerModalProps> = ({
   onClose,
   balance,
   transactions,
+  pendingClaims = [],
   language,
-  onRecharge,
   onOpenCompanyQr,
   onOpenImpsPayout,
 }) => {
@@ -63,7 +64,9 @@ export const WalletManagerModal: React.FC<WalletManagerModalProps> = ({
             </div>
             <div>
               <h3 className="text-base font-bold text-white">Smart India Worker Wallet</h3>
-              <p className="text-[11px] text-slate-400">Micro-fee balance & instant recharge</p>
+              <p className="text-[11px] text-slate-400">
+                {language === 'hi' ? 'लीड फीस बैलेंस व असली UPI रीचार्ज' : 'Micro-fee balance & verified UPI recharge'}
+              </p>
             </div>
           </div>
 
@@ -103,7 +106,7 @@ export const WalletManagerModal: React.FC<WalletManagerModalProps> = ({
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white text-xs font-bold shadow-md shadow-emerald-950/40 transition-all active:scale-95 border border-emerald-400/30"
               >
                 <ArrowUpRight className="w-3.5 h-3.5" />
-                <span>{language === 'hi' ? '⚡ 1-क्लिक IMPS बैंक ट्रांसफर' : '⚡ 1-Click IMPS Bank Transfer'}</span>
+                <span>{language === 'hi' ? '🏦 बैंक निकासी अनुरोध (Withdrawal)' : '🏦 Request Bank Withdrawal'}</span>
               </button>
             )}
           </div>
@@ -138,7 +141,7 @@ export const WalletManagerModal: React.FC<WalletManagerModalProps> = ({
             {/* UPI App Selection */}
             <div className="space-y-1.5 pt-1">
               <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
-                Select UPI App (Instant Webhook):
+                {language === 'hi' ? 'UPI ऐप चुनें (Owner QR + UTR सत्यापन):' : 'Select UPI App (Owner QR + UTR Check):'}
               </label>
               <div className="grid grid-cols-4 gap-1.5">
                 {[
@@ -184,10 +187,65 @@ export const WalletManagerModal: React.FC<WalletManagerModalProps> = ({
 
             <p className="text-[10px] text-slate-400 text-center leading-snug">
               {language === 'hi'
-                ? 'नोट: बिना असली UPI पेमेंट और UTR नंबर डाले वॉलेट में पैसे नहीं जुड़ेंगे।'
-                : 'Note: Wallet balance is credited only after completing UPI payment & entering UTR.'}
+                ? 'नोट: असली 12-अंकों का UTR डालने के बाद ओनर बैंक से पुष्टि होते ही वॉलेट में पैसे जुड़ेंगे।'
+                : 'Note: Wallet balance is credited after entering a valid 12-digit UTR & Owner verification.'}
             </p>
           </div>
+
+          {/* Pending / Recent UPI Payment Claims */}
+          {pendingClaims.length > 0 && (
+            <div className="space-y-2">
+              <h4 className="text-xs font-bold text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5" />
+                <span>{language === 'hi' ? 'UPI पेमेंट जांच स्थिति (UTR Claims)' : 'UPI Verification Requests'}</span>
+              </h4>
+              <div className="space-y-2">
+                {pendingClaims.slice(0, 4).map((claim) => (
+                  <div
+                    key={claim.id}
+                    className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 ${
+                      claim.status === 'pending_verification'
+                        ? 'bg-amber-950/30 border-amber-500/40'
+                        : claim.status === 'rejected'
+                        ? 'bg-rose-950/30 border-rose-500/40'
+                        : 'bg-emerald-950/30 border-emerald-500/40'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold text-white text-[11px]">₹{claim.amount}</span>
+                        <span className="text-[10px] font-mono text-slate-400 truncate">UTR: {claim.utrNumber}</span>
+                      </div>
+                      <span className="text-[10px] text-slate-400 block">
+                        {claim.purpose} • {claim.submittedAtText}
+                      </span>
+                      {claim.status === 'rejected' && claim.rejectionReason && (
+                        <span className="text-[10px] text-rose-300 flex items-center gap-1 mt-0.5">
+                          <AlertCircle className="w-3 h-3 shrink-0" />
+                          <span>{claim.rejectionReason}</span>
+                        </span>
+                      )}
+                    </div>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[9px] font-bold shrink-0 ${
+                        claim.status === 'pending_verification'
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                          : claim.status === 'rejected'
+                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                          : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      }`}
+                    >
+                      {claim.status === 'pending_verification'
+                        ? (language === 'hi' ? '⏳ जांच पेंडिंग' : '⏳ Pending')
+                        : claim.status === 'rejected'
+                        ? (language === 'hi' ? '✕ अस्वीकृत' : '✕ Rejected')
+                        : (language === 'hi' ? '✓ सत्यापित' : '✓ Approved')}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Micro-Fee Rules Info */}
           <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-slate-300 text-[11px] space-y-1">

@@ -23,6 +23,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import confetti from 'canvas-confetti';
 import { WorkerProfile, Booking, Language } from '../../types';
 import { soundManager } from '../../services/soundEffects';
+import { isValidRealUpiUtr } from '../../services/firebase';
 
 interface DynamicUpiQrModalProps {
   isOpen: boolean;
@@ -62,7 +63,9 @@ export const DynamicUpiQrModal: React.FC<DynamicUpiQrModalProps> = ({
   const [isCopied, setIsCopied] = useState(false);
   const [paymentDone, setPaymentDone] = useState(false);
   const [txnId, setTxnId] = useState<string>('');
-  const [showReceipt, setShowReceipt] = useState(false);
+  const [customerUtr, setCustomerUtr] = useState<string>('');
+  const [paymentMode, setPaymentMode] = useState<'upi' | 'cash'>('upi');
+  const [utrError, setUtrError] = useState<string>('');
   const [voiceAnnounced, setVoiceAnnounced] = useState(true);
 
   // Sync state when booking changes
@@ -105,12 +108,26 @@ export const DynamicUpiQrModal: React.FC<DynamicUpiQrModalProps> = ({
     setTimeout(() => setIsCopied(false), 2000);
   };
 
-  const handleSimulatePaymentReceived = () => {
-    const generatedTxn = `UPI/${Date.now().toString().slice(-6)}/${Math.floor(100000 + Math.random() * 900000)}`;
-    setTxnId(generatedTxn);
+  const handleConfirmCustomerPayment = () => {
+    let finalTxn = 'CASH-IN-HAND';
+    if (paymentMode === 'upi') {
+      const cleanUtr = customerUtr.replace(/\D/g, '').trim();
+      if (!isValidRealUpiUtr(cleanUtr)) {
+        soundManager.playWarning();
+        setUtrError(
+          language === 'hi'
+            ? '⚠️ कृपया ग्राहक के PhonePe/GPay पेमेंट से देख कर पूरा 12-अंकों का असली UTR नंबर डालें (या नकद विकल्प चुनें)।'
+            : '⚠️ Please enter the customer\'s exact 12-digit UPI UTR number (or choose Cash Received).'
+        );
+        return;
+      }
+      finalTxn = `UTR/${cleanUtr}`;
+    }
+
+    setUtrError('');
+    setTxnId(finalTxn);
     setPaymentDone(true);
 
-    // Audio effects
     soundManager.playUpiSuccessChime();
     if (voiceAnnounced) {
       setTimeout(() => {
@@ -118,7 +135,6 @@ export const DynamicUpiQrModal: React.FC<DynamicUpiQrModalProps> = ({
       }, 500);
     }
 
-    // Trigger Confetti
     try {
       confetti({
         particleCount: 75,
@@ -130,7 +146,7 @@ export const DynamicUpiQrModal: React.FC<DynamicUpiQrModalProps> = ({
     }
 
     if (onPaymentConfirmed) {
-      onPaymentConfirmed(totalAmount, 'upi', generatedTxn);
+      onPaymentConfirmed(totalAmount, paymentMode, finalTxn);
     }
   };
 
@@ -418,15 +434,71 @@ export const DynamicUpiQrModal: React.FC<DynamicUpiQrModalProps> = ({
                 </div>
               </div>
 
-              {/* Action Buttons */}
-              <div className="space-y-2 pt-2">
-                {/* Instant Verification Trigger */}
+              {/* Real Customer Settlement Mode (UPI with 12-digit UTR OR Cash) */}
+              <div className="space-y-2.5 pt-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaymentMode('upi');
+                      setUtrError('');
+                    }}
+                    className={`py-2 rounded-xl border text-xs font-bold ${
+                      paymentMode === 'upi'
+                        ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
+                        : 'bg-slate-950 border-slate-800 text-slate-400'
+                    }`}
+                  >
+                    {language === 'hi' ? 'ग्राहक ने UPI किया' : 'Customer Paid UPI'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaymentMode('cash');
+                      setUtrError('');
+                    }}
+                    className={`py-2 rounded-xl border text-xs font-bold ${
+                      paymentMode === 'cash'
+                        ? 'bg-amber-600/20 border-amber-500 text-amber-300'
+                        : 'bg-slate-950 border-slate-800 text-slate-400'
+                    }`}
+                  >
+                    {language === 'hi' ? 'हाथ में नकद मिले (Cash)' : 'Cash Received'}
+                  </button>
+                </div>
+
+                {paymentMode === 'upi' && (
+                  <input
+                    type="tel"
+                    inputMode="numeric"
+                    maxLength={12}
+                    value={customerUtr}
+                    onChange={(e) => {
+                      setUtrError('');
+                      setCustomerUtr(e.target.value.replace(/\D/g, '').slice(0, 12));
+                    }}
+                    placeholder={language === 'hi' ? 'ग्राहक के UPI से 12-अंकों का UTR डालें *' : 'Enter customer 12-digit UPI UTR *'}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                  />
+                )}
+
+                {utrError && <p className="text-[11px] font-bold text-rose-400">{utrError}</p>}
+
                 <button
-                  onClick={handleSimulatePaymentReceived}
+                  type="button"
+                  onClick={handleConfirmCustomerPayment}
                   className="w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 active:scale-98 transition-all"
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>Customer Paid via UPI (Confirm ₹{totalAmount})</span>
+                  <span>
+                    {paymentMode === 'cash'
+                      ? language === 'hi'
+                        ? `नकद ₹${totalAmount} प्राप्त हुए (पुष्टि करें)`
+                        : `Confirm ₹${totalAmount} Cash Received`
+                      : language === 'hi'
+                      ? `UTR से ₹${totalAmount} UPI भुगतान पुष्टि करें`
+                      : `Confirm ₹${totalAmount} UPI Payment`}
+                  </span>
                 </button>
 
                 <div className="grid grid-cols-2 gap-2">

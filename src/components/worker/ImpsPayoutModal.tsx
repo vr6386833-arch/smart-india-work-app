@@ -42,12 +42,32 @@ export const ImpsPayoutModal: React.FC<ImpsPayoutModalProps> = ({
   const [completedRecord, setCompletedRecord] = useState<ImpsTransferRecord | null>(null);
   const [copiedUtr, setCopiedUtr] = useState(false);
   const [showEditBank, setShowEditBank] = useState(false);
+  const [payoutError, setPayoutError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
   const handleExecutePayout = async () => {
-    if (amount <= 0 || amount > worker.walletBalance) {
+    setPayoutError(null);
+    if (amount < 10 || amount > worker.walletBalance) {
       soundManager.playError();
+      setPayoutError(
+        language === 'hi'
+          ? `कृपया ₹10 से ₹${worker.walletBalance} के बीच सही राशि दर्ज करें।`
+          : `Please enter a valid amount between ₹10 and ₹${worker.walletBalance}.`
+      );
+      return;
+    }
+
+    const cleanedAcc = (bankDetails.accountNumber || '').replace(/\s+/g, '');
+    const cleanedIfsc = (bankDetails.ifscCode || '').trim().toUpperCase();
+    if (!bankDetails.bankName?.trim() || cleanedAcc.length < 9 || !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(cleanedIfsc)) {
+      soundManager.playError();
+      setShowEditBank(true);
+      setPayoutError(
+        language === 'hi'
+          ? 'कृपया सही बैंक नाम, 9+ अंकों की खाता संख्या और 11-अंकों का IFSC कोड भरें।'
+          : 'Please enter a valid bank name, 9+ digit account number, and 11-character IFSC code.'
+      );
       return;
     }
 
@@ -91,13 +111,13 @@ export const ImpsPayoutModal: React.FC<ImpsPayoutModalProps> = ({
             </div>
             <div>
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <span>{language === 'hi' ? '24x7 IMPS बैंक ट्रांसफर' : '24x7 IMPS Instant Payout'}</span>
+                <span>{language === 'hi' ? 'बैंक निकासी अनुरोध (Withdrawal)' : 'Bank Withdrawal Request'}</span>
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-bold border border-emerald-500/20">
-                  Instant (1 Sec)
+                  Verified Balance
                 </span>
               </h3>
               <p className="text-[11px] text-slate-400">
-                {language === 'hi' ? 'कमाई सीधे बैंक खाते या UPI में निकालें' : 'Withdraw earnings straight to Bank or UPI'}
+                {language === 'hi' ? 'सत्यापित वॉलेट बैलेंस से बैंक निकासी अनुरोध दर्ज करें' : 'Log withdrawal request from verified wallet balance'}
               </p>
             </div>
           </div>
@@ -120,20 +140,20 @@ export const ImpsPayoutModal: React.FC<ImpsPayoutModalProps> = ({
 
               <div>
                 <span className="text-[11px] text-emerald-400 font-bold uppercase tracking-wider block">
-                  {language === 'hi' ? 'बैंक ट्रांसफर सफल (IMPS 24x7)' : 'IMPS Transfer Successful'}
+                  {language === 'hi' ? 'बैंक निकासी अनुरोध दर्ज (Payout Request Logged)' : 'Bank Withdrawal Request Logged'}
                 </span>
                 <h2 className="text-2xl font-black text-white mt-0.5">₹{completedRecord.amount}</h2>
                 <p className="text-xs text-slate-400 mt-1">
-                  {language === 'hi' 
-                    ? `पैसे तुरंत ${completedRecord.bankName} में भेज दिए गए हैं।` 
-                    : `Money credited instantly to ${completedRecord.bankName}`}
+                  {language === 'hi'
+                    ? `${completedRecord.bankName} में निकासी अनुरोध दर्ज हो गया है (बैंक सेटलमेंट समय अनुसार भुगतान)।`
+                    : `Withdrawal request logged for ${completedRecord.bankName} (settled per bank payout cycle).`}
                 </p>
               </div>
 
               {/* Receipt Details Box */}
               <div className="bg-slate-950 rounded-2xl p-4 border border-slate-800 text-left space-y-2.5 text-xs">
                 <div className="flex justify-between items-center text-slate-400">
-                  <span>{language === 'hi' ? 'बैंक UTR / RRN:' : 'Bank UTR / RRN:'}</span>
+                  <span>{language === 'hi' ? 'अनुरोध संदर्भ ID:' : 'Request Ref ID:'}</span>
                   <div className="flex items-center gap-1.5 font-mono text-emerald-400 font-bold">
                     <span>{completedRecord.rrnUtr}</span>
                     <button 
@@ -190,9 +210,9 @@ export const ImpsPayoutModal: React.FC<ImpsPayoutModalProps> = ({
                 </div>
                 <div className="text-right">
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 font-bold border border-emerald-500/20">
-                    ● IMPS 24x7 Active
+                    ● Withdrawal Request
                   </span>
-                  <span className="text-[10px] text-slate-400 block mt-1">₹0 Withdrawal Fee</span>
+                  <span className="text-[10px] text-slate-400 block mt-1">₹0 Platform Fee</span>
                 </div>
               </div>
 
@@ -324,25 +344,32 @@ export const ImpsPayoutModal: React.FC<ImpsPayoutModalProps> = ({
                 )}
               </div>
 
+              {payoutError && (
+                <div className="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs font-semibold flex items-center gap-1.5">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{payoutError}</span>
+                </div>
+              )}
+
               {/* Action Button */}
               <button
                 type="button"
-                disabled={isProcessing || amount <= 0 || amount > worker.walletBalance}
+                disabled={isProcessing || amount < 10 || amount > worker.walletBalance}
                 onClick={handleExecutePayout}
                 className="w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 hover:from-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-950/40 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 {isProcessing ? (
                   <>
                     <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    <span>Processing IMPS Bank Server... (1 Sec)</span>
+                    <span>{language === 'hi' ? 'निकासी अनुरोध दर्ज हो रहा है...' : 'Logging Withdrawal Request...'}</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4 text-amber-300" />
                     <span>
-                      {language === 'hi' 
-                        ? `⚡ ₹${amount} तुरंत 1-क्लिक बैंक में ट्रांसफर करें` 
-                        : `⚡ 1-Click Transfer ₹${amount} to Bank`}
+                      {language === 'hi'
+                        ? `🏦 ₹${amount} बैंक निकासी अनुरोध दर्ज करें`
+                        : `🏦 Submit ₹${amount} Withdrawal Request`}
                     </span>
                   </>
                 )}

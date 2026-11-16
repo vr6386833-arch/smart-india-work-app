@@ -41,9 +41,10 @@ import {
   PlayCircle,
   BellOff,
   Coffee,
-  Crown
+  Crown,
+  Zap
 } from 'lucide-react';
-import { WorkerProfile, JobPost, Booking, WalletTransaction, Language, ChatMessage, AppOwnerPaymentConfig, CommissionRecord, WorkerJobRecord, WorkerNotification } from '../../types';
+import { WorkerProfile, JobPost, Booking, WalletTransaction, Language, ChatMessage, AppOwnerPaymentConfig, CommissionRecord, WorkerJobRecord, WorkerNotification, UpiPaymentRequest } from '../../types';
 import { OtpVerificationDialog } from './OtpVerificationDialog';
 import { WalletManagerModal } from './WalletManagerModal';
 import { KycVerificationModal } from './KycVerificationModal';
@@ -63,6 +64,7 @@ import { IncomingBookingAlertModal } from './IncomingBookingAlertModal';
 import { ImpsPayoutModal } from './ImpsPayoutModal';
 import { OlaLiveTrackingMap } from '../common/OlaLiveTrackingMap';
 import { soundManager } from '../../services/soundEffects';
+import { launchDirectUpiApp, sanitizeUpiId } from '../../utils/upiIntentHelper';
 
 interface WorkerAppProps {
   worker: WorkerProfile;
@@ -111,6 +113,11 @@ interface WorkerAppProps {
   onSwitchToOwner?: () => void;
   ownerPin?: string;
   onUpdateOwnerPin?: (newPin: string) => void;
+  upiPaymentClaims?: UpiPaymentRequest[];
+  existingUtrs?: string[];
+  onSubmitPaymentClaim?: (
+    claim: Omit<UpiPaymentRequest, 'id' | 'status' | 'submittedAtMs' | 'submittedAtText'>
+  ) => { ok: boolean; error?: string };
 }
 
 export const WorkerApp: React.FC<WorkerAppProps> = ({
@@ -160,8 +167,13 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
   onSwitchToOwner,
   ownerPin,
   onUpdateOwnerPin,
+  upiPaymentClaims = [],
+  existingUtrs = [],
+  onSubmitPaymentClaim,
 }) => {
   const [activeTab, setActiveTab] = useState<'radar' | 'active' | 'wallet' | 'profile'>('radar');
+  const workerClaims = upiPaymentClaims.filter((c) => c.workerId === worker.id);
+  const pendingWorkerClaims = workerClaims.filter((c) => c.status === 'pending_verification');
   
   // Account lockout status check
   const isAccountBlocked = Boolean(worker.isBlockedDueToUnpaidFee);
@@ -175,36 +187,40 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
   const [localIncomingAlert, setLocalIncomingAlert] = useState<Booking | null>(null);
 
   const unreadNotifCount = notifications.filter((n) => !n.isRead).length;
+  const isStandbyWorker = worker.id === 'wrk_standby_live';
+  const workerCat = (worker.category || '').trim().toLowerCase();
+  const myActiveBooking = !isStandbyWorker && activeBooking && activeBooking.workerId === worker.id ? activeBooking : null;
 
-  // React to incomingBookingAlert prop from parent: ONLY alert if matching this worker's trade category or workerId
+  // React to incomingBookingAlert prop from parent: ONLY alert if explicitly booked for THIS worker & trade
   useEffect(() => {
-    // 🔕 If worker voluntarily paused their ID, DO NOT trigger any alert or notification!
-    if (worker.isIdPaused) return;
+    // 🔕 If worker voluntarily paused their ID or is standby placeholder, DO NOT trigger any alert!
+    if (worker.isIdPaused || isStandbyWorker) return;
 
     if (incomingBookingAlert) {
-      const isTradeMatch = incomingBookingAlert.workerId === worker.id ||
-                           incomingBookingAlert.serviceCategory.toLowerCase() === worker.category.toLowerCase();
-      if (isTradeMatch) {
+      const isDirectWorkerAndTradeMatch =
+        incomingBookingAlert.workerId === worker.id &&
+        incomingBookingAlert.serviceCategory.trim().toLowerCase() === workerCat;
+      if (isDirectWorkerAndTradeMatch) {
         setLocalIncomingAlert(incomingBookingAlert);
       }
     }
-  }, [incomingBookingAlert, worker.id, worker.category, worker.isIdPaused]);
+  }, [incomingBookingAlert, worker.id, workerCat, worker.isIdPaused, isStandbyWorker]);
 
-  // Real-time observer: when activeBooking updates to a newly booked job for this worker, trigger alert & voice!
-  const prevBookingIdRef = useRef<string | null>(activeBooking?.id || null);
+  // Real-time observer: when myActiveBooking updates to a newly booked job for this worker, trigger alert & voice!
+  const prevBookingIdRef = useRef<string | null>(myActiveBooking?.id || null);
   useEffect(() => {
-    // 🔕 If worker voluntarily paused their ID, DO NOT trigger any alert, sound, or voice!
-    if (worker.isIdPaused) return;
+    // 🔕 If worker voluntarily paused their ID or is standby placeholder, DO NOT trigger any alert, sound, or voice!
+    if (worker.isIdPaused || isStandbyWorker) return;
 
-    if (activeBooking && (activeBooking.workerId === worker.id || activeBooking.serviceCategory.toLowerCase() === worker.category.toLowerCase())) {
-      if (activeBooking.id !== prevBookingIdRef.current) {
-        prevBookingIdRef.current = activeBooking.id;
-        setLocalIncomingAlert(activeBooking);
+    if (myActiveBooking && myActiveBooking.serviceCategory.trim().toLowerCase() === workerCat) {
+      if (myActiveBooking.id !== prevBookingIdRef.current) {
+        prevBookingIdRef.current = myActiveBooking.id;
+        setLocalIncomingAlert(myActiveBooking);
         soundManager.playIncomingJobAlert();
-        soundManager.speakNewBookingAlert(activeBooking.customerName, activeBooking.estimatedAmount, language, activeBooking.serviceCategory);
+        soundManager.speakNewBookingAlert(myActiveBooking.customerName, myActiveBooking.estimatedAmount, language, myActiveBooking.serviceCategory);
       }
     }
-  }, [activeBooking, worker.id, worker.category, language, worker.isIdPaused]);
+  }, [myActiveBooking, workerCat, language, worker.isIdPaused, isStandbyWorker]);
   
   // Modals
   const [isRecordsModalOpen, setIsRecordsModalOpen] = useState(false);
@@ -220,19 +236,61 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
   const [isCompanyQrModalOpen, setIsCompanyQrModalOpen] = useState(false);
   const [walletRechargeAmount, setWalletRechargeAmount] = useState<number>(200);
   const [isPayAppOwnerOpen, setIsPayAppOwnerOpen] = useState(false);
+  const [launchedDirectUpiFromTap, setLaunchedDirectUpiFromTap] = useState(false);
   const [isWorkerNavModalOpen, setIsWorkerNavModalOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isCallOpen, setIsCallOpen] = useState(false);
   const [isOwnerPinOpen, setIsOwnerPinOpen] = useState(false);
+  const secretOwnerTapRef = useRef<{ count: number; lastTap: number }>({ count: 0, lastTap: 0 });
+
+  const leadFeeRupees = (isAccountBlocked ? unpaidFeeAmount : appOwnerConfig?.perJobFeeRupees) || 10;
+
+  // 1-Touch Direct UPI launcher straight to Smart India Work
+  const handleOneTouchPayLeadFee = () => {
+    soundManager.playTap();
+    launchDirectUpiApp(
+      {
+        upiId: sanitizeUpiId(appOwnerConfig?.upiId),
+        payeeName: appOwnerConfig?.businessName?.trim() || 'Smart India Work',
+        amount: leadFeeRupees,
+        transactionNote: `SmartIndia Lead Rs${leadFeeRupees} ${worker.name.slice(0, 12)}`,
+        transactionRef: `SIW${Date.now().toString().slice(-8)}`,
+      },
+      'any'
+    );
+    setLaunchedDirectUpiFromTap(true);
+    setIsPayAppOwnerOpen(true);
+  };
+
+  const handleSecretOwnerTap = () => {
+    const now = Date.now();
+    if (now - secretOwnerTapRef.current.lastTap > 2000) {
+      secretOwnerTapRef.current.count = 1;
+    } else {
+      secretOwnerTapRef.current.count += 1;
+    }
+    secretOwnerTapRef.current.lastTap = now;
+    if (secretOwnerTapRef.current.count >= 5) {
+      secretOwnerTapRef.current.count = 0;
+      soundManager.playTap();
+      if (isOwnerSession && onSwitchToOwner) {
+        onSwitchToOwner();
+      } else {
+        setIsOwnerPinOpen(true);
+      }
+    }
+  };
   const [lightboxData, setLightboxData] = useState<{ url: string; title: string; subtitle?: string; tag?: string } | null>(null);
   const [workerWorkPhotos, setWorkerWorkPhotos] = useState<string[]>([
     'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?auto=format&fit=crop&w=800&q=80'
   ]);
 
-  // Available open jobs
-  const openJobs = jobs.filter((j) => j.status === 'open');
+  // Available open jobs STRICTLY matching this worker's registered trade category
+  const openJobs = (!isStandbyWorker && !worker.isIdPaused)
+    ? jobs.filter((j) => j.status === 'open' && (j.category || '').trim().toLowerCase() === workerCat)
+    : [];
 
-  const isOtpVerified = activeBooking?.isOtpVerified || activeBooking?.status === 'in_progress' || activeBooking?.status === 'completed';
+  const isOtpVerified = myActiveBooking?.isOtpVerified || myActiveBooking?.status === 'in_progress' || myActiveBooking?.status === 'completed';
 
   const handleWorkerPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -248,8 +306,6 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
       reader.readAsDataURL(file);
     }
   };
-
-  const isStandbyWorker = worker.id === 'wrk_standby_live';
 
   return (
     <div className="flex-1 flex flex-col h-full min-h-0 bg-slate-950 text-slate-100 overflow-hidden select-none">
@@ -393,14 +449,11 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-2 mt-2 border-t border-slate-800/70">
           {isAccountBlocked && (
             <button
-              onClick={() => {
-                soundManager.playTap();
-                setIsCompanyQrModalOpen(true);
-              }}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-600/30 border border-rose-500 text-[11px] font-black text-rose-300 shrink-0 animate-pulse"
+              onClick={handleOneTouchPayLeadFee}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-600/30 border border-rose-500 text-[11px] font-black text-rose-200 shrink-0 animate-pulse"
             >
-              <Lock className="w-3 h-3 text-rose-400" />
-              <span>बकाया ₹{unpaidFeeAmount}</span>
+              <Zap className="w-3 h-3 text-rose-400" />
+              <span>⚡ बकाया ₹{unpaidFeeAmount} UPI Pay</span>
             </button>
           )}
 
@@ -440,6 +493,15 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
             <span className="text-[9px] bg-emerald-500 text-slate-950 font-black px-1 rounded-full">
               {records.filter((r) => r.workerId === worker.id).length}
             </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleOneTouchPayLeadFee}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/20 border border-amber-500/50 text-[11px] font-black text-amber-300 shrink-0 hover:bg-amber-500/30 active:scale-95 transition-all"
+          >
+            <Zap className="w-3 h-3 text-amber-400" />
+            <span>{language === 'hi' ? `₹${leadFeeRupees} UPI Pay` : `Pay ₹${leadFeeRupees}`}</span>
           </button>
 
           <button
@@ -605,13 +667,13 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
             </div>
 
             {/* LIVE CUSTOMER BOOKED WORK NOTIFICATION BANNER (Prominent Alert for Worker) */}
-            {activeBooking && activeBooking.workerId === worker.id && activeBooking.status !== 'completed' && activeBooking.status !== 'cancelled' && (
+            {myActiveBooking && myActiveBooking.status !== 'completed' && myActiveBooking.status !== 'cancelled' && (
               <div className="p-4 rounded-3xl bg-gradient-to-br from-emerald-950/80 via-slate-900 to-teal-950/80 border-2 border-emerald-500 shadow-2xl shadow-emerald-500/20 space-y-3 animate-in slide-in-from-top duration-300">
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-3">
                     <div className="relative">
                       <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-600 text-slate-950 font-black flex items-center justify-center text-lg shadow-lg">
-                        {activeBooking.customerName.charAt(0)}
+                        {myActiveBooking.customerName.charAt(0)}
                       </div>
                       <span className="w-3.5 h-3.5 rounded-full bg-emerald-400 absolute -top-1 -right-1 border-2 border-slate-950 animate-ping" />
                     </div>
@@ -622,22 +684,22 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                           {language === 'hi' ? '🚨 नया काम बुक हुआ!' : '🚨 New Work Booked!'}
                         </span>
                         <span className="text-[10px] text-emerald-400 font-mono font-bold">
-                          {activeBooking.id}
+                          {myActiveBooking.id}
                         </span>
                       </div>
                       <h4 className="text-sm font-bold text-white mt-1">
-                        {activeBooking.customerName}
+                        {myActiveBooking.customerName}
                       </h4>
                       <p className="text-[11px] text-slate-300 flex items-center gap-1">
                         <MapPin className="w-3 h-3 text-orange-400 shrink-0" />
-                        <span className="truncate">{activeBooking.customerLocality}</span>
+                        <span className="truncate">{myActiveBooking.customerLocality}</span>
                       </p>
                     </div>
                   </div>
 
                   <div className="text-right">
                     <span className="text-base font-black text-emerald-400 font-mono block">
-                      ₹{activeBooking.estimatedAmount}
+                      ₹{myActiveBooking.estimatedAmount}
                     </span>
                     <span className="text-[9px] text-slate-400 uppercase font-semibold">
                       {language === 'hi' ? 'अनुमानित आय' : 'Est. Earning'}
@@ -648,10 +710,12 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                 <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 flex items-center justify-between text-[11px]">
                   <span className="text-slate-400 flex items-center gap-1">
                     <Briefcase className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>{activeBooking.serviceCategory}</span>
+                    <span>{myActiveBooking.serviceCategory}</span>
                   </span>
-                  <span className="text-amber-400 font-mono font-bold bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
-                    OTP: {activeBooking.arrivalOtp}
+                  <span className="text-amber-300 font-semibold bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
+                    {myActiveBooking.isOtpVerified
+                      ? (language === 'hi' ? '✓ OTP सत्यापित' : '✓ OTP Verified')
+                      : (language === 'hi' ? '🔒 पहुँचकर ग्राहक से OTP पूछें' : '🔒 Ask Customer for OTP')}
                   </span>
                 </div>
 
@@ -709,20 +773,39 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => {
-                    soundManager.playTap();
-                    setIsCompanyQrModalOpen(true);
-                  }}
+                  onClick={handleOneTouchPayLeadFee}
                   className="w-full py-2.5 rounded-xl bg-gradient-to-r from-rose-500 via-amber-500 to-emerald-500 hover:from-rose-400 text-slate-950 font-black text-xs shadow-lg transition-all flex items-center justify-center gap-2 active:scale-98"
                 >
-                  <QrCode className="w-4 h-4 text-slate-950" />
+                  <Zap className="w-4 h-4 text-slate-950" />
                   <span>
                     {language === 'hi'
-                      ? `कंपनी QR पर ₹${unpaidFeeAmount} तुरंत भरें और नया काम अनलॉक करें`
-                      : `Pay ₹${unpaidFeeAmount} on Company QR & Unlock Jobs`}
+                      ? `⚡ 1-टच में UPI से ₹${unpaidFeeAmount} भरें (Smart India Work)`
+                      : `⚡ 1-Touch Pay ₹${unpaidFeeAmount} via UPI App (Unlock)`}
                   </span>
                   <ArrowRight className="w-4 h-4 text-slate-950" />
                 </button>
+              </div>
+            )}
+
+            {/* Pending Owner UPI Verification Banner */}
+            {pendingWorkerClaims.length > 0 && (
+              <div className="p-3.5 rounded-2xl bg-amber-950/35 border border-amber-500/40 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4" />
+                    <span>
+                      {language === 'hi'
+                        ? `⏳ ${pendingWorkerClaims.length} UPI पेमेंट जांच में है (Owner Verification)`
+                        : `⏳ ${pendingWorkerClaims.length} UPI Payment Pending Verification`}
+                    </span>
+                  </span>
+                </div>
+                {pendingWorkerClaims.slice(0, 2).map((c) => (
+                  <div key={c.id} className="text-[11px] text-slate-300 flex items-center justify-between bg-slate-950/60 px-2.5 py-1.5 rounded-xl border border-slate-800">
+                    <span>₹{c.amount} ({c.purpose})</span>
+                    <span className="font-mono text-amber-300">UTR: {c.utrNumber}</span>
+                  </div>
+                ))}
               </div>
             )}
 
@@ -754,15 +837,24 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                 </div>
               )}
 
-              {/* Wallet Micro-fee Warning / Stat */}
-              <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between text-[10px]">
-                <span className="text-slate-400 flex items-center gap-1">
-                  <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                  Micro-fee: ₹10 per verified OTP
-                </span>
+              {/* Interactive 1-Touch ₹10 Lead Fee Direct UPI Button */}
+              <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between gap-2 text-[10px]">
                 <button
+                  type="button"
+                  onClick={handleOneTouchPayLeadFee}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 font-bold active:scale-95 transition-all text-left"
+                >
+                  <Zap className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span>
+                    {language === 'hi'
+                      ? `⚡ ₹${leadFeeRupees} लीड फीस सीधे UPI से भरें →`
+                      : `⚡ 1-Touch ₹${leadFeeRupees} Lead Pay via UPI →`}
+                  </span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => setIsWalletModalOpen(true)}
-                  className="text-amber-400 hover:underline font-bold"
+                  className="text-amber-400 hover:underline font-bold shrink-0"
                 >
                   Topup Wallet →
                 </button>
@@ -805,12 +897,12 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
             </div>
 
             {/* Active Job Quick Banner (Pending Acceptance vs In Progress) */}
-            {activeBooking && (
-              !activeBooking.isLocationShared ? (
+            {myActiveBooking && (
+              !myActiveBooking.isLocationShared ? (
                 <div
                   onClick={() => {
                     soundManager.playTap();
-                    setLocalIncomingAlert(activeBooking);
+                    setLocalIncomingAlert(myActiveBooking);
                   }}
                   className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-amber-500/20 border-2 border-amber-500 cursor-pointer shadow-xl shadow-amber-500/20 hover:border-amber-400 transition-all flex items-center justify-between animate-pulse"
                 >
@@ -820,13 +912,13 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                     </div>
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-black text-white">{activeBooking.customerName}</span>
+                        <span className="text-xs font-black text-white">{myActiveBooking.customerName}</span>
                         <span className="text-[10px] bg-amber-500 text-slate-950 font-black px-2 py-0.5 rounded-full">
                           {language === 'hi' ? 'नया काम • स्वीकृति चाहिए' : 'New Job • Accept Req'}
                         </span>
                       </div>
                       <p className="text-[11px] text-amber-200 font-semibold mt-0.5">
-                        {activeBooking.serviceSubCategory} • ₹{activeBooking.estimatedAmount}
+                        {myActiveBooking.serviceSubCategory} • ₹{myActiveBooking.estimatedAmount}
                       </p>
                       <p className="text-[10px] text-slate-300 flex items-center gap-1 mt-0.5">
                         <Lock className="w-2.5 h-2.5 text-amber-400" />
@@ -842,7 +934,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                         e.stopPropagation();
                         soundManager.playSuccessCoin();
                         if (onAcceptBooking) {
-                          onAcceptBooking(activeBooking.id);
+                          onAcceptBooking(myActiveBooking.id);
                         }
                         setActiveTab('active');
                       }}
@@ -870,13 +962,13 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                     </div>
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-bold text-white">{activeBooking.customerName}</span>
+                        <span className="text-xs font-bold text-white">{myActiveBooking.customerName}</span>
                         <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-bold px-1.5 py-0.5 rounded">
                           {isOtpVerified ? 'In Progress' : 'OTP Verification Required'}
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-300">
-                        {activeBooking.serviceSubCategory} • Est. ₹{activeBooking.estimatedAmount}
+                        {myActiveBooking.serviceSubCategory} • Est. ₹{myActiveBooking.estimatedAmount}
                       </p>
                       <p className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1 mt-0.5">
                         <Unlock className="w-2.5 h-2.5" />
@@ -982,18 +1074,15 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                         {isAccountBlocked ? (
                           <button
                             type="button"
-                            onClick={() => {
-                              soundManager.playWarning();
-                              setIsCompanyQrModalOpen(true);
-                            }}
+                            onClick={handleOneTouchPayLeadFee}
                             className="w-full py-2.5 rounded-xl bg-rose-950/80 border border-rose-500/60 hover:bg-rose-900 text-rose-200 font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2"
-                            title="Unpaid fee lockout: please clear pending dues to accept new jobs"
+                            title="Unpaid fee lockout: tap for 1-touch UPI payment"
                           >
-                            <Lock className="w-4 h-4 text-rose-400" />
+                            <Zap className="w-4 h-4 text-rose-400" />
                             <span>
                               {language === 'hi'
-                                ? `काम लॉक: पहले कंपनी QR पर ₹${unpaidFeeAmount} फीस दें (अनलॉक करें)`
-                                : `Job Locked: Pay ₹${unpaidFeeAmount} Fee on Company QR to Unlock`}
+                                ? `काम लॉक: ⚡ 1-टच UPI से ₹${unpaidFeeAmount} भरें (अनलॉक करें)`
+                                : `Job Locked: ⚡ 1-Touch Pay ₹${unpaidFeeAmount} via UPI`}
                             </span>
                           </button>
                         ) : (
@@ -1028,13 +1117,13 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                     </h5>
                     <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto leading-relaxed">
                       {language === 'hi' 
-                        ? 'सभी पुराने व डमी काम हटा दिए गए हैं। जैसे ही कोई ग्राहक आपके आसपास नया काम पोस्ट करेगा, आपको तुरंत सूचना व सायरन मिलेगा!'
-                        : 'Old demo leads purged. Scanning your local area in real time for live incoming job requirements.'}
+                        ? `आपकी ID सिर्फ आपके काम (${worker.category.replace(/_/g, ' ')}) के लिए सक्रिय है। जैसे ही कोई ग्राहक यही काम पोस्ट करेगा, आपको तुरंत सूचना व सायरन मिलेगा!`
+                        : `Scanning exclusively for ${worker.category.replace(/_/g, ' ')} job leads in your local area in real time.`}
                     </p>
                   </div>
                   <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 text-[11px] font-semibold">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span>{language === 'hi' ? 'स्कैनिंग: Sector 62 & 10 किमी दायरा' : 'Scanning 10 km radius around you'}</span>
+                    <span>{language === 'hi' ? `ट्रेड लॉक: ${worker.category.replace(/_/g, ' ')}` : `Trade Lock: ${worker.category.replace(/_/g, ' ')}`}</span>
                   </div>
                 </div>
               )}
@@ -1044,10 +1133,10 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
 
         {/* Tab 2: Active Job & Doorstep Verification */}
         {activeTab === 'active' && (
-          activeBooking ? (
+          myActiveBooking ? (
             <div className="p-4 space-y-4 text-xs">
               {/* Job Acceptance Required Banner (if location not unlocked yet) */}
-              {!activeBooking.isLocationShared && (
+              {!myActiveBooking.isLocationShared && (
                 <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-950/80 via-slate-900 to-orange-950/80 border-2 border-amber-500 shadow-xl shadow-amber-500/20 space-y-3 animate-in fade-in duration-300">
                   <div className="flex items-start gap-3">
                     <div className="p-2.5 rounded-xl bg-amber-500 text-slate-950 font-black shrink-0">
@@ -1065,8 +1154,8 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                       </div>
                       <p className="text-[11px] text-slate-300 mt-1 leading-relaxed">
                         {language === 'hi'
-                          ? `ग्राहक ${activeBooking.customerName} ने आपको ${activeBooking.serviceCategory} के लिए चुना है। ग्राहक की गोपनीयता के लिए, जब आप 'काम स्वीकार करें' बटन पर क्लिक करेंगे, तभी ग्राहक का सटीक पता और लाइव मैप आपके पास भेजा जाएगा।`
-                          : `Customer ${activeBooking.customerName} requested you for ${activeBooking.serviceCategory}. For privacy, exact doorstep location & live GPS will be transmitted to you only after you tap 'Accept Job'.`}
+                          ? `ग्राहक ${myActiveBooking.customerName} ने आपको ${myActiveBooking.serviceCategory} के लिए चुना है। ग्राहक की गोपनीयता के लिए, जब आप 'काम स्वीकार करें' बटन पर क्लिक करेंगे, तभी ग्राहक का सटीक पता और लाइव मैप आपके पास भेजा जाएगा।`
+                          : `Customer ${myActiveBooking.customerName} requested you for ${myActiveBooking.serviceCategory}. For privacy, exact doorstep location & live GPS will be transmitted to you only after you tap 'Accept Job'.`}
                       </p>
                     </div>
                   </div>
@@ -1074,10 +1163,10 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                   <div className="p-2.5 rounded-xl bg-slate-950/90 border border-slate-800 flex items-center justify-between text-xs">
                     <span className="text-slate-400 flex items-center gap-1.5">
                       <MapPin className="w-3.5 h-3.5 text-orange-400" />
-                      <span>{activeBooking.customerLocality} (इलाका)</span>
+                      <span>{myActiveBooking.customerLocality} (इलाका)</span>
                     </span>
                     <span className="text-emerald-400 font-bold font-mono">
-                      ₹{activeBooking.estimatedAmount} Fixed
+                      ₹{myActiveBooking.estimatedAmount} Fixed
                     </span>
                   </div>
 
@@ -1087,7 +1176,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                       onClick={() => {
                         soundManager.playSuccessCoin();
                         if (onAcceptBooking) {
-                          onAcceptBooking(activeBooking.id);
+                          onAcceptBooking(myActiveBooking.id);
                         }
                       }}
                       className="flex-1 py-3 px-3 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-500 hover:from-emerald-400 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/30 flex items-center justify-center gap-1.5 active:scale-95 transition-all"
@@ -1101,7 +1190,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                         type="button"
                         onClick={() => {
                           soundManager.playWarning();
-                          onDeclineBooking(activeBooking.id);
+                          onDeclineBooking(myActiveBooking.id);
                         }}
                         className="py-3 px-3 rounded-xl bg-rose-950/50 hover:bg-rose-900/60 border border-rose-500/30 text-rose-300 font-semibold text-xs transition-colors"
                       >
@@ -1115,12 +1204,12 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
               {/* Job Status Banner */}
               <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between">
                 <div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400">Booking ID: {activeBooking.id}</span>
-                  <h4 className="text-xs font-bold text-white">{activeBooking.serviceCategory}</h4>
-                  <p className="text-[11px] text-slate-400">{activeBooking.serviceSubCategory}</p>
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Booking ID: {myActiveBooking.id}</span>
+                  <h4 className="text-xs font-bold text-white">{myActiveBooking.serviceCategory}</h4>
+                  <p className="text-[11px] text-slate-400">{myActiveBooking.serviceSubCategory}</p>
                 </div>
                 <div className="text-right">
-                  <span className="text-sm font-black text-emerald-400 block">₹{activeBooking.estimatedAmount}</span>
+                  <span className="text-sm font-black text-emerald-400 block">₹{myActiveBooking.estimatedAmount}</span>
                   <span className="text-[9px] text-slate-500">Fixed Rate</span>
                 </div>
               </div>
@@ -1130,18 +1219,18 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2.5">
                     <div className="w-10 h-10 rounded-xl bg-blue-600/20 text-blue-400 flex items-center justify-center font-bold text-sm border border-blue-500/30">
-                      {activeBooking.customerName.charAt(0)}
+                      {myActiveBooking.customerName.charAt(0)}
                     </div>
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <h4 className="text-xs font-bold text-white">{activeBooking.customerName}</h4>
+                        <h4 className="text-xs font-bold text-white">{myActiveBooking.customerName}</h4>
                         <span className="text-[9px] font-semibold text-emerald-400 bg-emerald-950 px-1.5 py-0.5 rounded border border-emerald-500/30">
                           {language === 'hi' ? 'ग्राहक' : 'Customer'}
                         </span>
                       </div>
                       <p className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
                         <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                        <span>{isOtpVerified ? activeBooking.customerPhone : '+91 98XXX-XX320 (Masked VoIP)'}</span>
+                        <span>{isOtpVerified ? myActiveBooking.customerPhone : '+91 98XXX-XX320 (Masked VoIP)'}</span>
                       </p>
                     </div>
                   </div>
@@ -1176,7 +1265,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
 
                 {/* Address Box (Gated by Acceptance) */}
                 <div className={`p-3 rounded-xl border transition-all ${
-                  activeBooking.isLocationShared 
+                  myActiveBooking.isLocationShared 
                     ? 'bg-slate-950/80 border-slate-800' 
                     : 'bg-amber-950/30 border-amber-500/50'
                 }`}>
@@ -1186,11 +1275,11 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                       <span>{language === 'hi' ? 'ग्राहक का पता व लोकेशन:' : 'Customer Location / Address:'}</span>
                     </span>
                     <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1 ${
-                      activeBooking.isLocationShared 
+                      myActiveBooking.isLocationShared 
                         ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' 
                         : 'bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse'
                     }`}>
-                      {activeBooking.isLocationShared ? (
+                      {myActiveBooking.isLocationShared ? (
                         <>
                           <Unlock className="w-2.5 h-2.5" />
                           <span>{language === 'hi' ? 'लोकेशन साझा' : 'Location Shared'}</span>
@@ -1204,14 +1293,14 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                     </span>
                   </div>
 
-                  {activeBooking.isLocationShared ? (
+                  {myActiveBooking.isLocationShared ? (
                     <p className="text-xs text-white font-medium">
-                      {isOtpVerified ? activeBooking.customerAddress : `${activeBooking.customerLocality} • ${activeBooking.customerAddress}`}
+                      {isOtpVerified ? myActiveBooking.customerAddress : `${myActiveBooking.customerLocality} • ${myActiveBooking.customerAddress}`}
                     </p>
                   ) : (
                     <div className="space-y-2">
                       <p className="text-xs text-amber-200/90 font-medium">
-                        📍 {activeBooking.customerLocality} (सामान्य इलाका)
+                        📍 {myActiveBooking.customerLocality} (सामान्य इलाका)
                       </p>
                       <p className="text-[11px] text-amber-400/80 bg-amber-950/50 p-2 rounded-lg border border-amber-500/30">
                         {language === 'hi'
@@ -1223,7 +1312,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                           type="button"
                           onClick={() => {
                             soundManager.playSuccessCoin();
-                            onAcceptBooking(activeBooking.id);
+                            onAcceptBooking(myActiveBooking.id);
                           }}
                           className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all"
                         >
@@ -1261,7 +1350,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                   </div>
 
                   {!isOtpVerified && (
-                    !activeBooking.isLocationShared ? (
+                    !myActiveBooking.isLocationShared ? (
                       <div className="ml-9 p-3 rounded-2xl bg-amber-950/30 border border-amber-500/40 space-y-2.5">
                         <div className="flex items-center gap-2 text-amber-400 font-bold text-xs">
                           <Lock className="w-4 h-4" />
@@ -1277,7 +1366,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                             type="button"
                             onClick={() => {
                               soundManager.playSuccessCoin();
-                              onAcceptBooking(activeBooking.id);
+                              onAcceptBooking(myActiveBooking.id);
                             }}
                             className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all"
                           >
@@ -1296,14 +1385,14 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                             </span>
                           </div>
                           <span className="text-[10px] font-mono text-emerald-400 font-bold bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/30">
-                            {activeBooking.workerLocationProgress ? `${Math.round(activeBooking.workerLocationProgress)}% En Route` : '0%'}
+                            {myActiveBooking.workerLocationProgress ? `${Math.round(myActiveBooking.workerLocationProgress)}% En Route` : '0%'}
                           </span>
                         </div>
 
                         <p className="text-[10px] text-slate-400 leading-snug">
                           {language === 'hi'
-                            ? 'लाइव स्पीडोमीटर, वॉयस दिशा-निर्देश और ग्राहक के घर (Flat 704, Tower B) का रास्ता लाइव मैप पर देखें।'
-                            : 'Turn-by-turn voice directions, road speedometer, and doorstep destination live on map.'}
+                            ? `ग्राहक के पते (${myActiveBooking.customerAddress || myActiveBooking.customerLocality}) के लिए लाइव डिवाइस GPS नेविगेशन और Google Maps रास्ता खोलें।`
+                            : `Open live device GPS navigation and Google Maps directions for ${myActiveBooking.customerAddress || myActiveBooking.customerLocality}.`}
                         </p>
 
                         <div className="flex items-center gap-2">
@@ -1388,14 +1477,14 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                 {isOtpVerified && (
                   <div className="flex items-start gap-3 pt-2 border-t border-slate-800/60">
                     <div className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5 ${
-                      activeBooking.status === 'completed' ? 'bg-emerald-500 text-slate-950' : 'bg-emerald-600 text-white'
+                      myActiveBooking.status === 'completed' ? 'bg-emerald-500 text-slate-950' : 'bg-emerald-600 text-white'
                     }`}>
-                      {activeBooking.status === 'completed' ? '✓' : '3'}
+                      {myActiveBooking.status === 'completed' ? '✓' : '3'}
                     </div>
                     <div className="flex-1">
                       <div className="flex items-center justify-between">
                         <span className="font-bold text-white block">Step 3: Complete Work & Collect Payment</span>
-                        {activeBooking.status === 'completed' && (
+                        {myActiveBooking.status === 'completed' && (
                           <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 font-bold text-[9px]">
                             ✓ Completed
                           </span>
@@ -1405,7 +1494,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                         Perform service according to requirements. Generate dynamic UPI Bharat QR code to receive direct bank settlement or collect cash.
                       </p>
 
-                      {activeBooking.status !== 'completed' ? (
+                      {myActiveBooking.status !== 'completed' ? (
                         <div className="mt-3 space-y-2">
                           {/* PRIMARY DYNAMIC QR GENERATOR BUTTON */}
                           <button
@@ -1416,14 +1505,14 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                             className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all active:scale-98"
                           >
                             <QrCode className="w-4 h-4 text-emerald-200" />
-                            <span>Generate Dynamic UPI QR (₹{activeBooking.estimatedAmount})</span>
+                            <span>Generate Dynamic UPI QR (₹{myActiveBooking.estimatedAmount})</span>
                           </button>
 
                           {/* Cash Completion Fallback */}
                           <button
                             onClick={() => {
                               soundManager.playSuccessCoin();
-                              onCompleteJob(activeBooking.estimatedAmount, 'cash');
+                              onCompleteJob(myActiveBooking.estimatedAmount, 'cash');
                             }}
                             className="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-[11px] flex items-center justify-center gap-1.5 transition-colors"
                           >
@@ -1437,10 +1526,10 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                             <div className="flex items-center justify-between text-[11px]">
                               <span className="text-emerald-300 font-semibold flex items-center gap-1.5">
                                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                                Customer Bill Settled (₹{activeBooking.paidAmount || activeBooking.finalAmount || activeBooking.estimatedAmount})
+                                Customer Bill Settled (₹{myActiveBooking.paidAmount || myActiveBooking.finalAmount || myActiveBooking.estimatedAmount})
                               </span>
                               <span className="text-[9px] uppercase font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">
-                                {activeBooking.paymentStatus === 'paid_upi' ? 'UPI Direct' : 'Cash'}
+                                {myActiveBooking.paymentStatus === 'paid_upi' ? 'UPI Direct' : 'Cash'}
                               </span>
                             </div>
 
@@ -1458,9 +1547,28 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
 
                           {/* SMART INDIA WORK APP FLAT ₹10 LEAD FEE SETTLEMENT (0% COMMISSION) */}
                           {(() => {
-                            const jobTotal = activeBooking.finalAmount || activeBooking.paidAmount || activeBooking.estimatedAmount || 1000;
+                            const jobTotal = myActiveBooking.finalAmount || myActiveBooking.paidAmount || myActiveBooking.estimatedAmount || 1000;
                             const leadFeeAmt = appOwnerConfig?.perJobFeeRupees || 10;
-                            const isPaid = activeBooking.meetingFeePaid || activeBooking.commissionPaymentStatus === 'paid_upi' || activeBooking.commissionPaymentStatus === 'paid_wallet';
+                            const isPaid = myActiveBooking.meetingFeePaid || myActiveBooking.commissionPaymentStatus === 'paid_upi' || myActiveBooking.commissionPaymentStatus === 'paid_wallet';
+                            const pendingBookingClaim = pendingWorkerClaims.find((c) => c.bookingId === myActiveBooking.id);
+
+                            if (!isPaid && pendingBookingClaim) {
+                              return (
+                                <div className="p-2.5 rounded-xl bg-amber-950/50 border border-amber-500/40 space-y-1.5">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs font-bold text-amber-300">
+                                      ⏳ {language === 'hi' ? 'लीड फीस UTR जांच में है' : 'Lead Fee Under Owner Verification'}
+                                    </span>
+                                    <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[9px] font-bold uppercase">
+                                      PENDING
+                                    </span>
+                                  </div>
+                                  <p className="text-[10px] text-slate-300">
+                                    UTR: <strong className="font-mono text-white">{pendingBookingClaim.utrNumber}</strong> — ₹{leadFeeAmt}
+                                  </p>
+                                </div>
+                              );
+                            }
 
                             return isPaid ? (
                               <div className="p-2.5 rounded-xl bg-gradient-to-r from-emerald-950/70 to-slate-900 border border-emerald-500/40 space-y-2">
@@ -1522,15 +1630,15 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                                 </p>
 
                                 <button
-                                  onClick={() => {
-                                    soundManager.playTap();
-                                    setIsPayAppOwnerOpen(true);
-                                  }}
-                                  className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 text-slate-950 font-black text-xs shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all active:scale-98"
+                                  type="button"
+                                  onClick={handleOneTouchPayLeadFee}
+                                  className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-400 hover:from-emerald-400 text-slate-950 font-black text-xs shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all active:scale-98"
                                 >
-                                  <QrCode className="w-4 h-4" />
+                                  <Zap className="w-4 h-4" />
                                   <span>
-                                    {language === 'hi' ? `💸 ऐप मालिक को ₹${leadFeeAmt} लीड फीस भेजें (QR / UPI)` : `💸 Pay ₹${leadFeeAmt} Lead Fee to App Owner (QR / UPI)`}
+                                    {language === 'hi'
+                                      ? `⚡ 1-टच में सीधे ₹${leadFeeAmt} UPI से भेजें (Smart India)`
+                                      : `⚡ 1-Touch Pay ₹${leadFeeAmt} via UPI (Smart India)`}
                                   </span>
                                 </button>
                               </div>
@@ -1572,9 +1680,18 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                 <IndianRupee className="w-6 h-6 text-emerald-400" />
                 <span>{worker.walletBalance}.00</span>
               </div>
-              <p className="text-[10px] text-slate-400">
-                Micro-fee deducted per verified OTP: <strong>₹10.00</strong>
-              </p>
+              <button
+                type="button"
+                onClick={handleOneTouchPayLeadFee}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-[10px] text-emerald-300 font-bold transition-all"
+              >
+                <Zap className="w-3 h-3" />
+                <span>
+                  {language === 'hi'
+                    ? `₹${leadFeeRupees} लीड फीस सीधे UPI से भरें →`
+                    : `Tap for 1-Touch ₹${leadFeeRupees} Lead UPI Pay →`}
+                </span>
+              </button>
 
               <div className="grid grid-cols-2 gap-2 mt-3">
                 <button
@@ -1586,14 +1703,12 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                 </button>
 
                 <button
-                  onClick={() => {
-                    soundManager.playTap();
-                    setIsPayAppOwnerOpen(true);
-                  }}
-                  className="py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 text-white font-bold text-xs shadow-md flex items-center justify-center gap-1.5 transition-all"
+                  type="button"
+                  onClick={handleOneTouchPayLeadFee}
+                  className="py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 text-slate-950 font-black text-xs shadow-md flex items-center justify-center gap-1.5 transition-all"
                 >
-                  <Building2 className="w-4 h-4" />
-                  <span>{language === 'hi' ? 'ऐप को कमीशन दें' : 'Pay App Owner'}</span>
+                  <Zap className="w-4 h-4" />
+                  <span>{language === 'hi' ? `1-Touch ₹${leadFeeRupees} Pay` : `1-Touch ₹${leadFeeRupees} Pay`}</span>
                 </button>
               </div>
             </div>
@@ -1607,7 +1722,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                   </div>
                   <div>
                     <h5 className="font-bold text-white text-xs">
-                      {language === 'hi' ? 'स्मार्ट इंडिया ऐप मालिक को कमीशन' : 'Pay Smart India Work App Owner'}
+                      {language === 'hi' ? 'Smart India Work को ₹10 सीधा पेमेंट' : 'Pay Smart India Work App Owner'}
                     </h5>
                     <span className="text-[10px] text-amber-400 font-semibold">
                       ₹{appOwnerConfig?.perJobFeeRupees || 10} Flat Lead Fee • 0% Commission
@@ -1617,18 +1732,20 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
               </div>
               <p className="text-[11px] text-slate-400 leading-relaxed">
                 {language === 'hi'
-                  ? `प्रत्येक काम पर सिर्फ ₹${appOwnerConfig?.perJobFeeRupees || 10} फिक्स फीस (0% कमीशन) सीधे ऐप मालिक के UPI (${appOwnerConfig?.upiId || 'smartindia.official@icici'}) में PhonePe, GPay, Paytm या वॉलेट से जमा करें।`
-                  : `Pay flat ₹${appOwnerConfig?.perJobFeeRupees || 10} lead fee per job (0% commission) directly to App Owner (${appOwnerConfig?.upiId || 'smartindia.official@icici'}) via UPI QR, GPay, PhonePe, or Wallet balance.`}
+                  ? `बिना किसी परेशानी के 1-टच में सीधे अपने PhonePe, GPay, Paytm या BHIM से Smart India Work (${appOwnerConfig?.upiId || 'smartindia.official@icici'}) पर ₹${appOwnerConfig?.perJobFeeRupees || 10} भेजें।`
+                  : `1-Touch direct UPI payment of flat ₹${appOwnerConfig?.perJobFeeRupees || 10} lead fee straight from PhonePe, GPay, Paytm, or BHIM to Smart India Work (${appOwnerConfig?.upiId || 'smartindia.official@icici'}).`}
               </p>
               <button
-                onClick={() => {
-                  soundManager.playTap();
-                  setIsPayAppOwnerOpen(true);
-                }}
-                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-600 via-orange-600 to-amber-500 hover:from-amber-500 text-slate-950 font-black text-xs shadow-md flex items-center justify-center gap-2 transition-all"
+                type="button"
+                onClick={handleOneTouchPayLeadFee}
+                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:from-emerald-400 text-slate-950 font-black text-xs shadow-md flex items-center justify-center gap-2 transition-all active:scale-98"
               >
-                <QrCode className="w-4 h-4" />
-                <span>{language === 'hi' ? 'ऐप मालिक को कमीशन भेजें (UPI QR)' : 'Pay Platform Fee to App Owner'}</span>
+                <Zap className="w-4 h-4" />
+                <span>
+                  {language === 'hi'
+                    ? `⚡ 1-टच में ₹${appOwnerConfig?.perJobFeeRupees || 10} UPI से भरें`
+                    : `⚡ 1-Touch Pay ₹${appOwnerConfig?.perJobFeeRupees || 10} via UPI`}
+                </span>
               </button>
             </div>
 
@@ -1641,12 +1758,12 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                   </div>
                   <div>
                     <h5 className="font-bold text-white text-xs">Official Company Bharat QR Terminal</h5>
-                    <span className="text-[10px] text-indigo-300 font-semibold">Smart India Tech Pvt Ltd • Instant Auto-Credit</span>
+                    <span className="text-[10px] text-indigo-300 font-semibold">12-Digit UTR + Owner Bank Verification</span>
                   </div>
                 </div>
               </div>
               <p className="text-[11px] text-slate-400 leading-relaxed">
-                Scan the official company NPCI Bharat QR or transfer via Corporate NEFT/IMPS to pay platform fees, KYC verification, or top-up lead balance. Instant digital GST tax invoice generated.
+                Pay via Owner&apos;s PhonePe / GPay / Paytm QR and submit your 12-digit NPCI UTR number. Credits unlock immediately once Owner confirms receipt in their bank account.
               </p>
               <button
                 onClick={() => {
@@ -2094,26 +2211,16 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
               </button>
             )}
 
-            {/* Protected App Owner Portal Access (PIN Required) */}
+            {/* Plain App Version Footer (Silent 5-tap owner access) */}
             {onSwitchToOwner && (
-              <button
-                type="button"
-                onClick={() => {
-                  soundManager.playTap();
-                  if (isOwnerSession) {
-                    onSwitchToOwner();
-                  } else {
-                    setIsOwnerPinOpen(true);
-                  }
-                }}
-                className="w-full py-2.5 px-3 rounded-2xl bg-amber-950/30 hover:bg-amber-950/60 border border-amber-500/30 text-amber-300 font-bold text-xs flex items-center justify-between transition-all"
-              >
-                <span className="flex items-center gap-2">
-                  <Crown className="w-4 h-4 text-amber-400" />
-                  <span>{language === 'hi' ? '👑 ऐप ओनर पोर्टल (PIN)' : '👑 App Owner Portal (PIN)'}</span>
+              <div className="pt-2 pb-1 text-center">
+                <span
+                  onClick={handleSecretOwnerTap}
+                  className="text-[10px] text-slate-600 font-mono select-none"
+                >
+                  Smart India Work v1.1
                 </span>
-                <Lock className="w-3.5 h-3.5 text-amber-400" />
-              </button>
+              </div>
             )}
           </div>
         )}
@@ -2152,7 +2259,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
         >
           <div className="relative w-6 h-6 flex items-center justify-center">
             <Briefcase className="w-4 h-4" />
-            {activeBooking && (
+            {myActiveBooking && (
               <span className="w-2 h-2 rounded-full bg-amber-400 absolute top-0 right-0 animate-ping" />
             )}
           </div>
@@ -2212,21 +2319,21 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
       </div>
 
       {/* Modals */}
-      {activeBooking && (
+      {myActiveBooking && (
         <OtpVerificationDialog
           isOpen={isOtpModalOpen}
           onClose={() => setIsOtpModalOpen(false)}
-          expectedOtp={activeBooking.arrivalOtp}
-          customerName={activeBooking.customerName}
-          customerPhone={activeBooking.customerPhone}
-          customerAddress={activeBooking.customerAddress}
-          microFeeAmount={appOwnerConfig?.perJobFeeRupees || activeBooking.microFeeDeducted || 10}
+          expectedOtp={myActiveBooking.arrivalOtp}
+          customerName={myActiveBooking.customerName}
+          customerPhone={myActiveBooking.customerPhone}
+          customerAddress={myActiveBooking.customerAddress}
+          microFeeAmount={appOwnerConfig?.perJobFeeRupees || myActiveBooking.microFeeDeducted || 10}
           workerWalletBalance={worker.walletBalance}
           workerId={worker.id}
           workerName={worker.name}
           workerPhone={worker.phone}
-          bookingId={activeBooking.id}
-          serviceCategory={activeBooking.serviceCategory}
+          bookingId={myActiveBooking.id}
+          serviceCategory={myActiveBooking.serviceCategory}
           appOwnerConfig={appOwnerConfig || {
             ownerName: 'Smart India Admin',
             businessName: 'Smart India Work Official',
@@ -2242,6 +2349,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
             autoDeductFromWallet: true,
           }}
           language={language}
+          existingUtrs={existingUtrs}
           onOtpVerifiedSuccess={(record, method) => {
             onVerifyOtp(record, method);
           }}
@@ -2258,6 +2366,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
         onClose={() => setIsWalletModalOpen(false)}
         balance={worker.walletBalance}
         transactions={walletTransactions}
+        pendingClaims={workerClaims}
         language={language}
         onRecharge={onRechargeWallet}
         onOpenCompanyQr={(amt) => {
@@ -2276,7 +2385,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
         onClose={() => setIsImpsPayoutOpen(false)}
         worker={worker}
         language={language}
-        onPayoutSuccess={(amount, record) => {
+        onPayoutSuccess={(amount) => {
           onRechargeWallet(-amount);
           soundManager.playPaymentReceived();
         }}
@@ -2290,14 +2399,9 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
         language={language}
         initialPurpose={isAccountBlocked ? 'unpaid_fee' : 'wallet'}
         initialAmount={isAccountBlocked ? unpaidFeeAmount : walletRechargeAmount}
-        onClearUnpaidFee={(amt, txnId) => {
-          if (onClearUnpaidFee) {
-            onClearUnpaidFee(worker.id, amt, 'upi_direct', txnId);
-          }
-        }}
-        onRechargeSuccess={(amount, description) => {
-          onRechargeWallet(amount);
-        }}
+        existingUtrs={existingUtrs}
+        workerClaims={workerClaims}
+        onSubmitPaymentClaim={onSubmitPaymentClaim}
       />
 
       <KycVerificationModal
@@ -2332,7 +2436,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
         isOpen={isUpiQrModalOpen}
         onClose={() => setIsUpiQrModalOpen(false)}
         worker={worker}
-        booking={activeBooking}
+        booking={myActiveBooking}
         language={language}
         onPaymentConfirmed={(amount, method, txnId) => {
           onCompleteJob(amount, method, txnId);
@@ -2351,23 +2455,39 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
         />
       )}
 
-      {activeBooking && appOwnerConfig && (
-        <PayAppOwnerModal
-          isOpen={isPayAppOwnerOpen}
-          onClose={() => setIsPayAppOwnerOpen(false)}
-          worker={worker}
-          booking={activeBooking}
-          appOwnerConfig={appOwnerConfig}
-          language={language}
-          onCommissionPaid={(record, method) => {
-            if (onPayCommission) {
-              onPayCommission(record, method);
-            }
-          }}
-        />
-      )}
+      <PayAppOwnerModal
+        isOpen={isPayAppOwnerOpen}
+        onClose={() => {
+          setIsPayAppOwnerOpen(false);
+          setLaunchedDirectUpiFromTap(false);
+        }}
+        worker={worker}
+        booking={myActiveBooking}
+        appOwnerConfig={appOwnerConfig || {
+          ownerName: 'Smart India Admin',
+          businessName: 'Smart India Work Official',
+          upiId: 'smartindia.official@icici',
+          phone: '+91 98765 00112',
+          bankAccountName: 'Smart India Work Technologies Pvt Ltd',
+          bankAccountNumber: '50200084938291',
+          ifscCode: 'ICIC0001092',
+          bankName: 'ICICI Bank Ltd',
+          feeModel: 'fixed_per_job',
+          perJobFeeRupees: 10,
+          commissionRatePercent: 0,
+          autoDeductFromWallet: true,
+        }}
+        language={language}
+        existingUtrs={existingUtrs}
+        launchedDirectlyFromTap={launchedDirectUpiFromTap}
+        onCommissionPaid={(record, method) => {
+          if (onPayCommission) {
+            onPayCommission(record, method);
+          }
+        }}
+      />
 
-      {activeBooking && (
+      {myActiveBooking && (
         <ChatCallModal
           isOpen={isChatOpen || isCallOpen}
           onClose={() => {
@@ -2375,8 +2495,8 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
             setIsCallOpen(false);
           }}
           mode={isCallOpen ? 'call' : 'chat'}
-          otherPartyName={activeBooking.customerName}
-          otherPartyPhone={isOtpVerified ? activeBooking.customerPhone : 'XXXX-XXXX-23'}
+          otherPartyName={myActiveBooking.customerName}
+          otherPartyPhone={isOtpVerified ? myActiveBooking.customerPhone : 'XXXX-XXXX-23'}
           otherPartyRole="Customer"
           otherPartyAvatar="https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=400&q=80"
           currentRole="worker"
@@ -2408,7 +2528,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
       />
 
       {/* Ola Live GPS Turn-by-Turn Navigation Modal for Worker */}
-      {isWorkerNavModalOpen && activeBooking && (
+      {isWorkerNavModalOpen && myActiveBooking && (
         <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 animate-in fade-in">
           <div className="w-full max-w-md h-[92vh] max-h-[720px] bg-slate-950 rounded-3xl border border-slate-800 shadow-2xl flex flex-col overflow-hidden">
             {/* Navigation Header */}
@@ -2422,7 +2542,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                     {language === 'hi' ? 'ओला लाइव जीपीएस नेविगेशन (कारीगर मोड़)' : 'Ola Live GPS Navigation (Driver Mode)'}
                   </h3>
                   <p className="text-[10px] text-slate-400 truncate max-w-[150px]">
-                    {activeBooking.customerLocality}
+                    {myActiveBooking.customerLocality}
                   </p>
                 </div>
               </div>
@@ -2460,7 +2580,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
             {/* Embedded Ola Live Tracking Map */}
             <div className="flex-1 overflow-hidden flex flex-col">
               <OlaLiveTrackingMap
-                booking={activeBooking}
+                booking={myActiveBooking}
                 language={language}
                 isWorkerMode={true}
                 onProgressChange={(newProgress) => {
@@ -2494,8 +2614,8 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
         }}
         onSelectNotificationBooking={(bookingId) => {
           setActiveTab('active');
-          if (activeBooking && !activeBooking.isLocationShared) {
-            setLocalIncomingAlert(activeBooking);
+          if (myActiveBooking && !myActiveBooking.isLocationShared) {
+            setLocalIncomingAlert(myActiveBooking);
           }
         }}
         language={language}

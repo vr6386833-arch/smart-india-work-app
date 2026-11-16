@@ -22,6 +22,7 @@ interface PostJobModalProps {
   onClose: () => void;
   language: Language;
   defaultLocality?: string;
+  initialCategory?: string;
   onJobCreated: (newJob: Partial<JobPost>) => void;
 }
 
@@ -30,6 +31,7 @@ export const PostJobModal: React.FC<PostJobModalProps> = ({
   onClose,
   language,
   defaultLocality,
+  initialCategory,
   onJobCreated,
 }) => {
   const [selectedCategory, setSelectedCategory] = useState(CATEGORIES[0].id);
@@ -50,6 +52,20 @@ export const PostJobModal: React.FC<PostJobModalProps> = ({
       setLocality(defaultLocality);
     }
   }, [defaultLocality, isOpen]);
+
+  React.useEffect(() => {
+    if (!isOpen || !initialCategory) return;
+    const cat = CATEGORIES.find((c) => c.id.toLowerCase() === initialCategory.toLowerCase());
+    if (cat) {
+      setSelectedCategory(cat.id);
+      if (cat.subcategories.length > 0) {
+        setSelectedSubcategory(cat.subcategories[0]);
+      }
+      if (cat.workPhotos && cat.workPhotos.length > 0) {
+        setPhotos(cat.workPhotos.slice(0, 2));
+      }
+    }
+  }, [initialCategory, isOpen]);
 
   if (!isOpen) return null;
 

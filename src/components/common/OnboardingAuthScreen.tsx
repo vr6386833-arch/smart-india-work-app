@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   User,
   HardHat,
@@ -9,7 +9,6 @@ import {
   Briefcase,
   CheckCircle2,
   ShieldCheck,
-  Crown,
   Globe,
   Sparkles,
   IndianRupee,
@@ -24,6 +23,8 @@ import { CATEGORIES } from '../../data/mockData';
 import { CustomerProfile, WorkerProfile, Language } from '../../types';
 import { soundManager } from '../../services/soundEffects';
 import { compressDocumentImageFile } from '../../utils/qrImageHelper';
+import { validateIndianMobile10 } from '../../services/firebase';
+import { FirebasePhoneOtpBox } from './FirebasePhoneOtpBox';
 
 interface OnboardingAuthScreenProps {
   language: Language;
@@ -55,6 +56,23 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
 }) => {
   const [step, setStep] = useState<'choose' | 'customer_form' | 'worker_form'>('choose');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const secretOwnerTapRef = useRef<{ count: number; lastTap: number }>({ count: 0, lastTap: 0 });
+
+  const handleSecretLogoTap = () => {
+    if (!onOpenOwnerPortal) return;
+    const now = Date.now();
+    if (now - secretOwnerTapRef.current.lastTap > 2000) {
+      secretOwnerTapRef.current.count = 1;
+    } else {
+      secretOwnerTapRef.current.count += 1;
+    }
+    secretOwnerTapRef.current.lastTap = now;
+    if (secretOwnerTapRef.current.count >= 5) {
+      secretOwnerTapRef.current.count = 0;
+      soundManager.playTap();
+      onOpenOwnerPortal();
+    }
+  };
 
   // Customer form states
   const [custName, setCustName] = useState('');
@@ -62,10 +80,12 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
   const [custCity, setCustCity] = useState('Noida');
   const [custLocality, setCustLocality] = useState('');
   const [custAddress, setCustAddress] = useState('');
+  const [isCustPhoneVerified, setIsCustPhoneVerified] = useState(false);
 
   // Worker form states
   const [wrkName, setWrkName] = useState('');
   const [wrkPhone, setWrkPhone] = useState('');
+  const [isWrkPhoneVerified, setIsWrkPhoneVerified] = useState(false);
   const [wrkAge, setWrkAge] = useState<string>('28');
   const [wrkCategory, setWrkCategory] = useState<string>('mistry');
   const [wrkDailyRate, setWrkDailyRate] = useState<string>('850');
@@ -110,8 +130,13 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
       soundManager.playWarning();
       return;
     }
-    if (cleanPhone.length < 10) {
-      setErrorMsg(language === 'hi' ? 'कृपया 10 अंकों का सही मोबाइल नंबर डालें' : 'Please enter a valid 10-digit mobile number');
+    if (!validateIndianMobile10(cleanPhone)) {
+      setErrorMsg(language === 'hi' ? 'कृपया असली 10 अंकों का भारतीय मोबाइल नंबर डालें (6-9 से शुरू)' : 'Please enter a valid 10-digit Indian mobile number');
+      soundManager.playWarning();
+      return;
+    }
+    if (!isCustPhoneVerified) {
+      setErrorMsg(language === 'hi' ? 'कृपया पहले अपने असली नंबर पर आया 6-अंकों का SMS OTP सत्यापित करें' : 'Please verify your mobile number with real 6-digit SMS OTP first');
       soundManager.playWarning();
       return;
     }
@@ -160,8 +185,13 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
       soundManager.playWarning();
       return;
     }
-    if (cleanPhone.length < 10) {
-      setErrorMsg(language === 'hi' ? 'कृपया 10 अंकों का सही मोबाइल नंबर डालें' : 'Please enter a valid 10-digit mobile number');
+    if (!validateIndianMobile10(cleanPhone)) {
+      setErrorMsg(language === 'hi' ? 'कृपया असली 10 अंकों का भारतीय मोबाइल नंबर डालें (6-9 से शुरू)' : 'Please enter a valid 10-digit Indian mobile number');
+      soundManager.playWarning();
+      return;
+    }
+    if (!isWrkPhoneVerified) {
+      setErrorMsg(language === 'hi' ? 'कृपया पहले अपने असली नंबर पर आया 6-अंकों का SMS OTP सत्यापित करें' : 'Please verify your mobile number with real 6-digit SMS OTP first');
       soundManager.playWarning();
       return;
     }
@@ -250,7 +280,10 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
       <div className="max-w-md mx-auto w-full px-4 flex-1 flex flex-col justify-between gap-4">
         {/* Top Brand Bar & Language Switch */}
         <div className="flex items-center justify-between pt-1">
-          <div className="flex items-center gap-2.5">
+          <div
+            onClick={handleSecretLogoTap}
+            className="flex items-center gap-2.5 select-none"
+          >
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-orange-500 via-amber-500 to-emerald-500 flex items-center justify-center text-slate-950 font-black shadow-lg shadow-orange-500/20">
               <Sparkles className="w-5 h-5" />
             </div>
@@ -375,7 +408,7 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
               </div>
             </button>
 
-            {/* Quick browse & Owner link */}
+            {/* Quick browse */}
             <div className="pt-2 space-y-2.5 text-center">
               <button
                 type="button"
@@ -389,20 +422,6 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
                   ? 'अभी बिना ID के देखें (New Customer ID)'
                   : 'Browse Without ID First (New Customer ID)'}
               </button>
-
-              {onOpenOwnerPortal && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    soundManager.playTap();
-                    onOpenOwnerPortal();
-                  }}
-                  className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-400 hover:text-amber-300 py-1"
-                >
-                  <Crown className="w-3.5 h-3.5" />
-                  <span>{language === 'hi' ? 'ऐप मालिक पोर्टल खोलें (PIN)' : 'App Owner Portal (PIN)'}</span>
-                </button>
-              )}
             </div>
           </div>
         )}
@@ -460,21 +479,22 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
 
               <div>
                 <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                  {language === 'hi' ? '10-अंकों का मोबाइल नंबर *' : '10-Digit Mobile Number *'}
+                  {language === 'hi' ? '10-अंकों का असली मोबाइल नंबर + SMS OTP *' : '10-Digit Mobile Number + Real SMS OTP *'}
                 </label>
-                <div className="relative flex items-center">
-                  <span className="absolute left-3 text-slate-400 font-mono text-xs font-bold">+91</span>
-                  <input
-                    type="tel"
-                    inputMode="numeric"
-                    maxLength={10}
-                    value={custPhone}
-                    onChange={(e) => setCustPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
-                    placeholder="9876543210"
-                    className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl pl-11 pr-3 py-2.5 text-xs font-mono font-bold text-white focus:outline-none"
-                    required
-                  />
-                </div>
+                <FirebasePhoneOtpBox
+                  phoneDigits={custPhone}
+                  onPhoneChange={setCustPhone}
+                  isVerified={isCustPhoneVerified}
+                  onVerified={(vPhone) => {
+                    setCustPhone(vPhone);
+                    setIsCustPhoneVerified(true);
+                    setErrorMsg(null);
+                  }}
+                  onResetVerification={() => setIsCustPhoneVerified(false)}
+                  language={language}
+                  accentColor="blue"
+                  containerId="recaptcha-onboard-cust"
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-2.5">
@@ -622,21 +642,22 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
 
               <div>
                 <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                  {language === 'hi' ? '10-अंकों का मोबाइल नंबर *' : '10-Digit Mobile Number *'}
+                  {language === 'hi' ? '10-अंकों का असली मोबाइल नंबर + SMS OTP *' : '10-Digit Mobile Number + Real SMS OTP *'}
                 </label>
-                <div className="relative flex items-center">
-                  <span className="absolute left-3 text-slate-400 font-mono text-xs font-bold">+91</span>
-                  <input
-                    type="tel"
-                    inputMode="numeric"
-                    maxLength={10}
-                    value={wrkPhone}
-                    onChange={(e) => setWrkPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
-                    placeholder="9876543210"
-                    className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-xl pl-11 pr-3 py-2.5 text-xs font-mono font-bold text-white focus:outline-none"
-                    required
-                  />
-                </div>
+                <FirebasePhoneOtpBox
+                  phoneDigits={wrkPhone}
+                  onPhoneChange={setWrkPhone}
+                  isVerified={isWrkPhoneVerified}
+                  onVerified={(vPhone) => {
+                    setWrkPhone(vPhone);
+                    setIsWrkPhoneVerified(true);
+                    setErrorMsg(null);
+                  }}
+                  onResetVerification={() => setIsWrkPhoneVerified(false)}
+                  language={language}
+                  accentColor="emerald"
+                  containerId="recaptcha-onboard-wrk"
+                />
               </div>
 
               <div className="grid grid-cols-3 gap-2.5">

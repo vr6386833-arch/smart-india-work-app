@@ -25,7 +25,6 @@ import {
 import { soundManager } from '../../services/soundEffects';
 import { SmsDispatchService, SmsConfig, SmsLogRecord } from '../../services/smsDispatchService';
 import { PushNotificationService, PushChannelConfig } from '../../services/pushNotificationService';
-import { PgWebhookService } from '../../services/pgWebhookService';
 import { CallMaskingService } from '../../services/callMaskingService';
 import { IndexedDbSyncService, OfflineSyncStatus } from '../../services/indexedDbSyncService';
 import { WorkerProfile, WalletTransaction } from '../../types';
@@ -35,7 +34,7 @@ interface ProductionServicesModalProps {
   onClose: () => void;
   language: 'hi' | 'en';
   worker: WorkerProfile;
-  onRechargeWallet: (amount: number, txn: WalletTransaction) => void;
+  onRechargeWallet?: (amount: number, txn: WalletTransaction) => void;
 }
 
 export const ProductionServicesModal: React.FC<ProductionServicesModalProps> = ({
@@ -43,7 +42,6 @@ export const ProductionServicesModal: React.FC<ProductionServicesModalProps> = (
   onClose,
   language,
   worker,
-  onRechargeWallet,
 }) => {
   const [activeTab, setActiveTab] = useState<'sms' | 'push' | 'pg_webhook' | 'call_masking' | 'offline_db'>('sms');
 
@@ -58,11 +56,8 @@ export const ProductionServicesModal: React.FC<ProductionServicesModalProps> = (
   const [pushStatus, setPushStatus] = useState<PushChannelConfig>(PushNotificationService.getStatus());
   const [isTestingPush, setIsTestingPush] = useState(false);
 
-  // PG Webhook states
+  // PG Webhook info state (requires backend merchant webhook for automated settlement)
   const [selectedGateway, setSelectedGateway] = useState<'PhonePe' | 'Razorpay' | 'Cashfree'>('PhonePe');
-  const [webhookAmount, setWebhookAmount] = useState<number>(100);
-  const [isProcessingWebhook, setIsProcessingWebhook] = useState(false);
-  const [webhookResult, setWebhookResult] = useState<any | null>(null);
 
   // Call Masking states
   const [maskedPhonePreview, setMaskedPhonePreview] = useState(CallMaskingService.maskPhoneNumber(worker.phone));
@@ -132,29 +127,7 @@ export const ProductionServicesModal: React.FC<ProductionServicesModalProps> = (
     setIsTestingPush(false);
   };
 
-  // 3. Trigger 1-Second Auto-Credit PG Webhook
-  const handleTriggerPgWebhook = async () => {
-    setIsProcessingWebhook(true);
-    setWebhookResult(null);
-    soundManager.playTap();
-
-    try {
-      const payload = await PgWebhookService.processInstantRechargeWebhook({
-        worker,
-        amount: webhookAmount,
-        gateway: selectedGateway,
-        onSuccess: (newBalance, txn) => {
-          onRechargeWallet(webhookAmount, txn);
-        },
-      });
-
-      setWebhookResult(payload);
-    } catch (e) {
-      soundManager.playError();
-    } finally {
-      setIsProcessingWebhook(false);
-    }
-  };
+  // 3. PG Auto-Credit Notice: disabled locally until a real merchant webhook server is deployed
 
   // 4. Toggle Internet Cut Simulator (IndexedDB Offline Test)
   const handleToggleOfflineSimulator = () => {
@@ -208,7 +181,7 @@ export const ProductionServicesModal: React.FC<ProductionServicesModalProps> = (
           {[
             { id: 'sms', label: '1. Fast2SMS / DND Bypass', icon: MessageSquare },
             { id: 'push', label: '2. Android APK Push', icon: Bell },
-            { id: 'pg_webhook', label: '3. PG 1-Sec Webhook', icon: CreditCard },
+            { id: 'pg_webhook', label: '3. UPI / PG Verification', icon: CreditCard },
             { id: 'call_masking', label: '4. Call Masking (011)', icon: PhoneCall },
             { id: 'offline_db', label: '5. Offline IndexedDB', icon: Database },
           ].map((tab) => {
@@ -390,105 +363,58 @@ export const ProductionServicesModal: React.FC<ProductionServicesModalProps> = (
             </div>
           )}
 
-          {/* TAB 3: PG 1-Sec Webhook Auto-Credit */}
+          {/* TAB 3: Real UPI / Merchant Payment Verification Notice */}
           {activeTab === 'pg_webhook' && (
             <div className="space-y-4">
               <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <CreditCard className="w-4 h-4 text-purple-400" />
-                    <span className="text-xs font-bold text-white">Zero-Approval Instant Webhook Engine</span>
+                    <CreditCard className="w-4 h-4 text-emerald-400" />
+                    <span className="text-xs font-bold text-white">Real UPI Verification Policy (No Fake Credits)</span>
                   </div>
-                  <span className="px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 text-[10px] font-mono font-bold">
-                    Latency: ~1.0s (Direct Bank Server)
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-mono font-bold">
+                    100% Genuine UTR Check
                   </span>
                 </div>
 
-                <p className="text-xs text-slate-300">
-                  {language === 'hi' 
-                    ? 'कारीगर द्वारा ₹100 या ₹500 का भुगतान करते ही बैंक सर्वर से 1 सेकंड में वॉलेट क्रेडिट हो जाता है। किसी व्यवस्थापक (Admin) की मंजूरी की प्रतीक्षा नहीं करनी पड़ती।' 
-                    : 'When worker pays ₹100 via UPI/PG, bank webhook credits wallet instantly in 1s with ZERO manual approval.'}
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  {language === 'hi'
+                    ? 'फेक पेमेंट और नकली वॉलेट बैलेंस को रोकने के लिए 1-सेकंड का लोकल सिमुलेटर हटा दिया गया है। स्वचालित PG ऑटो-क्रेडिट के लिए लाइव मर्चेंट सर्वर वेबहुक (Razorpay / PhonePe Merchant Secret Key) आवश्यक होता है। अभी सभी वर्कर पेमेंट असली 12-अंकों के NPCI UTR नंबर और ओनर के बैंक खाते की जांच के बाद ही स्वीकृत होते हैं।'
+                    : 'Local 1-second fake wallet credit simulation has been permanently removed. Automated PG auto-credit requires a live backend merchant webhook with Razorpay/PhonePe secret keys. Until a merchant backend is connected, every worker recharge and fee uses genuine 12-digit NPCI UTR submission + Owner Bank Verification.'}
                 </p>
 
-                {/* Gateway Picker */}
                 <div className="grid grid-cols-3 gap-2 pt-1">
                   {(['PhonePe', 'Razorpay', 'Cashfree'] as const).map((gw) => (
                     <button
                       key={gw}
+                      type="button"
                       onClick={() => setSelectedGateway(gw)}
                       className={`p-2.5 rounded-xl border text-xs font-bold transition-all ${
                         selectedGateway === gw
-                          ? 'bg-purple-600/20 border-purple-500 text-purple-300'
+                          ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
                           : 'bg-slate-900 border-slate-800 text-slate-400'
                       }`}
                     >
-                      {gw} PG
+                      {gw} Merchant
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Webhook Simulator Action */}
-              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3">
+              <div className="bg-slate-950 p-4 rounded-2xl border border-amber-500/30 space-y-2 text-xs">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-300">Recharge Amount (₹)</label>
-                  <span className="text-xs font-mono text-emerald-400 font-bold">
-                    Current Balance: ₹{worker.walletBalance}
+                  <span className="font-bold text-amber-300">
+                    {language === 'hi' ? 'सक्रिय भुगतान प्रक्रिया:' : 'Active Payment Flow:'}
+                  </span>
+                  <span className="font-mono text-emerald-400 font-bold">
+                    Current Wallet: ₹{worker.walletBalance}
                   </span>
                 </div>
-
-                <div className="flex gap-2">
-                  {[100, 300, 500].map((amt) => (
-                    <button
-                      key={amt}
-                      onClick={() => setWebhookAmount(amt)}
-                      className={`flex-1 py-1.5 rounded-lg border text-xs font-bold ${
-                        webhookAmount === amt
-                          ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
-                          : 'bg-slate-900 border-slate-800 text-slate-400'
-                      }`}
-                    >
-                      ₹{amt}
-                    </button>
-                  ))}
-                </div>
-
-                <button
-                  onClick={handleTriggerPgWebhook}
-                  disabled={isProcessingWebhook}
-                  className="w-full py-3 bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-purple-950/40 disabled:opacity-50"
-                >
-                  {isProcessingWebhook ? (
-                    <>
-                      <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      <span>Verifying with {selectedGateway} Bank Server... (1 Sec)</span>
-                    </>
-                  ) : (
-                    <>
-                      <Zap className="w-4 h-4 text-amber-300" />
-                      <span>
-                        {language === 'hi' 
-                          ? `⚡ 1 सेकंड में ₹${webhookAmount} लाइव वेबहुक ऑटो-क्रेडिट करें` 
-                          : `⚡ Live 1-Sec Webhook Auto-Credit (₹${webhookAmount})`}
-                      </span>
-                    </>
-                  )}
-                </button>
-
-                {webhookResult && (
-                  <div className="p-3 rounded-xl bg-slate-900 border border-emerald-500/40 space-y-1 text-xs">
-                    <div className="flex justify-between items-center text-emerald-400 font-bold">
-                      <span>✓ Webhook Verified (HMAC-SHA256)</span>
-                      <span>1.0s Instant</span>
-                    </div>
-                    <p className="text-slate-300">
-                      Bank Ref UTR: <span className="font-mono text-white">{webhookResult.bankUtr}</span>
-                    </p>
-                    <p className="text-slate-400 text-[11px]">
-                      Event: <span className="font-mono text-purple-300">{webhookResult.event}</span> • Status: SUCCESS
-                    </p>
-                  </div>
-                )}
+                <p className="text-slate-400 text-[11px] leading-relaxed">
+                  1. Worker pays directly to Owner&apos;s PhonePe / GPay / Paytm QR or UPI ID.<br />
+                  2. Worker enters the 12-digit NPCI UTR / Ref No. (duplicates blocked).<br />
+                  3. Owner confirms receipt in their bank app and clicks Approve — only then wallet balance increases.
+                </p>
               </div>
             </div>
           )}

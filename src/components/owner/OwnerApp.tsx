@@ -56,7 +56,8 @@ import {
   WorkerProfile,
   CustomerProfile,
   JobPost,
-  OwnerPayoutRecord
+  OwnerPayoutRecord,
+  UpiPaymentRequest
 } from '../../types';
 import { soundManager } from '../../services/soundEffects';
 import { safeStorage } from '../../services/safeStorage';
@@ -83,6 +84,9 @@ interface OwnerAppProps {
   onUnlockWorker?: (workerId: string) => void;
   onNavigateToView?: (view: 'dual' | 'customer' | 'worker') => void;
   payoutHistory?: OwnerPayoutRecord[];
+  upiPaymentClaims?: UpiPaymentRequest[];
+  onApproveUpiClaim?: (claimId: string) => void;
+  onRejectUpiClaim?: (claimId: string, reason?: string) => void;
   onResetAllData?: () => void;
   onExitOwnerMode?: () => void;
 }
@@ -99,6 +103,9 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
   onUnlockWorker,
   onNavigateToView,
   payoutHistory = [],
+  upiPaymentClaims = [],
+  onApproveUpiClaim,
+  onRejectUpiClaim,
   onResetAllData,
   onExitOwnerMode,
 }) => {
@@ -122,6 +129,9 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
   const [confirmCleanReset, setConfirmCleanReset] = useState(false);
   const [cleanResetDoneMsg, setCleanResetDoneMsg] = useState<string | null>(null);
   const [inspectAadhaarWorker, setInspectAadhaarWorker] = useState<WorkerProfile | null>(null);
+  const [inspectClaimProof, setInspectClaimProof] = useState<UpiPaymentRequest | null>(null);
+  const [rejectingClaimId, setRejectingClaimId] = useState<string | null>(null);
+  const [rejectReasonText, setRejectReasonText] = useState<string>('');
   const [withdrawNote, setWithdrawNote] = useState<string>('Worker Platform Fees Withdrawal');
   const [isProcessingTransfer, setIsProcessingTransfer] = useState(false);
   const [transferStep, setTransferStep] = useState<number>(0);
@@ -167,14 +177,16 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
     });
   }, [appOwnerConfig]);
 
-  // Financial Calculations
-  const totalEarned = commissionRecords.reduce(
-    (acc, curr) => acc + (curr.status === 'paid' ? curr.commissionAmount : 0),
+  // Financial Calculations (strictly from real paid commission records)
+  const paidCommissionRecords = commissionRecords.filter((curr) => curr.status === 'paid');
+  const totalEarned = paidCommissionRecords.reduce(
+    (acc, curr) => acc + curr.commissionAmount,
     0
   );
   const totalWithdrawn = appOwnerConfig.totalWithdrawnToBank || 0;
   const availableToWithdraw = Math.max(0, totalEarned - totalWithdrawn);
   const totalAppUsersCount = customers.length + workers.length;
+  const pendingUpiClaims = upiPaymentClaims.filter((c) => c.status === 'pending_verification');
 
   useEffect(() => {
     setWithdrawAmount(availableToWithdraw > 0 ? String(availableToWithdraw) : '0');
@@ -456,9 +468,15 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
       >
         <Receipt className="w-3.5 h-3.5 text-purple-400" />
         <span>{language === 'hi' ? 'वर्कर फीस लेजर (₹10/काम)' : 'Worker Fees Ledger'}</span>
-        <span className="px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-mono">
-          {commissionRecords.length}
-        </span>
+        {pendingUpiClaims.length > 0 ? (
+          <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black animate-pulse">
+            {pendingUpiClaims.length} Pending
+          </span>
+        ) : (
+          <span className="px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-mono">
+            {commissionRecords.length}
+          </span>
+        )}
       </button>
 
       <button
@@ -478,9 +496,210 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
     </div>
   );
 
+  // Reusable Pending Real UPI Claims Verification Section
+  const renderPendingUpiClaimsSection = (showAllHistory = false) => {
+    const claimsToRender = showAllHistory ? upiPaymentClaims : pendingUpiClaims;
+    if (claimsToRender.length === 0) return null;
+
+    const purposeLabel = (purpose: UpiPaymentRequest['purpose']) => {
+      switch (purpose) {
+        case 'wallet':
+          return language === 'hi' ? 'वॉलेट रीचार्ज' : 'Wallet Recharge';
+        case 'unpaid_fee':
+          return language === 'hi' ? 'बकाया फीस अनलॉक' : 'Unpaid Fee Unlock';
+        case 'lead_fee':
+          return language === 'hi' ? '₹10 लीड फीस' : 'Lead Fee';
+        case 'kyc':
+          return 'KYC Fee';
+        case 'pro':
+          return 'Pro Plan';
+        default:
+          return 'UPI Payment';
+      }
+    };
+
+    return (
+      <div className="bg-slate-900/95 border-2 border-amber-500/50 rounded-2xl p-5 shadow-xl space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <QrCode className="w-4 h-4 text-amber-400" />
+              <h4 className="text-sm font-black text-white">
+                {language === 'hi' ? 'असली UPI पेमेंट जांच (UTR Verification Queue)' : 'Real UPI Payment Verifications'}
+              </h4>
+              {pendingUpiClaims.length > 0 && (
+                <span className="px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black">
+                  {pendingUpiClaims.length} Pending
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              {language === 'hi'
+                ? 'पहले अपने PhonePe / GPay / बैंक ऐप में 12-अंकों का UTR मिलाकर देख लें कि पैसे आ गए हैं, फिर ही Approve दबाएं।'
+                : 'Check your PhonePe / GPay / Bank app for the exact 12-digit UTR & amount before approving.'}
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          {claimsToRender.map((claim) => {
+            const isPending = claim.status === 'pending_verification';
+            const isRejected = claim.status === 'rejected';
+            return (
+              <div
+                key={claim.id}
+                className={`p-3.5 rounded-2xl border space-y-2.5 ${
+                  isPending
+                    ? 'bg-slate-950/90 border-amber-500/40'
+                    : isRejected
+                    ? 'bg-rose-950/20 border-rose-500/30'
+                    : 'bg-emerald-950/20 border-emerald-500/30'
+                }`}
+              >
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-black text-white">{claim.workerName}</span>
+                      <span className="text-[11px] text-slate-400 font-mono">{claim.workerPhone}</span>
+                      <span className="px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30 text-[10px] font-bold">
+                        {purposeLabel(claim.purpose)}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-2 flex-wrap">
+                      <span>
+                        UTR: <strong className="font-mono text-amber-300 text-xs">{claim.utrNumber}</strong>
+                      </span>
+                      <span>•</span>
+                      <span>{claim.submittedAtText}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-xl font-black text-emerald-400 font-mono">₹{claim.amount}</span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        isPending
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                          : isRejected
+                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                          : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      }`}
+                    >
+                      {isPending
+                        ? (language === 'hi' ? '⏳ जांच पेंडिंग' : '⏳ Pending')
+                        : isRejected
+                        ? (language === 'hi' ? '✕ अस्वीकृत' : '✕ Rejected')
+                        : (language === 'hi' ? '✓ स्वीकृत' : '✓ Approved')}
+                    </span>
+                  </div>
+                </div>
+
+                {claim.screenshotUrl && (
+                  <div className="flex items-center justify-between bg-slate-900/90 p-2 rounded-xl border border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <img
+                        src={claim.screenshotUrl}
+                        alt="UPI Payment Proof"
+                        className="w-10 h-10 rounded-lg object-cover border border-slate-700"
+                      />
+                      <span className="text-[11px] text-slate-300 font-semibold">
+                        {language === 'hi' ? 'पेमेंट स्क्रीनशॉट संलग्न है' : 'Payment Screenshot Attached'}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        soundManager.playTap();
+                        setInspectClaimProof(claim);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 text-[11px] font-bold"
+                    >
+                      {language === 'hi' ? '🔍 स्क्रीनशॉट देखें' : '🔍 View Proof'}
+                    </button>
+                  </div>
+                )}
+
+                {isRejected && claim.rejectionReason && (
+                  <p className="text-[11px] text-rose-300">
+                    {language === 'hi' ? 'कारण:' : 'Reason:'} {claim.rejectionReason}
+                  </p>
+                )}
+
+                {isPending && (
+                  <div className="space-y-2 pt-1">
+                    {rejectingClaimId === claim.id ? (
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          type="text"
+                          value={rejectReasonText}
+                          onChange={(e) => setRejectReasonText(e.target.value)}
+                          placeholder={language === 'hi' ? 'अस्वीकार करने का कारण (जैसे: बैंक में पैसे नहीं आए / गलत UTR)' : 'Rejection reason (e.g. Money not received / Wrong UTR)'}
+                          className="flex-1 px-3 py-1.5 bg-slate-900 border border-rose-500/40 rounded-xl text-xs text-white focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            soundManager.playWarning();
+                            onRejectUpiClaim?.(claim.id, rejectReasonText.trim() || undefined);
+                            setRejectingClaimId(null);
+                            setRejectReasonText('');
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold"
+                        >
+                          {language === 'hi' ? '✓ अस्वीकार पक्का करें' : 'Confirm Reject'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRejectingClaimId(null);
+                            setRejectReasonText('');
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold"
+                        >
+                          {language === 'hi' ? 'रद्द' : 'Cancel'}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            soundManager.playSuccessCoin();
+                            onApproveUpiClaim?.(claim.id);
+                          }}
+                          className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white text-xs font-black shadow-md flex items-center justify-center gap-1.5"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>{language === 'hi' ? '✓ पैसे मिल गए (Approve)' : '✓ Money Received (Approve)'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            soundManager.playTap();
+                            setRejectingClaimId(claim.id);
+                            setRejectReasonText('');
+                          }}
+                          className="py-2 px-3 rounded-xl bg-rose-600/20 hover:bg-rose-600/35 text-rose-300 border border-rose-500/40 text-xs font-bold flex items-center justify-center gap-1.5"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                          <span>{language === 'hi' ? '✕ पैसे नहीं आए (Reject)' : '✕ Not Received (Reject)'}</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   // Content for Tab 1: Dashboard
   const renderDashboardTab = () => (
     <div className="space-y-6">
+      {renderPendingUpiClaimsSection(false)}
       {/* 4 Hero KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Metric 1: Total Users who used this app */}
@@ -520,7 +739,7 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
             ₹{totalEarned.toLocaleString('en-IN')}
           </div>
           <p className="text-[11px] text-slate-500 mt-1">
-            {commissionRecords.length} {language === 'hi' ? 'सफल कामों से (₹10/काम)' : 'jobs settled (₹10/job)'}
+            {paidCommissionRecords.length} {language === 'hi' ? 'सफल कामों से (₹10/काम)' : 'jobs settled (₹10/job)'}
           </p>
         </div>
 
@@ -744,7 +963,7 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
                 {language === 'hi' ? 'ऐप यूसेज एनालिटिक्स' : 'App Usage Analytics'}
               </span>
               <span className="text-xs text-emerald-400 font-semibold">
-                ● {onlineWorkers.length + 3} {language === 'hi' ? 'लोग अभी लाइव हैं' : 'users active now'}
+                ● {onlineWorkers.length} {language === 'hi' ? 'कारीगर अभी लाइव हैं' : 'workers online now'}
               </span>
             </div>
             <h3 className="text-lg font-black text-white mt-1">
@@ -754,8 +973,8 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
             </h3>
             <p className="text-xs text-slate-400 mt-1">
               {language === 'hi'
-                ? `इसमें ${customers.length} पंजीकृत ग्राहक, ${workers.length} कारीगर पार्टनर, और ${jobs.length + commissionRecords.length} कुल पूर्ण बुकिंग्स शामिल हैं।`
-                : `Includes ${customers.length} registered customers, ${workers.length} verified artisans, and ${jobs.length + commissionRecords.length} service requests.`}
+                ? `इसमें ${customers.length} पंजीकृत ग्राहक, ${workers.length} कारीगर पार्टनर, और ${jobs.length + paidCommissionRecords.length} कुल कार्य रिकॉर्ड शामिल हैं।`
+                : `Includes ${customers.length} registered customers, ${workers.length} verified artisans, and ${jobs.length + paidCommissionRecords.length} service requests.`}
             </p>
           </div>
 
@@ -771,7 +990,7 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
                 {language === 'hi' ? 'कुल बुकिंग्स' : 'Total Jobs'}
               </span>
               <span className="text-2xl font-black text-amber-400 font-mono">
-                {jobs.length + commissionRecords.length}
+                {jobs.length + paidCommissionRecords.length}
               </span>
             </div>
           </div>
@@ -1078,7 +1297,10 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
                           {language === 'hi' ? 'ओनर को दी फीस (₹10/काम)' : 'Fees Paid to Owner'}
                         </span>
                         <strong className="text-emerald-400 font-mono">
-                          ₹{((worker.completedJobsCount || 0) * 10).toLocaleString('en-IN')}
+                          ₹{paidCommissionRecords
+                            .filter((c) => c.workerId === worker.id)
+                            .reduce((sum, c) => sum + c.commissionAmount, 0)
+                            .toLocaleString('en-IN')}
                         </strong>
                       </div>
                       <div>
@@ -1517,6 +1739,7 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
   // Content for Tab 4: Worker Fees Ledger (₹10/job)
   const renderWorkerFeesTab = () => (
     <div className="space-y-5">
+      {renderPendingUpiClaimsSection(true)}
       <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 border-b border-slate-800 pb-4">
           <div>
@@ -1574,9 +1797,19 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
                   <td className="py-3 px-3 font-mono text-[10px] text-slate-400">{rec.upiTxnId}</td>
                   <td className="py-3 px-3 font-mono font-black text-emerald-400">+₹{rec.commissionAmount}</td>
                   <td className="py-3 px-3 text-right">
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                      ✓ Paid to Owner
-                    </span>
+                    {rec.status === 'paid' ? (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                        ✓ Paid to Owner
+                      </span>
+                    ) : rec.status === 'rejected' ? (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                        ✕ Rejected
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                        ⏳ Pending UTR Check
+                      </span>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -2453,6 +2686,44 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
               className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs"
             >
               {language === 'hi' ? 'सत्यापित / बंद करें' : 'Close'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* UPI Payment Screenshot Proof Modal for App Owner */}
+      {inspectClaimProof && inspectClaimProof.screenshotUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-slate-900 border border-amber-500/40 rounded-3xl p-5 max-w-md w-full space-y-4 shadow-2xl relative">
+            <button
+              type="button"
+              onClick={() => setInspectClaimProof(null)}
+              className="absolute right-4 top-4 text-slate-400 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div>
+              <h3 className="text-sm font-black text-white">
+                {inspectClaimProof.workerName} — ₹{inspectClaimProof.amount}
+              </h3>
+              <p className="text-[11px] text-amber-300 font-mono">
+                UTR: {inspectClaimProof.utrNumber} • {inspectClaimProof.submittedAtText}
+              </p>
+            </div>
+
+            <img
+              src={inspectClaimProof.screenshotUrl}
+              alt="UPI Payment Screenshot Proof"
+              className="w-full max-h-96 object-contain rounded-xl border border-slate-700 bg-slate-950"
+            />
+
+            <button
+              type="button"
+              onClick={() => setInspectClaimProof(null)}
+              className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs"
+            >
+              {language === 'hi' ? 'बंद करें' : 'Close'}
             </button>
           </div>
         </div>

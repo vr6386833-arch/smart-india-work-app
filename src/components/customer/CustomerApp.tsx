@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
   Home, 
   Search, 
@@ -60,8 +60,8 @@ interface CustomerAppProps {
   activeBooking: Booking | null;
   language: Language;
   onPostJob: (job: Partial<JobPost>) => void;
-  onBookWorker: (worker: WorkerProfile) => void;
-  onBookCategory?: (categoryId: string) => void;
+  onBookWorker: (worker: WorkerProfile) => boolean | void;
+  onBookCategory?: (categoryId: string) => boolean | void;
   onRateWorker: (bookingId: string, stars: number, review: string) => void;
   onAddCustomer?: (customer: Omit<CustomerProfile, 'id'>) => void;
   onSelectCustomer?: (customerId: string) => void;
@@ -134,17 +134,32 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                         activeBooking?.workerName?.includes('Mukesh');
   const safeActiveBooking = isMockBooking ? null : activeBooking;
   const [isOwnerPinOpen, setIsOwnerPinOpen] = useState(false);
+  const secretTapRef = useRef<{ count: number; lastTap: number }>({ count: 0, lastTap: 0 });
+
+  const handleSecretOwnerTap = () => {
+    const now = Date.now();
+    if (now - secretTapRef.current.lastTap > 2000) {
+      secretTapRef.current.count = 1;
+    } else {
+      secretTapRef.current.count += 1;
+    }
+    secretTapRef.current.lastTap = now;
+    if (secretTapRef.current.count >= 5) {
+      secretTapRef.current.count = 0;
+      soundManager.playTap();
+      setIsOwnerPinOpen(true);
+    }
+  };
 
   const [activeTab, setActiveTab] = useState<'home' | 'search' | 'bookings' | 'profile'>('home');
   const [selectedGroup, setSelectedGroup] = useState<'all' | 'construction' | 'appliance' | 'events' | 'home_services'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
-  const [verifiedOnly, setVerifiedOnly] = useState(false);
   
   // Modals state
   const [selectedWorkerForDetail, setSelectedWorkerForDetail] = useState<WorkerProfile | null>(null);
-  const [contactingWorker, setContactingWorker] = useState<WorkerProfile | null>(null);
   const [isPostJobOpen, setIsPostJobOpen] = useState(false);
+  const [preselectedPostCategory, setPreselectedPostCategory] = useState<string | undefined>(undefined);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isCallOpen, setIsCallOpen] = useState(false);
   const [isRatingOpen, setIsRatingOpen] = useState(false);
@@ -159,64 +174,67 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
   const [ticketCat, setTicketCat] = useState<'wallet_payment' | 'worker_conduct' | 'job_quality' | 'technical_app'>('job_quality');
   const [lightboxData, setLightboxData] = useState<{ url: string; title: string; subtitle?: string; tag?: string } | null>(null);
 
-  const handleOpenCallWithWorker = (w: WorkerProfile) => {
-    setContactingWorker(w);
-    setIsCallOpen(true);
-    setIsChatOpen(false);
-    soundManager.playTap();
+  // Strictly match ONLY the single worker booked by this customer (never expose unbooked workers)
+  const bookedWorkerObj: WorkerProfile | null = safeActiveBooking
+    ? workers.find((w) => w.id === safeActiveBooking.workerId) || {
+        id: safeActiveBooking.workerId,
+        name: safeActiveBooking.workerName,
+        phone: safeActiveBooking.workerPhone,
+        avatar: safeActiveBooking.workerAvatar,
+        category: safeActiveBooking.serviceCategory,
+        subSkills: [safeActiveBooking.serviceSubCategory],
+        experienceYears: 5,
+        rating: safeActiveBooking.workerRating || 5,
+        reviewsCount: 1,
+        dailyRate: safeActiveBooking.estimatedAmount,
+        hourlyRate: Math.round(safeActiveBooking.estimatedAmount / 6),
+        isAadhaarVerified: true,
+        isPanVerified: false,
+        city: customer.city || 'India',
+        locality: customer.locality || 'Local Area',
+        isOnline: true,
+        distanceKm: 1.5,
+        walletBalance: 0,
+        completedJobsCount: 1,
+        portfolio: [],
+        currentLocation: { lat: 28.5355, lng: 77.391 },
+      }
+    : null;
+
+  const matchesCategorySearch = (cat: (typeof CATEGORIES)[number], rawQuery: string) => {
+    const q = rawQuery.trim().toLowerCase();
+    if (!q) return true;
+    const isFalseCeilingMatch =
+      (q.includes('faur') || q.includes('fall') || q.includes('four') || q.includes('ceiling') || q.includes('सीलिंग')) &&
+      (cat.id === 'false_ceiling' || cat.id === 'pop');
+    const isTilesPatharMatch =
+      (q.includes('tile') || q.includes('टाइल्स') || q.includes('pathar') || q.includes('patthar') || q.includes('पत्थर') || q.includes('granite') || q.includes('ग्रेनाइट') || q.includes('marble')) &&
+      (cat.id === 'tiles_granite_pathar' || cat.id === 'tiles_marble');
+    const isCateringMatch =
+      (q.includes('cater') || q.includes('कैटरिंग') || q.includes('halwai') || q.includes('हलवाई') || q.includes('khana') || q.includes('खाना') || q.includes('rasoi') || q.includes('रसोइया') || q.includes('cook') || q.includes('waiter') || q.includes('वेटर') || q.includes('party') || q.includes('buffet') || q.includes('बुफे') || q.includes('mithai') || q.includes('मिठाई')) &&
+      cat.id === 'catering';
+
+    return (
+      isFalseCeilingMatch ||
+      isTilesPatharMatch ||
+      isCateringMatch ||
+      cat.name.toLowerCase().includes(q) ||
+      (cat.nameHi && cat.nameHi.toLowerCase().includes(q)) ||
+      cat.subcategories.some((s) => s.toLowerCase().includes(q)) ||
+      (cat.subcategoriesHi && cat.subcategoriesHi.some((s) => s.toLowerCase().includes(q)))
+    );
   };
 
-  const handleOpenChatWithWorker = (w: WorkerProfile) => {
-    setContactingWorker(w);
-    setIsChatOpen(true);
-    setIsCallOpen(false);
-    soundManager.playTap();
-  };
-
-  // Filtered categories
+  // Filtered categories for Home tab
   const filteredCategories = CATEGORIES.filter((cat) => {
     if (selectedGroup !== 'all' && cat.group !== selectedGroup) return false;
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      // Colloquial search aliases
-      const isFalseCeilingMatch = (q.includes('faur') || q.includes('fall') || q.includes('four') || q.includes('ceiling') || q.includes('सीलिंग')) && (cat.id === 'false_ceiling' || cat.id === 'pop');
-      const isTilesPatharMatch = (q.includes('tile') || q.includes('टाइल्स') || q.includes('pathar') || q.includes('patthar') || q.includes('पत्थर') || q.includes('granite') || q.includes('ग्रेनाइट') || q.includes('marble')) && (cat.id === 'tiles_granite_pathar' || cat.id === 'tiles_marble');
-      const isCateringMatch = (q.includes('cater') || q.includes('कैटरिंग') || q.includes('halwai') || q.includes('हलवाई') || q.includes('khana') || q.includes('खाना') || q.includes('rasoi') || q.includes('रसोइया') || q.includes('cook') || q.includes('waiter') || q.includes('वेटर') || q.includes('party') || q.includes('buffet') || q.includes('बुफे') || q.includes('mithai') || q.includes('मिठाई')) && (cat.id === 'catering');
-
-      return (
-        isFalseCeilingMatch ||
-        isTilesPatharMatch ||
-        isCateringMatch ||
-        cat.name.toLowerCase().includes(q) ||
-        (cat.nameHi && cat.nameHi.toLowerCase().includes(q)) ||
-        cat.subcategories.some((s) => s.toLowerCase().includes(q)) ||
-        (cat.subcategoriesHi && cat.subcategoriesHi.some((s) => s.toLowerCase().includes(q)))
-      );
-    }
-    return true;
+    return matchesCategorySearch(cat, searchQuery);
   });
 
-  // Filtered workers
-  const filteredWorkers = workers.filter((w) => {
-    if (verifiedOnly && !w.isAadhaarVerified) return false;
-    if (selectedCategoryFilter !== 'all' && w.category !== selectedCategoryFilter) return false;
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const isFalseCeilingMatch = (q.includes('faur') || q.includes('fall') || q.includes('four') || q.includes('ceiling') || q.includes('सीलिंग')) && (w.category === 'false_ceiling' || w.category === 'pop');
-      const isTilesPatharMatch = (q.includes('tile') || q.includes('टाइल्स') || q.includes('pathar') || q.includes('patthar') || q.includes('पत्थर') || q.includes('granite') || q.includes('ग्रेनाइट') || q.includes('marble')) && (w.category === 'tiles_granite_pathar' || w.category === 'tiles_marble');
-      const isCateringMatch = (q.includes('cater') || q.includes('कैटरिंग') || q.includes('halwai') || q.includes('हलवाई') || q.includes('khana') || q.includes('खाना') || q.includes('rasoi') || q.includes('रसोइया') || q.includes('cook') || q.includes('waiter') || q.includes('वेटर') || q.includes('party') || q.includes('buffet') || q.includes('बुफे') || q.includes('mithai') || q.includes('मिठाई')) && (w.category === 'catering');
-
-      return (
-        isFalseCeilingMatch ||
-        isTilesPatharMatch ||
-        isCateringMatch ||
-        w.name.toLowerCase().includes(q) ||
-        (w.nameHi && w.nameHi.toLowerCase().includes(q)) ||
-        w.category.toLowerCase().includes(q) ||
-        w.subSkills.some((s) => s.toLowerCase().includes(q))
-      );
-    }
-    return true;
+  // Filtered categories for Search tab (never leaks worker IDs)
+  const searchFilteredCategories = CATEGORIES.filter((cat) => {
+    if (selectedCategoryFilter !== 'all' && cat.id !== selectedCategoryFilter) return false;
+    return matchesCategorySearch(cat, searchQuery);
   });
 
   const handleCreateTicketSubmit = (e: React.FormEvent) => {
@@ -589,8 +607,15 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                           e.stopPropagation();
                           soundManager.playTap();
                           if (onBookCategory) {
-                            onBookCategory(cat.id);
-                            setActiveTab('bookings');
+                            const booked = onBookCategory(cat.id);
+                            if (booked !== false) {
+                              setActiveTab('bookings');
+                            } else {
+                              setSelectedCategoryFilter(cat.id);
+                              setPreselectedPostCategory(cat.id);
+                              setActiveTab('search');
+                              setIsPostJobOpen(true);
+                            }
                           } else {
                             setSelectedCategoryFilter(cat.id);
                             setActiveTab('search');
@@ -618,6 +643,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
               <button
                 onClick={() => {
                   soundManager.playTap();
+                  setPreselectedPostCategory(undefined);
                   setIsPostJobOpen(true);
                 }}
                 className="py-2 px-4 rounded-xl bg-orange-500 hover:bg-orange-400 text-slate-950 font-bold text-xs shadow-md transition-all inline-flex items-center gap-1.5"
@@ -630,275 +656,278 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
           </div>
         )}
 
-        {/* Tab 2: Search / Worker Directory */}
+        {/* Tab 2: Search Services (Never exposes unbooked worker IDs) */}
         {activeTab === 'search' && (
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-            {/* Fixed Filter Header */}
+            {/* Fixed Service Search & Category Filter Header */}
             <div
               className="shrink-0 bg-slate-950 border-b border-slate-800/80 px-4 pb-3 space-y-2.5 z-20"
               style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), 2.25rem)' }}
             >
+              {/* Search Services Input */}
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={language === 'hi' ? 'सेवा या काम खोजें (शटरिंग, सरिया, मिस्त्री, बिजली...)' : 'Search service or work (Shuttering, Mason, Electrician...)'}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2.5 top-2 text-slate-400 hover:text-white p-0.5"
+                    aria-label="Clear search"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
               <div className="flex items-center gap-2">
                 <select
                   value={selectedCategoryFilter}
                   onChange={(e) => setSelectedCategoryFilter(e.target.value)}
                   className="flex-1 bg-slate-900 border border-slate-800 rounded-xl p-2 text-xs text-white focus:outline-none"
                 >
-                  <option value="all">All Categories ({CATEGORIES.length})</option>
+                  <option value="all">{language === 'hi' ? `सभी सेवाएं (${CATEGORIES.length})` : `All Services (${CATEGORIES.length})`}</option>
                   {CATEGORIES.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
+                    <option key={c.id} value={c.id}>
+                      {language === 'hi' ? c.nameHi : c.name}
+                    </option>
                   ))}
                 </select>
 
-                <button
-                  onClick={() => setVerifiedOnly(!verifiedOnly)}
-                  className={`flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-semibold border transition-all ${
-                    verifiedOnly
-                      ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
-                      : 'bg-slate-900 border-slate-800 text-slate-400'
-                  }`}
-                >
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                  <span>Aadhaar KYC</span>
-                </button>
+                {selectedCategoryFilter !== 'all' && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCategoryFilter('all')}
+                    className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs font-semibold text-slate-300 hover:text-white"
+                  >
+                    {language === 'hi' ? 'सभी दिखाएं' : 'Show All'}
+                  </button>
+                )}
               </div>
 
-              {/* Workers Count */}
+              {/* Clean Service Count Subtitle */}
               <div className="flex items-center justify-between text-[11px] text-slate-400 px-0.5">
-                <span>Found <strong>{filteredWorkers.length}</strong> verified partners nearby</span>
-                <span className="text-emerald-400 font-semibold">● Active GPS dispatch</span>
+                <span>
+                  {language === 'hi' ? (
+                    <><strong>{searchFilteredCategories.length}</strong> सेवाएं उपलब्ध</>
+                  ) : (
+                    <><strong>{searchFilteredCategories.length}</strong> services available</>
+                  )}
+                </span>
+                <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                  <ShieldCheck className="w-3 h-3" />
+                  <span>{language === 'hi' ? 'काम अनुसार सुरक्षित बुकिंग' : 'Trade-Targeted Booking'}</span>
+                </span>
               </div>
             </div>
 
-            {/* Scrollable Worker List */}
+            {/* Scrollable Body */}
             <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 space-y-3.5">
-              {/* Targeted Skill Dispatch Notice */}
-              <div className="p-3 rounded-2xl bg-gradient-to-r from-blue-950/70 via-slate-900 to-indigo-950/70 border border-blue-500/30 flex items-center justify-between text-[11px] text-blue-200 shadow-sm">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-1.5 rounded-xl bg-blue-500/20 text-blue-300 shrink-0">
-                    <Sparkles className="w-4 h-4 text-blue-400" />
-                  </div>
-                  <div>
-                    <span className="font-bold text-white block">
-                      {language === 'hi' ? '🎯 सुरक्षित कौशल-आधारित सूचना प्रणाली' : '🎯 Trade-Targeted Instant Dispatch'}
+              {/* Show ONLY the single booked worker if the customer HAS an active booking */}
+              {safeActiveBooking && bookedWorkerObj && (
+                <div className="bg-gradient-to-br from-emerald-950/60 via-slate-900 to-slate-900 rounded-2xl p-4 border border-emerald-500/40 shadow-lg space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>{language === 'hi' ? 'आपकी सक्रिय बुकिंग के कारीगर' : 'Your Booked Service Partner'}</span>
                     </span>
-                    <span className="text-[10px] text-slate-300">
-                      {language === 'hi' 
-                        ? 'आप जो काम बुक करेंगे, घंटी व नोटिफिकेशन सिर्फ उसी काम के कारीगर को जाएगा।' 
-                        : 'Bookings ring and alert exclusively the specialists matching this selected work.'}
-                    </span>
+                    <span className="text-[10px] font-mono text-slate-400">#{safeActiveBooking.id}</span>
                   </div>
-                </div>
-              </div>
 
-              {/* Worker List */}
-              <div className="space-y-3">
-              {filteredWorkers.map((worker) => (
-                <div
-                  key={worker.id}
-                  className="bg-slate-900 rounded-2xl p-3.5 border border-slate-800 hover:border-slate-700 shadow-lg space-y-3"
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="relative">
-                        <img
-                          src={worker.avatar}
-                          alt={worker.name}
-                          className="w-12 h-12 rounded-xl object-cover ring-2 ring-emerald-500/30"
-                        />
-                        <span className={`w-3.5 h-3.5 rounded-full absolute -bottom-1 -right-1 border-2 border-slate-900 ${
-                          worker.isIdPaused ? 'bg-amber-500' : worker.isOnline ? 'bg-emerald-500' : 'bg-slate-500'
-                        }`} />
-                      </div>
-
-                      <div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <img
+                        src={safeActiveBooking.workerAvatar}
+                        alt={safeActiveBooking.workerName}
+                        className="w-12 h-12 rounded-xl object-cover ring-2 ring-emerald-500/50 shrink-0"
+                      />
+                      <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <h4 className="text-xs font-bold text-white">{worker.name}</h4>
-                          {worker.isAadhaarVerified && (
-                            <span title="Aadhaar Verified">
-                              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                            </span>
-                          )}
-                          {worker.isIdPaused && (
-                            <span className="px-1.5 py-0.2 rounded text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold">
-                              ⏸️ {language === 'hi' ? 'छुट्टी पर' : 'On Break'}
-                            </span>
-                          )}
+                          <h4 className="text-sm font-bold text-white truncate">{safeActiveBooking.workerName}</h4>
+                          <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                         </div>
-                        <p className="text-[11px] text-slate-400 capitalize">
-                          {worker.category.replace('_', ' ')} • {worker.age ? `${worker.age} ${language === 'hi' ? 'वर्ष' : 'Yrs'} • ` : ''}{worker.experienceYears} Yrs Exp
+                        <p className="text-[11px] text-slate-400 capitalize truncate">
+                          {safeActiveBooking.serviceCategory.replace(/_/g, ' ')} • ★ {safeActiveBooking.workerRating}
                         </p>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-amber-400 text-[10px] font-bold flex items-center gap-0.5">
-                            <Star className="w-3 h-3 fill-amber-400" />
-                            {worker.rating} ({worker.reviewsCount})
-                          </span>
-                          <span className="text-slate-600 text-xs">•</span>
-                          <span className="text-slate-400 text-[10px] flex items-center gap-0.5">
-                            <MapPin className="w-3 h-3 text-orange-400" />
-                            {worker.distanceKm} km
-                          </span>
-                        </div>
                       </div>
                     </div>
 
-                    <div className="text-right">
-                      <span className="text-xs font-bold text-emerald-400 block">
-                        ₹{worker.dailyRate}/day
-                      </span>
-                      <span className="text-[10px] text-slate-400">
-                        ₹{worker.hourlyRate}/hr
-                      </span>
-                    </div>
+                    <span className="text-xs font-bold text-emerald-400 shrink-0">
+                      ₹{safeActiveBooking.estimatedAmount}
+                    </span>
                   </div>
 
-                  {/* Skills tags */}
-                  <div className="flex flex-wrap gap-1">
-                    {worker.subSkills.slice(0, 3).map((skill, idx) => (
-                      <span
-                        key={idx}
-                        className="px-2 py-0.5 rounded-md bg-slate-950 text-[10px] text-slate-300 border border-slate-800"
-                      >
-                        {skill}
-                      </span>
-                    ))}
-                  </div>
-
-                  {/* Real Completed Work Photos Showcase */}
-                  {worker.portfolio && worker.portfolio.length > 0 && (
-                    <div className="space-y-1 pt-0.5">
-                      <div className="flex items-center justify-between text-[10px] text-slate-400">
-                        <span className="flex items-center gap-1 font-semibold text-slate-300">
-                          <Camera className="w-3 h-3 text-emerald-400" />
-                          Past Work Photos ({worker.portfolio.length})
-                        </span>
-                        <span className="text-[9px] text-slate-500">Tap to inspect work</span>
-                      </div>
-                      <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
-                        {worker.portfolio.map((p) => (
-                          <div
-                            key={p.id}
-                            onClick={() => {
-                              soundManager.playTap();
-                              setLightboxData({
-                                url: p.imageUrl,
-                                title: p.title,
-                                subtitle: `${worker.name} • ${p.description}`,
-                                tag: p.tag || 'Completed Project',
-                              });
-                            }}
-                            className="relative w-16 h-14 rounded-xl overflow-hidden shrink-0 border border-slate-700/80 cursor-pointer group bg-slate-950"
-                          >
-                            <img
-                              src={p.imageUrl}
-                              alt=""
-                              className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                              onError={(e) => {
-                                const target = e.currentTarget as HTMLImageElement;
-                                target.src = 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=400&q=80';
-                              }}
-                            />
-                            <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                              <ZoomIn className="w-3.5 h-3.5 text-white" />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Action buttons */}
-                  <div className="flex items-center gap-1.5 pt-1 border-t border-slate-800/80">
+                  <div className="flex items-center gap-1.5 pt-2 border-t border-slate-800/80">
                     <button
                       type="button"
-                      onClick={() => handleOpenCallWithWorker(worker)}
-                      className="p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center transition-all active:scale-95 shrink-0"
-                      title="Direct Call / कॉल करें"
+                      onClick={() => {
+                        soundManager.playTap();
+                        setIsCallOpen(true);
+                        setIsChatOpen(false);
+                      }}
+                      className="p-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30"
+                      title={language === 'hi' ? 'कॉल करें' : 'Call'}
                     >
                       <Phone className="w-3.5 h-3.5" />
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleOpenChatWithWorker(worker)}
-                      className="p-2 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30 flex items-center justify-center transition-all active:scale-95 shrink-0"
-                      title="Direct Chat / मैसेज भेजें"
+                      onClick={() => {
+                        soundManager.playTap();
+                        setIsChatOpen(true);
+                        setIsCallOpen(false);
+                      }}
+                      className="p-2 rounded-xl bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 border border-blue-500/30"
+                      title={language === 'hi' ? 'चैट करें' : 'Chat'}
                     >
                       <MessageSquare className="w-3.5 h-3.5" />
                     </button>
                     <button
+                      type="button"
                       onClick={() => {
                         soundManager.playTap();
-                        setSelectedWorkerForDetail(worker);
+                        setSelectedWorkerForDetail(bookedWorkerObj);
                       }}
-                      className="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-[11px] transition-colors"
+                      className="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-[11px]"
                     >
-                      Profile & Works
+                      {language === 'hi' ? 'कारीगर प्रोफाइल' : 'Worker Profile'}
                     </button>
-                    {worker.isIdPaused ? (
-                      <button
-                        type="button"
-                        disabled
-                        className="flex-1 py-2 rounded-xl bg-slate-800/80 text-amber-400 font-bold text-[10px] border border-amber-500/30 cursor-not-allowed flex items-center justify-center gap-1"
-                        title={worker.idPausedReason || 'कारीगर छुट्टी पर हैं'}
-                      >
-                        <span>⏸️ {language === 'hi' ? 'आईडी बंद (छुट्टी)' : 'On Break'}</span>
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => {
-                          soundManager.playTap();
-                          onBookWorker(worker);
-                          setActiveTab('bookings');
-                        }}
-                        className="flex-1 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white font-bold text-[11px] shadow-md transition-all active:scale-95"
-                      >
-                        Instant Book
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-
-              {filteredWorkers.length === 0 && (
-                <div className="p-6 rounded-3xl bg-slate-900/90 border border-slate-800 text-center space-y-3.5 shadow-xl">
-                  <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-600/20 to-indigo-600/20 border border-blue-500/30 text-blue-400 mx-auto flex items-center justify-center shadow-lg">
-                    <HardHat className="w-7 h-7" />
-                  </div>
-                  <div>
-                    <h4 className="text-white font-black text-sm">
-                      {language === 'hi' ? '🟢 लाइव नेटवर्क सक्रिय है' : '🟢 Live Network Active'}
-                    </h4>
-                    <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto leading-relaxed">
-                      {language === 'hi'
-                        ? 'सभी पुराने व डमी कारीगर हटा दिए गए हैं। जैसे ही आपके क्षेत्र के असली कारीगर जुड़ेंगे, वे यहाँ दिखेंगे। आप अभी नया काम पोस्ट कर सकते हैं!'
-                        : 'Database cleaned. When real verified workers register, they will appear here. Post your job requirement now to get quotes!'}
-                    </p>
-                  </div>
-                  <div className="flex items-center justify-center gap-2 pt-1">
                     <button
+                      type="button"
                       onClick={() => {
                         soundManager.playTap();
-                        setIsPostJobOpen(true);
+                        setActiveTab('bookings');
                       }}
-                      className="px-4 py-2 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 text-white font-bold text-xs shadow-md shadow-orange-500/20 active:scale-95 transition-all"
+                      className="flex-1 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px]"
                     >
-                      {language === 'hi' ? '+ नया काम पोस्ट करें' : '+ Post Requirement'}
+                      {language === 'hi' ? 'लाइव ट्रैकिंग' : 'Live Status'}
                     </button>
-                    {onSwitchToWorker && (
-                      <button
-                        onClick={() => {
-                          soundManager.playTap();
-                          onSwitchToWorker();
-                        }}
-                        className="px-3.5 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 font-bold text-xs active:scale-95 transition-all"
-                      >
-                        {language === 'hi' ? 'कारीगर जोड़ें' : 'Register Worker'}
-                      </button>
-                    )}
                   </div>
                 </div>
               )}
-            </div>
+
+              {/* Privacy & Trade-Matched Dispatch Info Notice */}
+              <div className="p-3 rounded-2xl bg-gradient-to-r from-blue-950/70 via-slate-900 to-indigo-950/70 border border-blue-500/30 flex items-center gap-2.5 text-[11px] text-blue-200 shadow-sm">
+                <div className="p-1.5 rounded-xl bg-blue-500/20 text-blue-300 shrink-0">
+                  <Sparkles className="w-4 h-4 text-blue-400" />
+                </div>
+                <div>
+                  <span className="font-bold text-white block">
+                    {language === 'hi' ? '🎯 काम चुनें और सीधे बुक करें' : '🎯 Select Service & Book Instantly'}
+                  </span>
+                  <span className="text-[10px] text-slate-300">
+                    {language === 'hi'
+                      ? 'जो काम आप बुक करेंगे, वह सिर्फ उसी ट्रेड के कारीगर के पास जाएगा। बुकिंग के बाद आपको अपने चुने हुए कारीगर की ID दिखेगी।'
+                      : 'Requests go exclusively to matching trade specialists. Your assigned worker ID appears once you book.'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Service Categories List (Zero Worker IDs exposed before booking) */}
+              <div className="space-y-3">
+                {searchFilteredCategories.map((cat) => (
+                  <div
+                    key={cat.id}
+                    className="bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden shadow-md"
+                  >
+                    <div className="flex gap-3 p-3.5">
+                      <img
+                        src={cat.imageUrl || (cat.workPhotos && cat.workPhotos[0]) || 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=400&q=80'}
+                        alt=""
+                        className="w-16 h-16 rounded-xl object-cover shrink-0 bg-slate-950 border border-slate-800"
+                        onError={(e) => {
+                          const target = e.currentTarget as HTMLImageElement;
+                          target.src = 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=400&q=80';
+                        }}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <h4 className="text-xs font-bold text-white leading-snug">
+                            {language === 'hi' ? cat.nameHi : cat.name}
+                          </h4>
+                          <span className="text-[11px] font-bold text-emerald-400 shrink-0">
+                            {cat.basePriceEstimate}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-1 line-clamp-2">
+                          {(language === 'hi' && cat.subcategoriesHi ? cat.subcategoriesHi : cat.subcategories).join(' • ')}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 px-3.5 pb-3.5 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          soundManager.playTap();
+                          if (onBookCategory) {
+                            const booked = onBookCategory(cat.id);
+                            if (booked !== false) {
+                              setActiveTab('bookings');
+                            } else {
+                              setPreselectedPostCategory(cat.id);
+                              setIsPostJobOpen(true);
+                            }
+                          } else {
+                            setPreselectedPostCategory(cat.id);
+                            setIsPostJobOpen(true);
+                          }
+                        }}
+                        className="flex-1 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white font-bold text-[11px] shadow-md transition-all active:scale-95 flex items-center justify-center gap-1"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                        <span>{language === 'hi' ? '⚡ सीधे बुक करें' : '⚡ Instant Book'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          soundManager.playTap();
+                          setPreselectedPostCategory(cat.id);
+                          setIsPostJobOpen(true);
+                        }}
+                        className="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-[11px] border border-slate-700 transition-colors"
+                      >
+                        {language === 'hi' ? '+ काम पोस्ट करें' : '+ Post Requirement'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+
+                {searchFilteredCategories.length === 0 && (
+                  <div className="p-6 rounded-3xl bg-slate-900/90 border border-slate-800 text-center space-y-3 shadow-xl">
+                    <div className="w-12 h-12 rounded-2xl bg-orange-500/15 border border-orange-500/30 text-orange-400 mx-auto flex items-center justify-center">
+                      <Search className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h4 className="text-white font-bold text-sm">
+                        {language === 'hi' ? 'कोई मिलती हुई सेवा नहीं मिली' : 'No matching service found'}
+                      </h4>
+                      <p className="text-xs text-slate-400 mt-1">
+                        {language === 'hi'
+                          ? 'आप अपनी ज़रूरत के अनुसार कस्टम काम पोस्ट कर सकते हैं।'
+                          : 'You can post your custom work requirement directly.'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        soundManager.playTap();
+                        setPreselectedPostCategory(undefined);
+                        setIsPostJobOpen(true);
+                      }}
+                      className="px-4 py-2 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 text-slate-950 font-bold text-xs shadow-md"
+                    >
+                      {language === 'hi' ? '+ नया काम पोस्ट करें' : '+ Post Custom Job'}
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -939,14 +968,14 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                 <h4 className="text-sm font-bold text-slate-200">{language === 'hi' ? 'कोई सक्रिय बुकिंग नहीं' : 'No Active Bookings'}</h4>
                 <p className="text-xs text-slate-500 mt-1 max-w-xs">
                   {language === 'hi' 
-                    ? 'सेवा बुक करने के लिए कारीगर खोजें या नया काम पोस्ट करें।' 
-                    : 'Search verified workers or post a job to book services.'}
+                    ? 'सेवा बुक करने के लिए अपना काम चुनें या नया काम पोस्ट करें।' 
+                    : 'Browse services or post a job to book verified help.'}
                 </p>
                 <button
                   onClick={() => setActiveTab('search')}
                   className="mt-4 px-4 py-2 rounded-xl bg-blue-600 text-white font-bold text-xs"
                 >
-                  {language === 'hi' ? 'कारीगर खोजें' : 'Find Workers Now'}
+                  {language === 'hi' ? 'सेवाएं देखें' : 'Browse Services'}
                 </button>
               </div>
             )}
@@ -1206,13 +1235,18 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
               )}
             </div>
 
-            {/* App Settings, Security & Special Portals */}
+            {/* App Settings */}
             <div className="bg-slate-900 rounded-2xl p-3.5 border border-slate-800 space-y-2.5">
               <div className="flex items-center justify-between">
                 <h5 className="text-slate-300 font-bold uppercase text-[11px]">
-                  {language === 'hi' ? 'सेटिंग्स व स्पेशल एक्सेस' : 'Settings & Portals'}
+                  {language === 'hi' ? 'ऐप सेटिंग्स व सहायता' : 'App Settings & Safety'}
                 </h5>
-                <span className="text-[10px] text-slate-500 font-mono">v1.1</span>
+                <span
+                  onClick={handleSecretOwnerTap}
+                  className="text-[10px] text-slate-500 font-mono select-none"
+                >
+                  v1.1
+                </span>
               </div>
 
               {/* Language Switch */}
@@ -1245,8 +1279,8 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                 </div>
               </div>
 
-              {/* Switch to Worker Mode */}
-              {onSwitchToWorker && (
+              {/* Switch to Worker Mode (Visible ONLY during Owner Session) */}
+              {isOwnerSession && onSwitchToWorker && (
                 <button
                   type="button"
                   onClick={() => {
@@ -1296,36 +1330,6 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                     </div>
                   </div>
                   <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-blue-400 transition-transform" />
-                </button>
-              )}
-
-              {/* Protected App Owner Portal */}
-              {onSwitchToOwner && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    soundManager.playTap();
-                    setIsOwnerPinOpen(true);
-                  }}
-                  className="w-full flex items-center justify-between p-2.5 rounded-xl bg-amber-950/30 hover:bg-amber-950/60 border border-amber-500/30 transition-all text-left group"
-                >
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-lg bg-amber-500/20 flex items-center justify-center text-amber-400">
-                      <Crown className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-bold text-white group-hover:text-amber-300">
-                          {language === 'hi' ? '👑 ऐप ओनर / एडमिन पोर्टल' : '👑 App Owner Portal'}
-                        </span>
-                        <Lock className="w-3 h-3 text-amber-400" />
-                      </div>
-                      <p className="text-[10px] text-slate-400">
-                        {language === 'hi' ? 'कमाई, बैंक ट्रांसफर व कमीशन सेटिंग्स (ओनर सुरक्षित)' : 'Revenue, Bank Payout & Admin Portal (PIN protected)'}
-                      </p>
-                    </div>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-amber-400 transition-transform" />
                 </button>
               )}
 
@@ -1449,13 +1453,14 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
           <div className="w-6 h-6 flex items-center justify-center">
             <Search className="w-4 h-4" />
           </div>
-          <span>Workers</span>
+          <span>{language === 'hi' ? 'सेवाएं' : 'Services'}</span>
         </button>
 
         <button
           type="button"
           onClick={() => {
             soundManager.playTap();
+            setPreselectedPostCategory(selectedCategoryFilter !== 'all' ? selectedCategoryFilter : undefined);
             setIsPostJobOpen(true);
           }}
           className="flex flex-col items-center justify-center gap-1 py-1 text-[10px] leading-none font-bold text-orange-400 active:scale-95 transition-transform"
@@ -1502,32 +1507,38 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
         </button>
       </div>
 
-      {/* Sub-Modals */}
+      {/* Sub-Modals — Worker details, Call, Chat & Rating strictly restricted to the booked worker only */}
       <WorkerDetailModal
-        worker={selectedWorkerForDetail}
-        isOpen={!!selectedWorkerForDetail}
+        worker={safeActiveBooking ? selectedWorkerForDetail : null}
+        isOpen={Boolean(safeActiveBooking && selectedWorkerForDetail)}
         onClose={() => setSelectedWorkerForDetail(null)}
         language={language}
-        onInstantBook={(w) => {
-          onBookWorker(w);
+        onInstantBook={() => {
+          setSelectedWorkerForDetail(null);
           setActiveTab('bookings');
         }}
-        onCallWorker={(w) => {
+        onCallWorker={() => {
           setSelectedWorkerForDetail(null);
-          handleOpenCallWithWorker(w);
+          setIsCallOpen(true);
+          setIsChatOpen(false);
         }}
-        onChatWorker={(w) => {
+        onChatWorker={() => {
           setSelectedWorkerForDetail(null);
-          handleOpenChatWithWorker(w);
+          setIsChatOpen(true);
+          setIsCallOpen(false);
         }}
         onOpenReviews={onOpenReviews}
       />
 
       <PostJobModal
         isOpen={isPostJobOpen}
-        onClose={() => setIsPostJobOpen(false)}
+        onClose={() => {
+          setIsPostJobOpen(false);
+          setPreselectedPostCategory(undefined);
+        }}
         language={language}
         defaultLocality={customer.locality}
+        initialCategory={preselectedPostCategory}
         onJobCreated={(job) => {
           onPostJob(job);
         }}
@@ -1556,31 +1567,25 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
         onCancelActiveBooking={() => onCancelBooking?.()}
         onCompleteActiveBooking={() => onCompleteJob?.()}
         onClearAllDemoData={() => onResetData?.()}
-        onSwitchToWorker={onSwitchToWorker}
+        onSwitchToWorker={isOwnerSession ? onSwitchToWorker : undefined}
       />
 
-      {/* Universal Customer Call & Chat System */}
+      {/* Universal Customer Call & Chat System (Active Booked Worker Only) */}
       <ChatCallModal
-        isOpen={isChatOpen || isCallOpen}
+        isOpen={Boolean(safeActiveBooking) && (isChatOpen || isCallOpen)}
         onClose={() => {
           setIsChatOpen(false);
           setIsCallOpen(false);
         }}
         mode={isCallOpen ? 'call' : 'chat'}
         otherPartyName={
-          contactingWorker?.name ||
-          activeBooking?.workerName ||
+          safeActiveBooking?.workerName ||
           (language === 'hi' ? 'कारीगर पार्टनर' : 'Service Partner')
         }
-        otherPartyPhone={
-          contactingWorker?.phone ||
-          activeBooking?.workerPhone ||
-          '+91 98765-43210'
-        }
+        otherPartyPhone={safeActiveBooking?.workerPhone || ''}
         otherPartyRole="Worker"
         otherPartyAvatar={
-          contactingWorker?.avatar ||
-          activeBooking?.workerAvatar ||
+          safeActiveBooking?.workerAvatar ||
           'https://images.unsplash.com/photo-1540569014015-19a7be504e3a?auto=format&fit=crop&w=400&q=80'
         }
         currentRole="customer"
@@ -1588,15 +1593,15 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
         onSendMessage={onSendMessage}
       />
 
-      {activeBooking && (
+      {safeActiveBooking && (
         <RatingModal
           isOpen={isRatingOpen}
           onClose={() => setIsRatingOpen(false)}
-          workerName={activeBooking.workerName}
-          workerAvatar={activeBooking.workerAvatar}
-          serviceCategory={activeBooking.serviceCategory}
+          workerName={safeActiveBooking.workerName}
+          workerAvatar={safeActiveBooking.workerAvatar}
+          serviceCategory={safeActiveBooking.serviceCategory}
           onRateSubmit={(stars, rev) => {
-            onRateWorker(activeBooking.id, stars, rev);
+            onRateWorker(safeActiveBooking.id, stars, rev);
           }}
         />
       )}

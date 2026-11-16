@@ -80,6 +80,30 @@
         "address": { "type": "string" }
       },
       "required": ["id", "name"]
+    },
+    "UpiPaymentRequest": {
+      "title": "UpiPaymentRequest",
+      "description": "Worker-to-Owner real UPI payment verification request awaiting Owner confirmation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "workerId": { "type": "string" },
+        "workerName": { "type": "string" },
+        "workerPhone": { "type": "string" },
+        "purpose": { "type": "string", "enum": ["wallet", "unpaid_fee", "lead_fee", "kyc", "pro"] },
+        "amount": { "type": "number" },
+        "utrNumber": { "type": "string", "minLength": 12, "maxLength": 12, "pattern": "^\\d{12}$" },
+        "screenshotUrl": { "type": "string" },
+        "bookingId": { "type": "string" },
+        "commissionId": { "type": "string" },
+        "note": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending_verification", "approved", "rejected"] },
+        "rejectionReason": { "type": "string" },
+        "submittedAtMs": { "type": "number" },
+        "submittedAtText": { "type": "string" },
+        "reviewedAtText": { "type": "string" }
+      },
+      "required": ["id", "workerId", "purpose", "amount", "utrNumber", "status"]
     }
   },
   "firestore": {
@@ -102,6 +126,10 @@
     "/owner_payouts/{payoutId}": {
       "schema": { "$ref": "#/entities/OwnerPayout" },
       "description": "Collection of owner bank withdrawals"
+    },
+    "/upi_payment_claims/{claimId}": {
+      "schema": { "$ref": "#/entities/UpiPaymentRequest" },
+      "description": "Collection of worker UPI UTR payment claims pending owner bank verification"
     }
   }
 }

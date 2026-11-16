@@ -101,11 +101,12 @@ export const AppOwnerEarningsModal: React.FC<AppOwnerEarningsModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Calculate totals
-  const totalEarned = commissionRecords.reduce((acc, curr) => acc + curr.commissionAmount, 0);
+  // Calculate totals (strictly from settled paid records)
+  const paidCommissionRecords = commissionRecords.filter((curr) => curr.status === 'paid');
+  const totalEarned = paidCommissionRecords.reduce((acc, curr) => acc + curr.commissionAmount, 0);
   const totalWithdrawn = appOwnerConfig.totalWithdrawnToBank || formData.totalWithdrawnToBank || 0;
   const availableToWithdraw = Math.max(0, totalEarned - totalWithdrawn);
-  const totalJobsCompleted = commissionRecords.length;
+  const totalJobsCompleted = paidCommissionRecords.length;
   const fixedPerJobFee = appOwnerConfig.perJobFeeRupees || 10;
   const payoutsList = appOwnerConfig.payoutHistory || formData.payoutHistory || [];
 

@@ -89,7 +89,7 @@ export const WorkerIdCardModal: React.FC<WorkerIdCardModalProps> = ({
   };
 
   const handleVerifyCardOtp = () => {
-    if (cardEnteredOtp === cardGeneratedOtp || cardEnteredOtp === '8492' || cardEnteredOtp === '1234') {
+    if (Boolean(cardGeneratedOtp) && cardEnteredOtp === cardGeneratedOtp) {
       setIsCardOtpVerified(true);
       setCardOtpError('');
       soundManager.playPaymentSuccess();

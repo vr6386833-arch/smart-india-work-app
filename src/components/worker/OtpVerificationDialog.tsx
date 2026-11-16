@@ -1,10 +1,9 @@
-import React, { useState } from 'react';
-import { 
-  KeyRound, 
-  X, 
-  ShieldCheck, 
-  IndianRupee, 
-  AlertCircle, 
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  KeyRound,
+  X,
+  ShieldCheck,
+  AlertCircle,
   CheckCircle2,
   Unlock,
   QrCode,
@@ -13,13 +12,20 @@ import {
   Copy,
   Check,
   Smartphone,
-  ExternalLink,
-  Sparkles
+  Zap,
+  ClipboardPaste,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import confetti from 'canvas-confetti';
 import { AppOwnerPaymentConfig, CommissionRecord, Language } from '../../types';
 import { soundManager } from '../../services/soundEffects';
+import { isValidRealUpiUtr } from '../../services/firebase';
+import {
+  buildUpiPaymentUrls,
+  launchDirectUpiApp,
+  sanitizeUpiId,
+  UpiPreferredApp,
+} from '../../utils/upiIntentHelper';
 
 interface OtpVerificationDialogProps {
   isOpen: boolean;
@@ -37,6 +43,7 @@ interface OtpVerificationDialogProps {
   serviceCategory: string;
   appOwnerConfig: AppOwnerPaymentConfig;
   language: Language;
+  existingUtrs?: string[];
   onOtpVerifiedSuccess: (record: CommissionRecord, method: 'upi_direct' | 'wallet_deduct') => void;
   onOtpVerifiedUnpaid?: (unpaidFee: number) => void;
 }
@@ -56,24 +63,76 @@ export const OtpVerificationDialog: React.FC<OtpVerificationDialogProps> = ({
   serviceCategory,
   appOwnerConfig,
   language,
+  existingUtrs = [],
   onOtpVerifiedSuccess,
   onOtpVerifiedUnpaid,
 }) => {
+  const fee = appOwnerConfig?.perJobFeeRupees || microFeeAmount || 10;
+  const appOwnerUpi = sanitizeUpiId(appOwnerConfig?.upiId);
+  const ownerBizName = appOwnerConfig?.businessName?.trim() || 'Smart India Work';
+
   const [digits, setDigits] = useState<string[]>(['', '', '', '']);
   const [isOtpMatched, setIsOtpMatched] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [selectedPayMethod, setSelectedPayMethod] = useState<'wallet' | 'upi_qr'>('wallet');
+  const [selectedPayMethod, setSelectedPayMethod] = useState<'wallet' | 'upi_qr'>(
+    workerWalletBalance >= fee ? 'wallet' : 'upi_qr'
+  );
   const [copiedUpi, setCopiedUpi] = useState(false);
   const [utrNumber, setUtrNumber] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [launchedUpiApp, setLaunchedUpiApp] = useState<string | null>(null);
+  const [showQrCode, setShowQrCode] = useState(false);
+  const utrInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setSelectedPayMethod(workerWalletBalance >= fee ? 'wallet' : 'upi_qr');
+      setLaunchedUpiApp(null);
+      setShowQrCode(false);
+    }
+  }, [isOpen, workerWalletBalance, fee]);
 
   if (!isOpen) return null;
 
-  const appOwnerUpi = appOwnerConfig?.upiId || 'smartindia.official@icici';
-  const ownerBizName = appOwnerConfig?.businessName || 'Smart India Work Official';
-  const fee = appOwnerConfig?.perJobFeeRupees || microFeeAmount || 10;
-  
-  const upiIntentUrl = `upi://pay?pa=${encodeURIComponent(appOwnerUpi)}&pn=${encodeURIComponent(ownerBizName)}&am=${fee.toFixed(2)}&cu=INR&tn=${encodeURIComponent(`SmartIndia JobFee BK ${bookingId.slice(-6)}`)}`;
+  const upiUrls = buildUpiPaymentUrls({
+    upiId: appOwnerUpi,
+    payeeName: ownerBizName,
+    amount: fee,
+    transactionNote: `SmartIndia Lead Rs${fee} BK ${bookingId.slice(-6)}`,
+    transactionRef: `SIW${bookingId.replace(/[^a-zA-Z0-9]/g, '').slice(-8)}`,
+  });
+  const upiIntentUrl = upiUrls.generic;
+
+  const handleLaunchOneTouchUpi = (app: UpiPreferredApp, label: string) => {
+    soundManager.playTap();
+    setErrorMsg(null);
+    launchDirectUpiApp(
+      {
+        upiId: appOwnerUpi,
+        payeeName: ownerBizName,
+        amount: fee,
+        transactionNote: `SmartIndia Lead Rs${fee} BK ${bookingId.slice(-6)}`,
+        transactionRef: `SIW${bookingId.replace(/[^a-zA-Z0-9]/g, '').slice(-8)}`,
+      },
+      app
+    );
+    setLaunchedUpiApp(label);
+    setTimeout(() => utrInputRef.current?.focus(), 300);
+  };
+
+  const handlePasteUtr = async () => {
+    soundManager.playTap();
+    try {
+      const txt = await navigator.clipboard.readText();
+      const digitsOnly = (txt || '').replace(/\D/g, '').slice(0, 12);
+      if (digitsOnly) {
+        setUtrNumber(digitsOnly);
+        setErrorMsg(null);
+      }
+    } catch {
+      utrInputRef.current?.focus();
+    }
+  };
 
   const handleDigitChange = (index: number, val: string) => {
     if (!/^\d*$/.test(val)) return;
@@ -92,7 +151,7 @@ export const OtpVerificationDialog: React.FC<OtpVerificationDialogProps> = ({
     // Check if 4 digits complete
     const fullCode = newDigits.join('');
     if (fullCode.length === 4) {
-      if (fullCode === expectedOtp || fullCode === '8492' || fullCode === '1234') {
+      if (Boolean(expectedOtp) && fullCode === expectedOtp) {
         setIsOtpMatched(true);
         soundManager.playSuccessCoin();
       } else {
@@ -141,48 +200,68 @@ export const OtpVerificationDialog: React.FC<OtpVerificationDialogProps> = ({
       return;
     }
 
+    const cleanUtr = utrNumber.replace(/\D/g, '').trim();
+    if (method === 'upi_direct') {
+      if (!isValidRealUpiUtr(cleanUtr)) {
+        soundManager.playWarning();
+        setErrorMsg(
+          language === 'hi'
+            ? '⚠️ कृपया पहले Owner UPI QR पर ₹' + fee + ' भेजें और असली 12-अंकों का UTR नंबर दर्ज करें।'
+            : `⚠️ Please pay ₹${fee} on Owner UPI QR first and enter the exact 12-digit UTR number.`
+        );
+        return;
+      }
+      if (existingUtrs.includes(cleanUtr)) {
+        soundManager.playWarning();
+        setErrorMsg(
+          language === 'hi'
+            ? '⚠️ यह 12-अंकों का UTR नंबर पहले ही उपयोग हो चुका है! नया असली UTR डालें।'
+            : '⚠️ This 12-digit UTR has already been used! Please enter a fresh UTR.'
+        );
+        return;
+      }
+    }
+
+    setErrorMsg(null);
     setIsSubmitting(true);
     soundManager.playTap();
 
-    setTimeout(() => {
-      const generatedTxn = utrNumber.trim()
-        ? `UTR/${utrNumber.trim()}`
-        : method === 'wallet_deduct'
-          ? `WAL/FEE/${Date.now().toString().slice(-6)}`
-          : `UPI/FEE/${Date.now().toString().slice(-6)}/${Math.floor(100000 + Math.random() * 900000)}`;
+    const generatedTxn =
+      method === 'wallet_deduct'
+        ? `WAL/FEE/${Date.now().toString().slice(-6)}`
+        : `UTR/${cleanUtr}`;
 
-      const newRecord: CommissionRecord = {
-        id: `comm_${Date.now()}`,
-        workerId,
-        workerName,
-        workerPhone,
-        bookingId,
-        jobTitle: serviceCategory,
-        customerName,
-        feeType: 'per_job_meeting_fee',
-        jobTotalAmount: fee,
-        commissionAmount: fee, // Flat ₹10 to app owner
-        paymentMethod: method,
-        upiTxnId: generatedTxn,
-        paidAt: 'Just now',
-        status: 'paid',
-      };
+    const newRecord: CommissionRecord = {
+      id: `comm_${Date.now()}`,
+      workerId,
+      workerName,
+      workerPhone,
+      bookingId,
+      jobTitle: serviceCategory,
+      customerName,
+      feeType: 'per_job_meeting_fee',
+      jobTotalAmount: fee,
+      commissionAmount: fee, // Flat ₹10 to app owner
+      paymentMethod: method,
+      upiTxnId: generatedTxn,
+      paidAt: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
+      status: method === 'upi_direct' ? 'pending' : 'paid',
+    };
 
-      try {
-        confetti({
-          particleCount: 50,
-          spread: 60,
-          origin: { y: 0.6 },
-        });
-      } catch (err) {
-        // Safe fallback if canvas not ready
-      }
+    try {
+      confetti({
+        particleCount: 50,
+        spread: 60,
+        origin: { y: 0.6 },
+      });
+    } catch {
+      // ignore
+    }
 
-      soundManager.playSuccessCoin();
-      onOtpVerifiedSuccess(newRecord, method);
-      setIsSubmitting(false);
-      onClose();
-    }, 600);
+    soundManager.playSuccessCoin();
+    onOtpVerifiedSuccess(newRecord, method);
+    setIsSubmitting(false);
+    onClose();
   };
 
   return (
@@ -365,40 +444,119 @@ export const OtpVerificationDialog: React.FC<OtpVerificationDialogProps> = ({
             </div>
           )}
 
-          {/* Method B: Direct UPI QR to App Owner */}
+          {/* Method B: 1-Touch Direct UPI App Pay + UTR */}
           {selectedPayMethod === 'upi_qr' && (
-            <div className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2 text-center">
-              <div className="flex items-center justify-center p-2 bg-white rounded-xl max-w-[140px] mx-auto shadow-md">
-                {appOwnerConfig?.customQrImage ? (
-                  <img
-                    src={appOwnerConfig.customQrImage}
-                    alt="App Owner UPI QR"
-                    className="w-[120px] h-[120px] object-contain rounded"
-                  />
-                ) : (
-                  <QRCodeSVG value={upiIntentUrl} size={114} />
-                )}
+            <div className="p-2.5 rounded-xl bg-slate-900/95 border border-emerald-500/30 space-y-2.5 text-center">
+              <button
+                type="button"
+                onClick={() => handleLaunchOneTouchUpi('any', 'UPI App')}
+                className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:from-emerald-400 text-slate-950 font-black text-xs shadow-lg flex items-center justify-center gap-1.5 active:scale-98 transition-all"
+              >
+                <Zap className="w-4 h-4 shrink-0" />
+                <span>
+                  {language === 'hi'
+                    ? `⚡ 1-टच में सीधे ₹${fee} Smart India पर भेजें`
+                    : `⚡ 1-Touch Pay ₹${fee} to Smart India Work`}
+                </span>
+              </button>
+
+              <div className="grid grid-cols-4 gap-1.5">
+                {[
+                  { id: 'gpay' as UpiPreferredApp, label: 'GPay', short: 'G', cls: 'bg-blue-600/20 text-blue-400 border-blue-500/30' },
+                  { id: 'phonepe' as UpiPreferredApp, label: 'PhonePe', short: 'Pe', cls: 'bg-purple-600/20 text-purple-400 border-purple-500/30' },
+                  { id: 'paytm' as UpiPreferredApp, label: 'Paytm', short: 'Pay', cls: 'bg-sky-600/20 text-sky-400 border-sky-500/30' },
+                  { id: 'bhim' as UpiPreferredApp, label: 'BHIM', short: 'BH', cls: 'bg-emerald-600/20 text-emerald-400 border-emerald-500/30' },
+                ].map((app) => (
+                  <button
+                    key={app.id}
+                    type="button"
+                    onClick={() => handleLaunchOneTouchUpi(app.id, app.label)}
+                    className="p-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 flex flex-col items-center gap-0.5 active:scale-95 transition-all"
+                  >
+                    <span className={`w-6 h-6 rounded-full border font-black text-[9px] flex items-center justify-center ${app.cls}`}>
+                      {app.short}
+                    </span>
+                    <span className="text-[9px] font-bold text-slate-300">{app.label}</span>
+                  </button>
+                ))}
               </div>
 
-              <div className="flex items-center justify-center gap-1 text-[10px] text-slate-400">
-                <span className="font-mono text-amber-300">{appOwnerUpi}</span>
+              {launchedUpiApp && (
+                <div className="p-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[10px] font-semibold">
+                  {language === 'hi'
+                    ? `✓ ${launchedUpiApp} से ₹${fee} भेजकर नीचे 12-अंकों का UTR डालें`
+                    : `✓ Paid ₹${fee} in ${launchedUpiApp}? Enter 12-digit UTR below`}
+                </div>
+              )}
+
+              <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-[10px]">
+                <span className="font-mono text-amber-300 truncate">{appOwnerUpi}</span>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleCopyUpi}
+                    className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 hover:text-white flex items-center gap-1"
+                  >
+                    {copiedUpi ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                    <span>{copiedUpi ? 'Copied' : 'Copy'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      soundManager.playTap();
+                      setShowQrCode(!showQrCode);
+                    }}
+                    className="px-1.5 py-0.5 rounded bg-slate-800 text-emerald-300 hover:text-white flex items-center gap-0.5"
+                  >
+                    <QrCode className="w-3 h-3" />
+                    <span>{showQrCode ? 'Hide' : 'QR'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {showQrCode && (
+                <div className="flex items-center justify-center p-2 bg-white rounded-xl max-w-[130px] mx-auto shadow-md animate-in fade-in">
+                  {appOwnerConfig?.customQrImage ? (
+                    <img
+                      src={appOwnerConfig.customQrImage}
+                      alt="App Owner UPI QR"
+                      className="w-[114px] h-[114px] object-contain rounded"
+                    />
+                  ) : (
+                    <QRCodeSVG value={upiIntentUrl} size={114} />
+                  )}
+                </div>
+              )}
+
+              <div className="flex items-center gap-1.5">
+                <input
+                  ref={utrInputRef}
+                  type="tel"
+                  inputMode="numeric"
+                  maxLength={12}
+                  value={utrNumber}
+                  onChange={(e) => {
+                    setErrorMsg(null);
+                    setUtrNumber(e.target.value.replace(/\D/g, '').slice(0, 12));
+                  }}
+                  placeholder={language === 'hi' ? '12-अंकों का UPI UTR नंबर *' : '12-Digit UPI UTR *'}
+                  className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-2 text-[11px] font-mono text-white focus:outline-none focus:border-emerald-500"
+                />
                 <button
                   type="button"
-                  onClick={handleCopyUpi}
-                  className="p-1 rounded bg-slate-800 text-slate-300 hover:text-white"
-                  title="Copy UPI ID"
+                  onClick={handlePasteUtr}
+                  className="px-2 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 text-[10px] font-bold border border-slate-700 flex items-center gap-1 shrink-0"
+                  title="Paste UTR"
                 >
-                  {copiedUpi ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  <ClipboardPaste className="w-3.5 h-3.5" />
+                  <span>Paste</span>
                 </button>
               </div>
-
-              <input
-                type="text"
-                value={utrNumber}
-                onChange={(e) => setUtrNumber(e.target.value)}
-                placeholder={language === 'hi' ? 'UPI UTR / संदर्भ सं. (वैकल्पिक)' : 'UPI Ref / UTR No. (Optional)'}
-                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-1.5 text-[10px] text-white focus:outline-none focus:border-amber-500"
-              />
+              <p className="text-[9px] text-amber-300/90 leading-snug">
+                {language === 'hi'
+                  ? 'ओनर बैंक/UPI ऐप में ₹10 मिलने की जांच करेंगे; नकली UTR पर खाता स्वतः लॉक होगा।'
+                  : 'Owner verifies ₹10 receipt in bank/UPI app; fake UTR automatically locks account.'}
+              </p>
             </div>
           )}
         </div>

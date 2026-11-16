@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { 
+  CATEGORIES,
   DEFAULT_STANDBY_WORKER,
   DEFAULT_GUEST_CUSTOMER,
   INITIAL_WORKERS, 
@@ -27,7 +28,8 @@ import {
   CommissionRecord,
   WorkerJobRecord,
   OwnerPayoutRecord,
-  WorkerNotification
+  WorkerNotification,
+  UpiPaymentRequest
 } from './types';
 import { StorageService } from './services/storageService';
 import { safeStorage } from './services/safeStorage';
@@ -38,6 +40,7 @@ import {
   isLegacyDemoCustomer,
   isLegacyDemoJob,
   isLegacyDemoBooking,
+  isValidRealUpiUtr,
   testFirestoreConnection, 
   syncBookingToFirestore, 
   syncJobToFirestore,
@@ -47,6 +50,7 @@ import {
   syncPayoutToFirestore,
   syncChatMessageToFirestore,
   syncAppConfigToFirestore,
+  syncUpiPaymentClaimToFirestore,
   listenToWorkers,
   listenToCustomers,
   listenToJobs,
@@ -54,7 +58,9 @@ import {
   listenToCommissions,
   listenToPayouts,
   listenToChatMessages,
-  listenToAppConfig
+  listenToAppConfig,
+  listenToUpiPaymentClaims,
+  purgeAllFirestoreData
 } from './services/firebase';
 import { Header } from './components/common/Header';
 import { PhoneFrame } from './components/common/PhoneFrame';
@@ -81,7 +87,6 @@ import { SecurityShieldService } from './services/securityShieldService';
 import { AwsCloudService } from './services/awsCloudService';
 import { soundManager } from './services/soundEffects';
 import { PushNotificationService } from './services/pushNotificationService';
-import { SmsDispatchService } from './services/smsDispatchService';
 import { IndexedDbSyncService } from './services/indexedDbSyncService';
 import { Sparkles, RefreshCw, Zap, ShieldCheck } from 'lucide-react';
 
@@ -319,6 +324,33 @@ export default function App() {
   });
   const [commissionRecords, setCommissionRecords] = useState<CommissionRecord[]>(INITIAL_COMMISSION_RECORDS);
   const [ownerPayouts, setOwnerPayouts] = useState<OwnerPayoutRecord[]>(INITIAL_APP_OWNER_PAYOUTS);
+  const [upiPaymentClaims, setUpiPaymentClaims] = useState<UpiPaymentRequest[]>(() => {
+    try {
+      const saved = safeStorage.getItem('smart_india_upi_claims_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+
+  const existingUtrs = React.useMemo(() => {
+    const set = new Set<string>();
+    upiPaymentClaims.forEach((c) => {
+      if (c.status !== 'rejected' && c.utrNumber) {
+        const d = c.utrNumber.replace(/\D/g, '');
+        if (/^\d{12}$/.test(d)) set.add(d);
+      }
+    });
+    commissionRecords.forEach((r) => {
+      if (r.status !== 'rejected' && r.upiTxnId) {
+        const d = r.upiTxnId.replace(/\D/g, '');
+        if (/^\d{12}$/.test(d)) set.add(d);
+      }
+    });
+    return Array.from(set);
+  }, [upiPaymentClaims, commissionRecords]);
 
   // Shared synchronized application state with persistent local & cloud sync (v3 live)
   const [workers, setWorkers] = useState<WorkerProfile[]>(() => {
@@ -467,6 +499,10 @@ export default function App() {
     safeStorage.setItem('smart_india_worker_notifs_v3', JSON.stringify(workerNotifications));
   }, [workerNotifications]);
 
+  React.useEffect(() => {
+    safeStorage.setItem('smart_india_upi_claims_v1', JSON.stringify(upiPaymentClaims));
+  }, [upiPaymentClaims]);
+
   const activeCustomerIdRef = React.useRef(activeCustomerId);
   const activeWorkerIdRef = React.useRef(activeWorkerId);
   const activeViewRef = React.useRef(activeView);
@@ -540,7 +576,11 @@ export default function App() {
         const tsMs = b.updatedAtMs || extractRecordTimeMs(b.id);
         return passesCutoff(tsMs);
       });
-      if (freshBookings.length === 0) return;
+      if (freshBookings.length === 0) {
+        setActiveBooking(null);
+        setIncomingBookingAlert(null);
+        return;
+      }
       const sorted = [...freshBookings].sort(
         (a: Booking & { updatedAtMs?: number }, b: Booking & { updatedAtMs?: number }) =>
           (b.updatedAtMs || 0) - (a.updatedAtMs || 0)
@@ -556,11 +596,16 @@ export default function App() {
           : b.workerId === curWorkerId || b.customerId === curCustId
       );
 
-      if (relevant.length === 0) return;
+      if (relevant.length === 0) {
+        setActiveBooking(null);
+        setIncomingBookingAlert(null);
+        return;
+      }
 
       const latest = relevant[0];
       if ((latest as { status: string }).status === 'cancelled') {
         setActiveBooking((prev) => (prev && prev.id === latest.id ? null : prev));
+        setIncomingBookingAlert((prev) => (prev && prev.id === latest.id ? null : prev));
         return;
       }
 
@@ -582,6 +627,8 @@ export default function App() {
 
       if (
         latest.status === 'requested' &&
+        !latest.isLocationShared &&
+        curWorkerId !== DEFAULT_STANDBY_WORKER.id &&
         latest.workerId === curWorkerId &&
         !alertedBookingIdsRef.current.has(latest.id)
       ) {
@@ -639,6 +686,15 @@ export default function App() {
       setChatMessages(freshMsgs);
     });
 
+    const unsubUpiClaims = listenToUpiPaymentClaims((cloudClaims) => {
+      setUpiPaymentClaims((prev) => {
+        const recentLocal = prev.filter((c) => passesCutoff(c.submittedAtMs || extractRecordTimeMs(c.id)));
+        const map = new Map(recentLocal.map((c) => [c.id, c]));
+        (cloudClaims || []).forEach((c) => map.set(c.id, { ...map.get(c.id), ...c }));
+        return Array.from(map.values()).sort((a, b) => (b.submittedAtMs || 0) - (a.submittedAtMs || 0));
+      });
+    }, effectiveCutoffMs);
+
     return () => {
       unsubWorkers();
       unsubCustomers();
@@ -647,6 +703,7 @@ export default function App() {
       unsubCommissions();
       unsubPayouts();
       unsubChat();
+      unsubUpiClaims();
     };
   }, [effectiveCutoffMs]);
 
@@ -684,9 +741,12 @@ export default function App() {
   // Real-time synced chat stream (starts fresh for active real bookings)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
-  // 1. Post a new Job Broadcast Requirement (Smart Trade-Targeted Routing)
+  // 1. Post a new Job Broadcast Requirement (Strict Trade-Targeted Routing)
   const handlePostJob = (newJobData: Partial<JobPost>) => {
-    const targetCat = (newJobData.category || 'mistry').toLowerCase();
+    const targetCat = (newJobData.category || 'mistry').trim().toLowerCase();
+    const catMeta = CATEGORIES.find((c) => c.id.toLowerCase() === targetCat);
+    const catDisplayName = language === 'hi' ? (catMeta?.nameHi || newJobData.category || targetCat) : (catMeta?.name || newJobData.category || targetCat);
+
     const newJob: JobPost = {
       id: `job_${Date.now()}`,
       customerId: customer.id,
@@ -707,59 +767,102 @@ export default function App() {
 
     setJobs((prev) => [newJob, ...prev]);
 
-    // 🎯 TARGETED SKILL-BASED DISPATCH:
-    // Only workers specializing in this trade whose IDs are NOT paused receive notifications!
-    const matchingTradeWorkers = workers.filter((w) => {
+    // 🎯 STRICT TRADE-BASED DISPATCH:
+    // ONLY non-paused workers whose registered trade matches this exact job category receive notifications!
+    const recipientWorkers = workers.filter((w) => {
       if (w.isIdPaused) return false; // ID is paused by worker - DO NOT send job notification!
-      const wCat = w.category.toLowerCase();
-      return wCat === targetCat ||
-             w.subSkills.some(skill => skill.toLowerCase().includes(targetCat) || targetCat.includes(skill.toLowerCase()));
+      return (w.category || '').trim().toLowerCase() === targetCat;
     });
 
-    const recipientWorkers = matchingTradeWorkers.length > 0 ? matchingTradeWorkers : [activeWorker].filter(w => !w.isIdPaused);
-
     // Create notifications strictly for the matching trade specialists
-    const leadNotifs: WorkerNotification[] = recipientWorkers.map((w) => ({
-      id: `notif_${Date.now()}_${w.id}`,
-      workerId: w.id,
-      type: 'new_lead',
-      title: `🎯 आपकी ट्रेड का नया काम पोस्ट हुआ (${newJob.category})`,
-      titleHi: `🎯 आपकी ट्रेड का नया काम पोस्ट हुआ (${newJob.category})`,
-      message: `${customer.name} posted a requirement for ${newJob.category}: ${newJob.title}. Budget: ₹${newJob.budget}`,
-      messageHi: `ग्राहक ${customer.name} ने आपकी ट्रेड (${newJob.category}) का नया काम पोस्ट किया: ${newJob.title}। बजट: ₹${newJob.budget}।`,
-      time: 'Just now',
-      isRead: false,
-      jobId: newJob.id,
-      customerName: customer.name,
-      customerLocality: newJob.customerLocality,
-      category: newJob.category,
-      amount: newJob.budget,
-    }));
+    if (recipientWorkers.length > 0) {
+      const leadNotifs: WorkerNotification[] = recipientWorkers.map((w) => ({
+        id: `notif_${Date.now()}_${w.id}`,
+        workerId: w.id,
+        type: 'new_lead',
+        title: `🎯 आपकी ट्रेड का नया काम पोस्ट हुआ (${catDisplayName})`,
+        titleHi: `🎯 आपकी ट्रेड का नया काम पोस्ट हुआ (${catDisplayName})`,
+        message: `${customer.name} posted a requirement for ${catDisplayName}: ${newJob.title}. Budget: ₹${newJob.budget}`,
+        messageHi: `ग्राहक ${customer.name} ने आपकी ट्रेड (${catDisplayName}) का नया काम पोस्ट किया: ${newJob.title}। बजट: ₹${newJob.budget}।`,
+        time: 'Just now',
+        isRead: false,
+        jobId: newJob.id,
+        customerName: customer.name,
+        customerLocality: newJob.customerLocality,
+        category: newJob.category,
+        amount: newJob.budget,
+      }));
 
-    setWorkerNotifications((prev) => [...leadNotifs, ...prev]);
+      setWorkerNotifications((prev) => [...leadNotifs, ...prev]);
+    }
 
-    // Sync job post to cloud Firestore
+    // Sync job post to cloud Firestore so live workers of this trade see it immediately
     syncJobToFirestore(newJob);
 
-    // In dual view or single view, switch active worker to the first matching worker of this trade
-    if (recipientWorkers.length > 0 && recipientWorkers[0].id !== activeWorkerId) {
+    // Notify customer cleanly about live trade-locked dispatch
+    showToast(
+      recipientWorkers.length > 0
+        ? (language === 'hi'
+            ? `🎯 ${catDisplayName} का काम लाइव पोस्ट हो गया — ${recipientWorkers.length} कारीगरों को सूचना भेजी गई!`
+            : `🎯 ${catDisplayName} job posted live — notified ${recipientWorkers.length} specialist(s)!`)
+        : (language === 'hi'
+            ? `📢 ${catDisplayName} का काम लाइव पोस्ट हो गया! जैसे ही कोई ${catDisplayName} कारीगर ऑनलाइन होगा, काम सिर्फ उसी को दिखेगा।`
+            : `📢 ${catDisplayName} job posted live! Any ${catDisplayName} worker coming online will see it immediately.`),
+      'success'
+    );
+
+    // Only auto-switch worker in Dual Simulator mode
+    if (activeView === 'dual' && recipientWorkers.length > 0 && recipientWorkers[0].id !== activeWorkerId) {
       setActiveWorkerId(recipientWorkers[0].id);
     }
 
     soundManager.playLeadPing();
   };
 
-  // 2. Direct Book a Worker from Directory (Targeted Notification Sent Directly to That Specialist)
-  const handleBookWorker = (worker: WorkerProfile) => {
+  // 2. Direct Book a Worker from Directory (Only allowed for real, online, active workers)
+  const handleBookWorker = (worker: WorkerProfile): boolean => {
+    if (!worker || worker.id === DEFAULT_STANDBY_WORKER.id) {
+      soundManager.playWarning();
+      showToast(
+        language === 'hi'
+          ? 'अभी कोई असली कारीगर उपलब्ध नहीं है। कृपया नया काम पोस्ट करें।'
+          : 'No real registered worker is available right now. Please post your job.',
+        'warning'
+      );
+      return false;
+    }
+
     if (worker.isIdPaused) {
       soundManager.playWarning();
       showToast(
         language === 'hi'
-          ? `कारीगर ${worker.name} छुट्टी पर हैं ("${worker.idPausedReason || 'उपलब्ध नहीं'}") — कृपया अन्य कारीगर चुनें।`
-          : `Artisan ${worker.name} is temporarily unavailable ("${worker.idPausedReason || 'On break'}"). Please book another artisan.`,
+          ? 'इस ट्रेड के कारीगर अभी छुट्टी पर हैं — कृपया नया काम पोस्ट करें।'
+          : 'Specialist is temporarily unavailable. Please post your job requirement.',
         'warning'
       );
-      return;
+      return false;
+    }
+
+    if (!worker.isOnline) {
+      soundManager.playWarning();
+      showToast(
+        language === 'hi'
+          ? 'अभी कोई कारीगर ऑनलाइन नहीं है। कृपया नया काम पोस्ट करें।'
+          : 'No specialist is currently Online. Please post your job requirement.',
+        'warning'
+      );
+      return false;
+    }
+
+    if (worker.isBlockedDueToUnpaidFee) {
+      soundManager.playWarning();
+      showToast(
+        language === 'hi'
+          ? 'यह कारीगर अभी उपलब्ध नहीं है। कृपया नया काम पोस्ट करें।'
+          : 'Specialist is temporarily unavailable. Please post your job requirement.',
+        'warning'
+      );
+      return false;
     }
 
     const newBooking: Booking = {
@@ -783,14 +886,15 @@ export default function App() {
       status: 'requested', // Pending worker acceptance
       isLocationShared: false, // Customer location locked until worker accepts
       createdAt: 'Just now',
-      scheduledTime: 'Immediate Arrival (ETA 8 mins)',
+      scheduledTime: language === 'hi' ? 'तत्काल सेवा अनुरोध' : 'Immediate Request',
       workerLocationProgress: 0,
     };
 
     alertedBookingIdsRef.current.add(newBooking.id);
     setActiveBooking(newBooking);
-    // Switch active worker to booked worker so dual simulator updates immediately
-    setActiveWorkerId(worker.id);
+    if (activeView === 'dual') {
+      setActiveWorkerId(worker.id);
+    }
 
     // Create immediate Worker Notification strictly for this matching trade worker
     const newNotif: WorkerNotification = {
@@ -799,9 +903,9 @@ export default function App() {
       type: 'new_booking',
       title: `🚨 [${worker.category}] नया काम बुक हुआ - स्वीकार करें (${customer.name})`,
       titleHi: `🚨 [${worker.category}] नया काम बुक हुआ - स्वीकार करें (${customer.name})`,
-      message: `Customer ${customer.name} booked you for ${worker.category} in ${customer.locality}. Accept job to unlock customer location & live route.`,
-      messageHi: `ग्राहक ${customer.name} ने ${customer.locality} में [${worker.category}] काम के लिए केवल आपको चुना है। ग्राहक का सटीक पता और लाइव नेविगेशन देखने के लिए काम स्वीकार करें।`,
-      time: 'Just now',
+      message: `Customer ${customer.name} booked you for ${worker.category} in ${customer.locality}. Accept job to unlock customer location.`,
+      messageHi: `ग्राहक ${customer.name} ने ${customer.locality} में [${worker.category}] काम के लिए आपको बुक किया है। ग्राहक का पता देखने के लिए काम स्वीकार करें।`,
+      time: 'Live Now',
       isRead: false,
       bookingId: newBooking.id,
       customerName: customer.name,
@@ -810,20 +914,14 @@ export default function App() {
       customerLocality: customer.locality,
       category: worker.category,
       amount: worker.dailyRate,
-    };
+    } as WorkerNotification;
     setWorkerNotifications((prev) => [newNotif, ...prev]);
 
-    // Trigger immediate incoming booking modal alert for this worker
     setIncomingBookingAlert(newBooking);
-
-    // Play high-priority incoming job ringtone & speak announcement to worker specifying their trade!
     soundManager.playIncomingJobAlert();
     soundManager.speakNewBookingAlert(customer.name, worker.dailyRate, language, worker.category);
-
-    // Voice announcement on customer side confirming request sent to specialist
     soundManager.speakBookingRequestSent(worker.name, language);
 
-    // 1. Android APK Background Push Service with High-Priority Chime Channel & Wake Lock
     PushNotificationService.triggerJobPushAlert({
       customerName: customer.name,
       category: worker.category,
@@ -832,68 +930,62 @@ export default function App() {
       bookingId: newBooking.id,
     });
 
-    // 2. Fast2SMS / AWS SNS DND-Bypass SMS Dispatch to Worker & Customer
-    SmsDispatchService.sendWorkerJobAlertSms(
-      worker.phone,
-      customer.name,
-      worker.category,
-      customer.locality,
-      worker.dailyRate
-    );
-    SmsDispatchService.sendBookingConfirmationSms(
-      customer.phone,
-      worker.name,
-      newBooking.arrivalOtp,
-      worker.category
-    );
-
-    // 3. Local SQLite / IndexedDB Auto-Sync (Saves booking locally first; auto-syncs to AWS Mumbai)
     IndexedDbSyncService.saveBookingLocally(newBooking);
-
-    // 4. Sync to Firestore & AWS
     syncBookingToFirestore(newBooking);
     AwsCloudService.syncBookingToAws(newBooking);
+    return true;
   };
 
-  // 2c. Instant Book Specialist by Category
-  const handleBookCategory = (categoryId: string) => {
+  // 2c. Instant Book Specialist strictly by Requested Trade Category (requires ONLINE & unblocked worker!)
+  const handleBookCategory = (categoryId: string): boolean => {
     soundManager.playTap();
-    if (workers.length === 0) {
+    const cleanCat = categoryId.trim().toLowerCase();
+    const catMeta = CATEGORIES.find((c) => c.id.toLowerCase() === cleanCat);
+    const catLabel = language === 'hi' ? (catMeta?.nameHi || categoryId) : (catMeta?.name || categoryId);
+
+    const exactTradeWorkers = workers.filter(
+      (w) =>
+        w.id !== DEFAULT_STANDBY_WORKER.id &&
+        (w.category || '').trim().toLowerCase() === cleanCat
+    );
+    const availableTradeWorkers = exactTradeWorkers.filter(
+      (w) => w.isOnline && !w.isIdPaused && !w.isBlockedDueToUnpaidFee
+    );
+
+    if (availableTradeWorkers.length === 0) {
       soundManager.playWarning();
-      showToast(
-        language === 'hi'
-          ? 'अभी कोई लाइव कारीगर ऑनलाइन नहीं है। कृपया नीचे "Post" टैब से अपना काम पोस्ट करें।'
-          : 'No live registered workers available yet. Please post your job requirement via the Post tab.',
-        'warning'
-      );
-      return;
+      if (exactTradeWorkers.length > 0) {
+        showToast(
+          language === 'hi'
+            ? `अभी "${catLabel}" के कोई कारीगर ऑनलाइन नहीं हैं। कृपया काम पोस्ट करें ताकि ऑनलाइन आते ही सिर्फ ${catLabel} कारीगरों को सूचना मिले।`
+            : `No "${catLabel}" worker is Online right now. Please post your job so only ${catLabel} specialists get notified when online.`,
+          'warning'
+        );
+      } else {
+        showToast(
+          language === 'hi'
+            ? `अभी "${catLabel}" का कोई कारीगर पंजीकृत नहीं है। दूसरा ट्रेड नहीं जोड़ा जाएगा — कृपया ${catLabel} काम पोस्ट करें!`
+            : `No "${catLabel}" specialist is registered yet. Post this job so it goes live strictly to ${catLabel} workers!`,
+          'warning'
+        );
+      }
+      return false;
     }
 
-    const cleanCat = categoryId.toLowerCase();
-    const availableWorkers = workers.filter((w) => !w.isIdPaused);
-    const pool = availableWorkers.length > 0 ? availableWorkers : workers;
-    const matching = pool.filter(
-      (w) => w.category.toLowerCase() === cleanCat ||
-             w.subSkills.some(s => s.toLowerCase().includes(cleanCat))
-    );
-    const chosenWorker = matching.length > 0
-      ? [...matching].sort((a, b) => b.rating - a.rating)[0]
-      : pool.find((w) => w.category.toLowerCase() === cleanCat) || pool[0];
-
-    if (!chosenWorker) return;
-    handleBookWorker(chosenWorker);
+    const chosenWorker = [...availableTradeWorkers].sort((a, b) => b.rating - a.rating)[0];
+    return handleBookWorker(chosenWorker);
   };
 
-  // 2b. Worker Accepts Incoming Booking (Unlocking Customer Location & GPS Navigation)
+  // 2b. Worker Accepts Incoming Booking (Unlocking Customer Location)
   const handleAcceptIncomingBooking = (bookingId?: string) => {
     setActiveBooking((prev) => {
       if (!prev) return null;
       const updated: Booking = {
         ...prev,
         status: 'accepted',
-        isLocationShared: true, // Location officially unlocked and shared with worker!
+        isLocationShared: true,
         acceptedAt: 'Just now',
-        workerLocationProgress: 25,
+        workerLocationProgress: 0,
       };
       syncBookingToFirestore(updated);
       AwsCloudService.syncBookingToAws(updated);
@@ -964,7 +1056,7 @@ export default function App() {
       isLocationShared: true, // Lead explicitly accepted by worker, location shared!
       acceptedAt: 'Just now',
       createdAt: 'Just now',
-      workerLocationProgress: 35,
+      workerLocationProgress: 0,
     };
 
     alertedBookingIdsRef.current.add(newBooking.id);
@@ -1081,6 +1173,16 @@ export default function App() {
 
     let newBal = currentBal;
     if (method === 'wallet_deduct') {
+      if (currentBal < fee) {
+        soundManager.playWarning();
+        showToast(
+          language === 'hi'
+            ? `वॉलेट में कम से कम ₹${fee} होना ज़रूरी है। कृपया असली UPI से रीचार्ज करें।`
+            : `Insufficient wallet balance (need ₹${fee}). Please recharge via real UPI.`,
+          'warning'
+        );
+        return;
+      }
       newBal = Math.max(0, currentBal - fee);
       // Deduct from worker balance
       setWorkers((prev) =>
@@ -1110,6 +1212,8 @@ export default function App() {
       setWalletTransactions((prev) => [newTx, ...prev]);
     }
 
+    const isPendingUpi = method === 'upi_direct' && commissionRecord?.status === 'pending';
+
     // Add ₹10 fee record to App Owner's ledger (commissionRecords)
     const finalRecord: CommissionRecord = commissionRecord || {
       id: `comm_${Date.now()}`,
@@ -1123,14 +1227,44 @@ export default function App() {
       jobTotalAmount: fee,
       commissionAmount: fee, // Flat ₹10 to App Owner!
       paymentMethod: method,
-      upiTxnId: `UPI/FEE/${Date.now().toString().slice(-6)}`,
+      upiTxnId: `WALLET/FEE/${Date.now().toString().slice(-6)}`,
       paidAt: 'Just now',
-      status: 'paid',
+      status: isPendingUpi ? 'pending' : 'paid',
     };
 
     setCommissionRecords((prev) => [finalRecord, ...prev]);
     syncCommissionToFirestore(finalRecord);
     AwsCloudService.syncCommissionToAws(finalRecord);
+
+    if (isPendingUpi) {
+      const cleanUtr = finalRecord.upiTxnId.replace(/\D/g, '').slice(-12);
+      const nowMs = Date.now();
+      const claim: UpiPaymentRequest = {
+        id: `claim_${nowMs}_${Math.floor(Math.random() * 999)}`,
+        workerId: activeWorker.id,
+        workerName: activeWorker.name,
+        workerPhone: activeWorker.phone,
+        purpose: 'lead_fee',
+        purposeLabel: `Lead Fee ₹${fee} (${activeBooking.serviceCategory})`,
+        amount: finalRecord.commissionAmount,
+        utrNumber: cleanUtr,
+        receiverUpiId: appOwnerConfig.upiId,
+        bookingId: activeBooking.id,
+        commissionId: finalRecord.id,
+        status: 'pending_verification',
+        submittedAt: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
+        submittedAtText: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
+        submittedAtMs: nowMs,
+      };
+      setUpiPaymentClaims((prev) => [claim, ...prev]);
+      syncUpiPaymentClaimToFirestore(claim);
+      showToast(
+        language === 'hi'
+          ? `⏳ UTR ${cleanUtr} जांच के लिए भेजा गया! ओनर पुष्टि के बाद ₹${fee} फीस स्वीकृत होगी।`
+          : `⏳ UTR ${cleanUtr} sent for Owner bank verification.`,
+        'info'
+      );
+    }
 
     // Update booking status to in_progress
     const updatedBooking: Booking = {
@@ -1138,9 +1272,10 @@ export default function App() {
       isOtpVerified: true,
       status: 'in_progress',
       workerLocationProgress: 100,
-      meetingFeePaid: true,
+      meetingFeePaid: !isPendingUpi,
       meetingFeeTxnId: finalRecord.upiTxnId,
       meetingFeeMethod: method,
+      commissionPaymentStatus: isPendingUpi ? 'pending' : activeBooking.commissionPaymentStatus,
     };
     setActiveBooking(updatedBooking);
     syncBookingToFirestore(updatedBooking);
@@ -1359,6 +1494,8 @@ export default function App() {
 
   // 8B. Worker Pays Commission to Smart India Work App Owner
   const handlePayCommission = (record: CommissionRecord, method: 'upi_direct' | 'wallet_deduct') => {
+    const isPendingUpi = method === 'upi_direct' && record.status === 'pending';
+
     // Add to Commission Ledger
     setCommissionRecords((prev) => [record, ...prev]);
     syncCommissionToFirestore(record);
@@ -1368,7 +1505,7 @@ export default function App() {
     if (activeBooking) {
       const updatedBooking: Booking = {
         ...activeBooking,
-        commissionPaymentStatus: method === 'wallet_deduct' ? 'paid_wallet' : 'paid_upi',
+        commissionPaymentStatus: method === 'wallet_deduct' ? 'paid_wallet' : isPendingUpi ? 'pending' : 'paid_upi',
         commissionTxnId: record.upiTxnId,
         commissionPaidAt: record.paidAt,
       };
@@ -1376,14 +1513,46 @@ export default function App() {
       syncBookingToFirestore(updatedBooking);
     }
 
-    // Update worker state (reduce pending dues, add to total paid)
+    if (isPendingUpi) {
+      const cleanUtr = record.upiTxnId.replace(/\D/g, '').slice(-12);
+      const nowMs = Date.now();
+      const timeText = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+      const claim: UpiPaymentRequest = {
+        id: `claim_${nowMs}_${Math.floor(Math.random() * 999)}`,
+        workerId: record.workerId,
+        workerName: record.workerName,
+        workerPhone: record.workerPhone,
+        purpose: 'lead_fee',
+        purposeLabel: `Lead Fee ₹${record.commissionAmount} (${record.jobTitle})`,
+        amount: record.commissionAmount,
+        utrNumber: cleanUtr,
+        receiverUpiId: appOwnerConfig.upiId,
+        bookingId: record.bookingId,
+        commissionId: record.id,
+        status: 'pending_verification',
+        submittedAt: timeText,
+        submittedAtText: timeText,
+        submittedAtMs: nowMs,
+      };
+      setUpiPaymentClaims((prev) => [claim, ...prev]);
+      syncUpiPaymentClaimToFirestore(claim);
+      showToast(
+        language === 'hi'
+          ? `⏳ UTR ${cleanUtr} जांच के लिए भेजा गया! ओनर के बैंक से पुष्टि होते ही फीस स्वीकृत होगी।`
+          : `⏳ UTR ${cleanUtr} submitted for Owner Bank Verification.`,
+        'info'
+      );
+      return;
+    }
+
+    // Update worker state (reduce pending dues, add to total paid) ONLY for instant verified wallet_deduct
     setWorkers((prev) =>
       prev.map((w) => {
         if (w.id === record.workerId) {
           const newPending = Math.max(0, (w.pendingCommissionDues || 0) - record.commissionAmount);
           const newPaid = (w.totalCommissionPaid || 0) + record.commissionAmount;
-          const newBal = method === 'wallet_deduct' 
-            ? Math.max(0, w.walletBalance - record.commissionAmount) 
+          const newBal = method === 'wallet_deduct'
+            ? Math.max(0, w.walletBalance - record.commissionAmount)
             : w.walletBalance;
 
           const updated: WorkerProfile = {
@@ -1414,6 +1583,304 @@ export default function App() {
       };
       setWalletTransactions((prev) => [newTx, ...prev]);
     }
+  };
+
+  // 8C. Real UPI Payment Claims Queue (Submit -> Owner Approves / Rejects)
+  const handleSubmitUpiPaymentClaim = (
+    claimInput: Omit<UpiPaymentRequest, 'id' | 'status' | 'submittedAtMs' | 'submittedAtText'>
+  ): { ok: boolean; error?: string } => {
+    const cleanUtr = (claimInput.utrNumber || '').replace(/\D/g, '').trim();
+    if (!isValidRealUpiUtr(cleanUtr)) {
+      return {
+        ok: false,
+        error:
+          language === 'hi'
+            ? '⚠️ कृपया 12-अंकों का असली NPCI UTR नंबर दर्ज करें।'
+            : '⚠️ Please enter a valid 12-digit NPCI UTR number.',
+      };
+    }
+
+    if (existingUtrs.includes(cleanUtr)) {
+      return {
+        ok: false,
+        error:
+          language === 'hi'
+            ? '⚠️ यह 12-अंकों का UTR नंबर पहले ही उपयोग हो चुका है!'
+            : '⚠️ This 12-digit UTR number has already been submitted!',
+      };
+    }
+
+    const nowMs = Date.now();
+    const submittedText = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+    const newClaim: UpiPaymentRequest = {
+      ...claimInput,
+      id: `claim_${nowMs}_${Math.floor(Math.random() * 999)}`,
+      utrNumber: cleanUtr,
+      receiverUpiId: claimInput.receiverUpiId || appOwnerConfig.upiId,
+      purposeLabel: claimInput.purposeLabel || claimInput.note || claimInput.purpose,
+      status: 'pending_verification',
+      submittedAt: submittedText,
+      submittedAtText: submittedText,
+      submittedAtMs: nowMs,
+    };
+
+    setUpiPaymentClaims((prev) => [newClaim, ...prev]);
+    syncUpiPaymentClaimToFirestore(newClaim);
+    soundManager.playTap();
+    showToast(
+      language === 'hi'
+        ? `⏳ ₹${newClaim.amount} (UTR: ${cleanUtr}) ओनर जांच के लिए भेज दिया गया है।`
+        : `⏳ ₹${newClaim.amount} (UTR: ${cleanUtr}) submitted for Owner verification.`,
+      'info'
+    );
+    return { ok: true };
+  };
+
+  const handleApproveUpiClaim = (claimId: string) => {
+    const targetClaim = upiPaymentClaims.find((c) => c.id === claimId);
+    if (!targetClaim || targetClaim.status === 'approved') return;
+
+    const reviewedText = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+    const approvedClaim: UpiPaymentRequest = {
+      ...targetClaim,
+      status: 'approved',
+      reviewedAt: reviewedText,
+    };
+
+    setUpiPaymentClaims((prev) => prev.map((c) => (c.id === claimId ? approvedClaim : c)));
+    syncUpiPaymentClaimToFirestore(approvedClaim);
+
+    const targetWorker = workers.find((w) => w.id === targetClaim.workerId);
+
+    if (targetClaim.purpose === 'wallet' || targetClaim.purpose === 'custom') {
+      if (targetWorker) {
+        const newBal = (targetWorker.walletBalance || 0) + targetClaim.amount;
+        const updatedWorker: WorkerProfile = { ...targetWorker, walletBalance: newBal };
+        setWorkers((prev) => prev.map((w) => (w.id === targetWorker.id ? updatedWorker : w)));
+        syncWorkerToFirestore(updatedWorker);
+
+        const newTx: WalletTransaction = {
+          id: `tx_${Date.now()}`,
+          workerId: targetWorker.id,
+          amount: targetClaim.amount,
+          type: 'credit',
+          reason: 'recharge',
+          description: `Verified UPI Recharge (Owner Approved • UTR ${targetClaim.utrNumber})`,
+          date: 'Just now',
+          referenceId: `UTR/${targetClaim.utrNumber}`,
+          balanceAfter: newBal,
+        };
+        setWalletTransactions((prev) => [newTx, ...prev]);
+      }
+    } else if (targetClaim.purpose === 'unpaid_fee') {
+      if (targetWorker) {
+        const updatedWorker: WorkerProfile = {
+          ...targetWorker,
+          isBlockedDueToUnpaidFee: false,
+          unpaidFeeAmount: 0,
+          unpaidFeeReason: undefined,
+          unpaidCustomerName: undefined,
+          unpaidBookingId: undefined,
+          pendingCommissionDues: Math.max(0, (targetWorker.pendingCommissionDues || 0) - targetClaim.amount),
+          totalCommissionPaid: (targetWorker.totalCommissionPaid || 0) + targetClaim.amount,
+        };
+        setWorkers((prev) => prev.map((w) => (w.id === targetWorker.id ? updatedWorker : w)));
+        syncWorkerToFirestore(updatedWorker);
+      }
+
+      const clrRec: CommissionRecord = {
+        id: `comm_due_${Date.now()}`,
+        workerId: targetClaim.workerId,
+        workerName: targetClaim.workerName,
+        workerPhone: targetClaim.workerPhone,
+        bookingId: targetWorker?.unpaidBookingId || targetClaim.bookingId || 'fee-settle',
+        jobTitle: 'बकाया ऐप फीस (Verified UPI Clearance)',
+        customerName: targetWorker?.unpaidCustomerName || 'ग्राहक सेवा',
+        feeType: 'per_job_meeting_fee',
+        jobTotalAmount: targetClaim.amount,
+        commissionAmount: targetClaim.amount,
+        paymentMethod: 'upi_direct',
+        upiTxnId: `UTR/${targetClaim.utrNumber}`,
+        paidAt: reviewedText,
+        status: 'paid',
+      };
+      setCommissionRecords((prev) => [clrRec, ...prev]);
+      syncCommissionToFirestore(clrRec);
+      AwsCloudService.syncCommissionToAws(clrRec);
+    } else if (targetClaim.purpose === 'lead_fee') {
+      if (targetClaim.commissionId) {
+        setCommissionRecords((prev) =>
+          prev.map((r) => {
+            if (r.id === targetClaim.commissionId) {
+              const paidRec: CommissionRecord = { ...r, status: 'paid', paidAt: reviewedText };
+              syncCommissionToFirestore(paidRec);
+              return paidRec;
+            }
+            return r;
+          })
+        );
+      } else {
+        const feeRec: CommissionRecord = {
+          id: `comm_lead_${Date.now()}`,
+          workerId: targetClaim.workerId,
+          workerName: targetClaim.workerName,
+          workerPhone: targetClaim.workerPhone,
+          bookingId: targetClaim.bookingId || 'lead-fee',
+          jobTitle: targetClaim.purposeLabel || 'Lead Fee',
+          feeType: 'per_job_meeting_fee',
+          jobTotalAmount: targetClaim.amount,
+          commissionAmount: targetClaim.amount,
+          paymentMethod: 'upi_direct',
+          upiTxnId: `UTR/${targetClaim.utrNumber}`,
+          paidAt: reviewedText,
+          status: 'paid',
+        };
+        setCommissionRecords((prev) => [feeRec, ...prev]);
+        syncCommissionToFirestore(feeRec);
+      }
+
+      if (targetWorker) {
+        const coversUnpaidDue =
+          Boolean(targetWorker.isBlockedDueToUnpaidFee) &&
+          targetClaim.amount >= (targetWorker.unpaidFeeAmount || 10);
+        const updatedWorker: WorkerProfile = {
+          ...targetWorker,
+          ...(coversUnpaidDue
+            ? {
+                isBlockedDueToUnpaidFee: false,
+                unpaidFeeAmount: 0,
+                unpaidFeeReason: undefined,
+                unpaidCustomerName: undefined,
+                unpaidBookingId: undefined,
+              }
+            : {}),
+          pendingCommissionDues: Math.max(0, (targetWorker.pendingCommissionDues || 0) - targetClaim.amount),
+          totalCommissionPaid: (targetWorker.totalCommissionPaid || 0) + targetClaim.amount,
+        };
+        setWorkers((prev) => prev.map((w) => (w.id === targetWorker.id ? updatedWorker : w)));
+        syncWorkerToFirestore(updatedWorker);
+      }
+
+      if (
+        activeBooking &&
+        (activeBooking.id === targetClaim.bookingId ||
+          activeBooking.meetingFeeTxnId === `UTR/${targetClaim.utrNumber}` ||
+          activeBooking.commissionTxnId === `UTR/${targetClaim.utrNumber}`)
+      ) {
+        const paidBooking: Booking = {
+          ...activeBooking,
+          meetingFeePaid: true,
+          commissionPaymentStatus: 'paid_upi',
+          meetingFeeTxnId: `UTR/${targetClaim.utrNumber}`,
+          commissionTxnId: `UTR/${targetClaim.utrNumber}`,
+          commissionPaidAt: reviewedText,
+        };
+        setActiveBooking(paidBooking);
+        syncBookingToFirestore(paidBooking);
+      }
+    } else if (targetClaim.purpose === 'kyc' || targetClaim.purpose === 'pro') {
+      if (targetClaim.purpose === 'kyc' && targetWorker) {
+        const updatedWorker: WorkerProfile = { ...targetWorker, isAadhaarVerified: true };
+        setWorkers((prev) => prev.map((w) => (w.id === targetWorker.id ? updatedWorker : w)));
+        syncWorkerToFirestore(updatedWorker);
+      }
+      const planRec: CommissionRecord = {
+        id: `comm_${targetClaim.purpose}_${Date.now()}`,
+        workerId: targetClaim.workerId,
+        workerName: targetClaim.workerName,
+        workerPhone: targetClaim.workerPhone,
+        bookingId: targetClaim.purpose === 'kyc' ? 'KYC-VERIFY' : 'PRO-PLAN',
+        jobTitle: targetClaim.purposeLabel || targetClaim.purpose.toUpperCase(),
+        feeType: 'per_job_meeting_fee',
+        jobTotalAmount: targetClaim.amount,
+        commissionAmount: targetClaim.amount,
+        paymentMethod: 'upi_direct',
+        upiTxnId: `UTR/${targetClaim.utrNumber}`,
+        paidAt: reviewedText,
+        status: 'paid',
+      };
+      setCommissionRecords((prev) => [planRec, ...prev]);
+      syncCommissionToFirestore(planRec);
+    }
+
+    soundManager.playSuccessCoin();
+    showToast(
+      language === 'hi'
+        ? `✓ ₹${targetClaim.amount} (UTR: ${targetClaim.utrNumber}) स्वीकृत! वर्कर का खाता अपडेट हो गया।`
+        : `✓ ₹${targetClaim.amount} (UTR: ${targetClaim.utrNumber}) approved & settled!`,
+      'success'
+    );
+  };
+
+  const handleRejectUpiClaim = (claimId: string, reason?: string) => {
+    const targetClaim = upiPaymentClaims.find((c) => c.id === claimId);
+    if (!targetClaim || targetClaim.status === 'rejected') return;
+
+    const finalReason =
+      reason ||
+      (language === 'hi'
+        ? 'ओनर के बैंक/UPI खाते में यह भुगतान प्राप्त नहीं हुआ'
+        : 'Payment not received in Owner UPI/Bank account');
+    const reviewedText = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+
+    const rejectedClaim: UpiPaymentRequest = {
+      ...targetClaim,
+      status: 'rejected',
+      rejectionReason: finalReason,
+      reviewedAt: reviewedText,
+    };
+    setUpiPaymentClaims((prev) => prev.map((c) => (c.id === claimId ? rejectedClaim : c)));
+    syncUpiPaymentClaimToFirestore(rejectedClaim);
+
+    if (targetClaim.commissionId) {
+      setCommissionRecords((prev) =>
+        prev.map((r) => {
+          if (r.id === targetClaim.commissionId) {
+            const rejectedRec: CommissionRecord = { ...r, status: 'rejected' };
+            syncCommissionToFirestore(rejectedRec);
+            return rejectedRec;
+          }
+          return r;
+        })
+      );
+    }
+
+    if (targetClaim.purpose === 'lead_fee' || targetClaim.purpose === 'unpaid_fee') {
+      setWorkers((prev) =>
+        prev.map((w) => {
+          if (w.id === targetClaim.workerId) {
+            const lockedWorker: WorkerProfile = {
+              ...w,
+              isBlockedDueToUnpaidFee: true,
+              unpaidFeeAmount: targetClaim.amount,
+              unpaidFeeReason: finalReason,
+              unpaidBookingId: targetClaim.bookingId || w.unpaidBookingId,
+            };
+            syncWorkerToFirestore(lockedWorker);
+            return lockedWorker;
+          }
+          return w;
+        })
+      );
+
+      if (activeBooking && activeBooking.id === targetClaim.bookingId) {
+        const unpaidBooking: Booking = {
+          ...activeBooking,
+          meetingFeePaid: false,
+          commissionPaymentStatus: 'pending',
+        };
+        setActiveBooking(unpaidBooking);
+        syncBookingToFirestore(unpaidBooking);
+      }
+    }
+
+    soundManager.playWarning();
+    showToast(
+      language === 'hi'
+        ? `✕ UTR ${targetClaim.utrNumber} अस्वीकृत किया गया।`
+        : `✕ UTR ${targetClaim.utrNumber} rejected.`,
+      'warning'
+    );
   };
 
   // 9. Customer Rates Worker
@@ -1681,6 +2148,7 @@ export default function App() {
     soundManager.playTap();
     setActiveBooking(null);
     setWorkerNotifications([]);
+    setUpiPaymentClaims([]);
     const keysToRemove = [
       'smart_india_active_booking',
       'smart_india_active_booking_v2',
@@ -1699,6 +2167,7 @@ export default function App() {
       'smart_india_worker_notifs_v3',
       'smart_india_active_customer_id_v4',
       'smart_india_active_worker_id_v4',
+      'smart_india_upi_claims_v1',
     ];
     keysToRemove.forEach((k) => safeStorage.removeItem(k));
     setWorkers(INITIAL_WORKERS);
@@ -2040,17 +2509,18 @@ export default function App() {
                   onDeleteRecord={handleDeleteWorkerJobRecord}
                   onUpdateBookingProgress={handleUpdateBookingProgress}
                   notifications={workerNotifications.filter(
-                    (n) => (!n.workerId || n.workerId === activeWorker.id) && 
-                           (!n.category || n.category.toLowerCase() === activeWorker.category.toLowerCase() || n.category === 'all')
+                    (n) => (n.workerId === activeWorker.id || (!n.workerId && n.category?.trim().toLowerCase() === activeWorker.category.trim().toLowerCase())) &&
+                           (!n.category || n.category.trim().toLowerCase() === activeWorker.category.trim().toLowerCase() || n.category === 'all')
                   )}
                   onMarkNotificationAsRead={handleMarkNotificationAsRead}
                   onMarkAllNotificationsAsRead={handleMarkAllNotificationsAsRead}
                   onClearAllNotifications={handleClearAllNotifications}
                   incomingBookingAlert={
-                    incomingBookingAlert && (
-                      incomingBookingAlert.workerId === activeWorker.id ||
-                      incomingBookingAlert.serviceCategory.toLowerCase() === activeWorker.category.toLowerCase()
-                    ) ? incomingBookingAlert : null
+                    incomingBookingAlert &&
+                    incomingBookingAlert.workerId === activeWorker.id &&
+                    incomingBookingAlert.serviceCategory.trim().toLowerCase() === activeWorker.category.trim().toLowerCase()
+                      ? incomingBookingAlert
+                      : null
                   }
                   onDismissIncomingBookingAlert={() => setIncomingBookingAlert(null)}
                   onAcceptBooking={handleAcceptIncomingBooking}
@@ -2063,6 +2533,9 @@ export default function App() {
                     soundManager.playTap();
                     setIsSosModalOpen(true);
                   }}
+                  upiPaymentClaims={upiPaymentClaims}
+                  existingUtrs={existingUtrs}
+                  onSubmitPaymentClaim={handleSubmitUpiPaymentClaim}
                 />
               </PhoneFrame>
             </div>
@@ -2181,17 +2654,18 @@ export default function App() {
               onDeleteRecord={handleDeleteWorkerJobRecord}
               onUpdateBookingProgress={handleUpdateBookingProgress}
               notifications={workerNotifications.filter(
-                (n) => (!n.workerId || n.workerId === activeWorker.id) && 
-                       (!n.category || n.category.toLowerCase() === activeWorker.category.toLowerCase() || n.category === 'all')
+                (n) => (n.workerId === activeWorker.id || (!n.workerId && n.category?.trim().toLowerCase() === activeWorker.category.trim().toLowerCase())) &&
+                       (!n.category || n.category.trim().toLowerCase() === activeWorker.category.trim().toLowerCase() || n.category === 'all')
               )}
               onMarkNotificationAsRead={handleMarkNotificationAsRead}
               onMarkAllNotificationsAsRead={handleMarkAllNotificationsAsRead}
               onClearAllNotifications={handleClearAllNotifications}
               incomingBookingAlert={
-                incomingBookingAlert && (
-                  incomingBookingAlert.workerId === activeWorker.id ||
-                  incomingBookingAlert.serviceCategory.toLowerCase() === activeWorker.category.toLowerCase()
-                ) ? incomingBookingAlert : null
+                incomingBookingAlert &&
+                incomingBookingAlert.workerId === activeWorker.id &&
+                incomingBookingAlert.serviceCategory.trim().toLowerCase() === activeWorker.category.trim().toLowerCase()
+                  ? incomingBookingAlert
+                  : null
               }
               onDismissIncomingBookingAlert={() => setIncomingBookingAlert(null)}
               onAcceptBooking={handleAcceptIncomingBooking}
@@ -2226,6 +2700,9 @@ export default function App() {
                 soundManager.playTap();
                 setShowOnboarding(true);
               } : undefined}
+              upiPaymentClaims={upiPaymentClaims}
+              existingUtrs={existingUtrs}
+              onSubmitPaymentClaim={handleSubmitUpiPaymentClaim}
             />
           </div>
         )}
@@ -2276,11 +2753,17 @@ export default function App() {
                   setActiveView(savedRole === 'worker' ? 'worker' : 'customer');
                 }}
                 payoutHistory={ownerPayouts}
+                upiPaymentClaims={upiPaymentClaims}
+                onApproveUpiClaim={handleApproveUpiClaim}
+                onRejectUpiClaim={handleRejectUpiClaim}
                 onResetAllData={() => {
                   handleResetData();
+                  setIncomingBookingAlert(null);
                   setCommissionRecords([]);
                   setOwnerPayouts([]);
+                  setUpiPaymentClaims([]);
                   setChatMessages([]);
+                  purgeAllFirestoreData();
                   const resetCfg: AppOwnerPaymentConfig = {
                     ...appOwnerConfig,
                     totalWithdrawnToBank: 0,
@@ -2378,8 +2861,13 @@ export default function App() {
         onClose={() => setIsProductionServicesOpen(false)}
         language={language}
         worker={activeWorker}
-        onRechargeWallet={(amt, txn) => {
-          handleRechargeWallet(amt);
+        onRechargeWallet={() => {
+          showToast(
+            language === 'hi'
+              ? 'नकली ऑटो-क्रेडिट बंद है — कृपया असली 12-अंकों का UPI UTR डालें।'
+              : 'Fake auto-credit disabled — use real 12-digit UPI UTR verification.',
+            'info'
+          );
         }}
       />
 
