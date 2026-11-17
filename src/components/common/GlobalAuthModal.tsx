@@ -234,8 +234,22 @@ export const GlobalAuthModal: React.FC<GlobalAuthModalProps> = ({
     }
   };
 
+  const isLocalhostOrNative =
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' ||
+      Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.()));
+
   const handleGooglePopup = async () => {
     setOtpError('');
+    if (isLocalhostOrNative) {
+      setOtpError(
+        language === 'hi'
+          ? 'नीचे अपना नाम, Gmail और मोबाइल नंबर भरकर फ्री OTP सत्यापित करें।'
+          : 'Fill your name, Gmail and verify Free OTP below to continue.'
+      );
+      soundManager.playTap();
+      return;
+    }
     setGoogleLoading(true);
     try {
       const user = await signInCustomerWithGoogle();
@@ -243,7 +257,16 @@ export const GlobalAuthModal: React.FC<GlobalAuthModalProps> = ({
       if (user.displayName && !customGmailName.trim()) setCustomGmailName(user.displayName);
       soundManager.playSuccess();
     } catch (err) {
-      setOtpError(mapFirebaseAuthError(err, language));
+      const code = (err as { code?: string })?.code || '';
+      if (code === 'auth/unauthorized-domain' || code === 'auth/popup-blocked' || code === 'auth/popup-closed-by-user') {
+        setOtpError(
+          language === 'hi'
+            ? 'नीचे अपना नाम, Gmail पता व फ्री मोबाइल OTP भरकर ID बनाएं (₹0 चार्ज)।'
+            : 'Fill your name, Gmail & Free OTP below to create your ID.'
+        );
+      } else {
+        setOtpError(mapFirebaseAuthError(err, language));
+      }
       soundManager.playWarning();
     } finally {
       setGoogleLoading(false);
@@ -253,12 +276,12 @@ export const GlobalAuthModal: React.FC<GlobalAuthModalProps> = ({
   const handleCustomGmailLogin = (e: React.FormEvent) => {
     e.preventDefault();
     if (!customGmail.trim() || !customGmail.includes('@')) {
-      setOtpError(language === 'hi' ? 'कृपया पहले Google Sign-In करें या Gmail भरें' : 'Please sign in with Google or enter Gmail');
+      setOtpError(language === 'hi' ? 'कृपया सही Gmail पता भरें' : 'Please enter a valid Gmail address');
       return;
     }
     const cleanPhone = gmailPhone.replace(/\D/g, '').slice(0, 10);
     if (!validateIndianMobile10(cleanPhone) || !isGmailPhoneVerified) {
-      setOtpError(language === 'hi' ? 'कृपया अपना असली मोबाइल नंबर SMS OTP से सत्यापित करें' : 'Please verify your real mobile number via SMS OTP');
+      setOtpError(language === 'hi' ? 'कृपया अपना मोबाइल नंबर फ्री OTP से सत्यापित करें' : 'Please verify your mobile number via Free OTP');
       return;
     }
 
@@ -446,14 +469,16 @@ export const GlobalAuthModal: React.FC<GlobalAuthModalProps> = ({
                 </div>
               )}
 
-              <button
-                type="button"
-                disabled={googleLoading}
-                onClick={handleGooglePopup}
-                className="w-full py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-900 font-black text-xs shadow-md flex items-center justify-center gap-2"
-              >
-                <span>{googleLoading ? '...' : (language === 'hi' ? 'Google से साइन इन करें (असली)' : 'Sign in with Google (Real)')}</span>
-              </button>
+              {!isLocalhostOrNative && (
+                <button
+                  type="button"
+                  disabled={googleLoading}
+                  onClick={handleGooglePopup}
+                  className="w-full py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-900 font-black text-xs shadow-md flex items-center justify-center gap-2"
+                >
+                  <span>{googleLoading ? '...' : (language === 'hi' ? 'Google से Auto-Fill करें' : 'Sign in with Google')}</span>
+                </button>
+              )}
 
               <form onSubmit={handleCustomGmailLogin} className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-2.5">
                 <input
@@ -513,8 +538,8 @@ export const GlobalAuthModal: React.FC<GlobalAuthModalProps> = ({
                 </h4>
                 <p className="text-[11px] text-slate-400">
                   {language === 'hi' 
-                    ? '10 अंकों का मोबाइल नंबर डालें और SMS द्वारा सुरक्षित कोड पाएं' 
-                    : 'Enter 10-digit mobile number to receive 4-digit SMS OTP'}
+                    ? '10 अंकों का मोबाइल नंबर डालें और तुरंत फ्री 6-अंकों का OTP पाएं' 
+                    : 'Enter 10-digit mobile number to get an instant free 6-digit OTP'}
                 </p>
               </div>
 

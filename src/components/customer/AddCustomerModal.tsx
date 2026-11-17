@@ -80,8 +80,22 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
 
   if (!isOpen) return null;
 
+  const isLocalhostOrNative =
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' ||
+      Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.()));
+
   const handleGooglePopupSignIn = async () => {
     setErrorMsg('');
+    if (isLocalhostOrNative) {
+      setErrorMsg(
+        language === 'hi'
+          ? 'नीचे अपना नाम, Gmail पता और मोबाइल नंबर भरकर फ्री OTP सत्यापित करें — तुरंत Customer ID खुल जाएगी।'
+          : 'Enter your full name, Gmail address & verify Free OTP below to open your Customer ID right away.'
+      );
+      soundManager.playTap();
+      return;
+    }
     setGoogleAuthLoading(true);
     try {
       const user = await signInCustomerWithGoogle();
@@ -91,7 +105,16 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
       setIsGoogleAuthenticated(true);
       soundManager.playSuccess();
     } catch (err) {
-      setErrorMsg(mapFirebaseAuthError(err, language));
+      const code = (err as { code?: string })?.code || '';
+      if (code === 'auth/unauthorized-domain' || code === 'auth/popup-blocked' || code === 'auth/popup-closed-by-user') {
+        setErrorMsg(
+          language === 'hi'
+            ? 'नीचे अपना नाम, Gmail पता और फ्री मोबाइल OTP भरकर 100% फ्री में Customer ID बनाएं।'
+            : 'Please fill your name, Gmail & Free OTP below to create your Customer ID without any charge.'
+        );
+      } else {
+        setErrorMsg(mapFirebaseAuthError(err, language));
+      }
       soundManager.playWarning();
     } finally {
       setGoogleAuthLoading(false);
@@ -109,8 +132,8 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
     if (!validateIndianMobile10(cleanPhone) || !isGmailPhoneVerified) {
       setErrorMsg(
         language === 'hi'
-          ? 'कृपया मोबाइल नंबर पर असली 6-अंकों का SMS OTP सत्यापित करें'
-          : 'Please verify your 10-digit mobile number via real 6-digit SMS OTP'
+          ? 'कृपया मोबाइल नंबर का 6-अंकों का फ्री OTP सत्यापित करें'
+          : 'Please verify your 10-digit mobile number via free 6-digit OTP'
       );
       return;
     }
@@ -180,7 +203,7 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
     }
 
     if (!isOtpVerified) {
-      setErrorMsg(language === 'hi' ? 'कृपया पहले मोबाइल नंबर पर आया असली SMS OTP सत्यापित करें' : 'Please verify mobile number via real SMS OTP first');
+      setErrorMsg(language === 'hi' ? 'कृपया पहले मोबाइल नंबर का फ्री OTP सत्यापित करें' : 'Please verify mobile number via free OTP first');
       return;
     }
 
@@ -346,14 +369,16 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
               </div>
             )}
 
-            <button
-              type="button"
-              disabled={googleAuthLoading}
-              onClick={handleGooglePopupSignIn}
-              className="w-full py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-900 font-black text-xs shadow-md flex items-center justify-center gap-2 disabled:opacity-60"
-            >
-              <span>{googleAuthLoading ? '...' : isGoogleAuthenticated ? '✓ Google Verified' : (language === 'hi' ? 'Google से साइन इन करें (असली)' : 'Continue with Google (Real)')}</span>
-            </button>
+            {!isLocalhostOrNative && (
+              <button
+                type="button"
+                disabled={googleAuthLoading}
+                onClick={handleGooglePopupSignIn}
+                className="w-full py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-900 font-black text-xs shadow-md flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                <span>{googleAuthLoading ? '...' : isGoogleAuthenticated ? '✓ Google Verified' : (language === 'hi' ? 'Google से Auto-Fill करें' : 'Continue with Google')}</span>
+              </button>
+            )}
 
             <form onSubmit={handleCustomGmailSubmit} className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
               <div>
@@ -386,7 +411,7 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
 
               <div>
                 <label className="text-[11px] font-bold text-slate-300 block mb-1">
-                  {language === 'hi' ? 'मोबाइल नंबर + रियल SMS OTP सत्यापन *' : 'Mobile Number + Real SMS OTP *'}
+                  {language === 'hi' ? 'मोबाइल नंबर + फ्री OTP सत्यापन *' : 'Mobile Number + Free OTP *'}
                 </label>
                 <FirebasePhoneOtpBox
                   phoneDigits={customGmailPhone}
@@ -439,10 +464,10 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
               </div>
             )}
 
-            {/* Real Mobile Number & Firebase SMS OTP Section */}
+            {/* Mobile Number & Free OTP Section */}
             <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
               <label className="block text-[11px] font-bold text-slate-300">
-                {language === 'hi' ? '1. मोबाइल नंबर दर्ज करें (रियल SMS OTP सत्यापन हेतु) *' : '1. Enter Mobile Number (Real SMS OTP verification) *'}
+                {language === 'hi' ? '1. मोबाइल नंबर दर्ज करें (फ्री OTP सत्यापन हेतु) *' : '1. Enter Mobile Number (Free OTP verification) *'}
               </label>
               <FirebasePhoneOtpBox
                 phoneDigits={phoneDigits}

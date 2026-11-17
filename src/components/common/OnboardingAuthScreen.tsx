@@ -136,7 +136,7 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
       return;
     }
     if (!isCustPhoneVerified) {
-      setErrorMsg(language === 'hi' ? 'कृपया पहले अपने असली नंबर पर आया 6-अंकों का SMS OTP सत्यापित करें' : 'Please verify your mobile number with real 6-digit SMS OTP first');
+      setErrorMsg(language === 'hi' ? 'कृपया पहले अपने मोबाइल नंबर का 6-अंकों का फ्री OTP सत्यापित करें' : 'Please verify your mobile number with the free 6-digit OTP first');
       soundManager.playWarning();
       return;
     }
@@ -191,7 +191,7 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
       return;
     }
     if (!isWrkPhoneVerified) {
-      setErrorMsg(language === 'hi' ? 'कृपया पहले अपने असली नंबर पर आया 6-अंकों का SMS OTP सत्यापित करें' : 'Please verify your mobile number with real 6-digit SMS OTP first');
+      setErrorMsg(language === 'hi' ? 'कृपया पहले अपने मोबाइल नंबर का 6-अंकों का फ्री OTP सत्यापित करें' : 'Please verify your mobile number with the free 6-digit OTP first');
       soundManager.playWarning();
       return;
     }
@@ -479,7 +479,7 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
 
               <div>
                 <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                  {language === 'hi' ? '10-अंकों का असली मोबाइल नंबर + SMS OTP *' : '10-Digit Mobile Number + Real SMS OTP *'}
+                  {language === 'hi' ? '10-अंकों का मोबाइल नंबर + फ्री OTP *' : '10-Digit Mobile Number + Free OTP *'}
                 </label>
                 <FirebasePhoneOtpBox
                   phoneDigits={custPhone}
@@ -642,7 +642,7 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
 
               <div>
                 <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                  {language === 'hi' ? '10-अंकों का असली मोबाइल नंबर + SMS OTP *' : '10-Digit Mobile Number + Real SMS OTP *'}
+                  {language === 'hi' ? '10-अंकों का मोबाइल नंबर + फ्री OTP *' : '10-Digit Mobile Number + Free OTP *'}
                 </label>
                 <FirebasePhoneOtpBox
                   phoneDigits={wrkPhone}

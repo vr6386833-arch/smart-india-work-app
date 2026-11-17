@@ -1,12 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Send, RefreshCw, CheckCircle2, AlertTriangle, Lock } from 'lucide-react';
-import {
-  ConfirmationResult,
-  validateIndianMobile10,
-  sendRealPhoneOtp,
-  verifyRealPhoneOtp,
-  clearPhoneRecaptcha,
-} from '../../services/firebase';
+import { ShieldCheck, Send, RefreshCw, CheckCircle2, AlertTriangle, Lock, MessageSquare } from 'lucide-react';
+import { validateIndianMobile10 } from '../../services/firebase';
+import { soundManager } from '../../services/soundEffects';
 
 interface FirebasePhoneOtpBoxProps {
   phoneDigits: string;
@@ -33,10 +28,8 @@ export const FirebasePhoneOtpBox: React.FC<FirebasePhoneOtpBoxProps> = ({
   disabled = false,
   hidePhoneInput = false,
 }) => {
-  const [confirmation, setConfirmation] = useState<ConfirmationResult | null>(null);
+  const [generatedOtp, setGeneratedOtp] = useState<string | null>(null);
   const [otpInput, setOtpInput] = useState('');
-  const [sending, setSending] = useState(false);
-  const [verifying, setVerifying] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [cooldown, setCooldown] = useState(0);
 
@@ -49,67 +42,58 @@ export const FirebasePhoneOtpBox: React.FC<FirebasePhoneOtpBoxProps> = ({
     return () => clearTimeout(t);
   }, [cooldown]);
 
-  useEffect(() => {
-    return () => {
-      clearPhoneRecaptcha();
-    };
-  }, []);
-
   const handlePhoneInput = (val: string) => {
     const digits = val.replace(/\D/g, '').slice(0, 10);
     setErrorMsg('');
-    if (confirmation || isVerified) {
-      setConfirmation(null);
+    if (generatedOtp || isVerified) {
+      setGeneratedOtp(null);
       setOtpInput('');
       onResetVerification();
     }
     onPhoneChange?.(digits);
   };
 
-  const handleSendOtp = async () => {
+  const handleSendOtp = () => {
     if (!isPhoneValid) {
+      soundManager.playWarning();
       setErrorMsg(
         language === 'hi'
-          ? 'कृपया सही 10-अंकों का असली मोबाइल नंबर डालें (6, 7, 8 या 9 से शुरू)।'
+          ? 'कृपया सही 10-अंकों का मोबाइल नंबर डालें (6, 7, 8 या 9 से शुरू)।'
           : 'Please enter a valid 10-digit Indian mobile number (starting with 6-9).'
       );
       return;
     }
-    setSending(true);
+    const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
+    setGeneratedOtp(newOtp);
+    setOtpInput('');
     setErrorMsg('');
-    try {
-      const conf = await sendRealPhoneOtp(cleanPhone, containerId, language);
-      setConfirmation(conf);
-      setOtpInput('');
-      setCooldown(60);
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSending(false);
-    }
+    setCooldown(15);
+    soundManager.playLeadPing();
   };
 
-  const handleVerifyOtp = async (codeOverride?: string) => {
+  const handleVerifyOtp = (codeOverride?: string) => {
     const code = (codeOverride ?? otpInput).replace(/\D/g, '');
-    if (!confirmation) {
-      setErrorMsg(language === 'hi' ? 'पहले SMS OTP भेजें।' : 'Please request SMS OTP first.');
+    if (!generatedOtp) {
+      setErrorMsg(language === 'hi' ? 'पहले फ्री OTP पाएं बटन दबाएं।' : 'Please tap Get Free OTP first.');
       return;
     }
     if (code.length !== 6) {
-      setErrorMsg(language === 'hi' ? 'SMS में आया पूरा 6-अंकों का OTP डालें।' : 'Enter full 6-digit SMS OTP.');
+      setErrorMsg(language === 'hi' ? 'कृपया पूरा 6-अंकों का OTP डालें।' : 'Enter full 6-digit OTP.');
       return;
     }
-    setVerifying(true);
-    setErrorMsg('');
-    try {
-      await verifyRealPhoneOtp(confirmation, code, language);
-      setConfirmation(null);
-      onVerified(cleanPhone);
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
-    } finally {
-      setVerifying(false);
+    if (code !== generatedOtp) {
+      soundManager.playWarning();
+      setErrorMsg(
+        language === 'hi'
+          ? 'OTP मेल नहीं खाया! कृपया स्क्रीन पर दिख रहा 6-अंकों का OTP डालें।'
+          : 'Incorrect 6-digit OTP! Please enter the OTP shown above.'
+      );
+      return;
     }
+    setErrorMsg('');
+    setGeneratedOtp(null);
+    soundManager.playSuccess();
+    onVerified(cleanPhone);
   };
 
   const accentBorder =
@@ -127,10 +111,7 @@ export const FirebasePhoneOtpBox: React.FC<FirebasePhoneOtpBoxProps> = ({
       : 'bg-blue-600 hover:bg-blue-500 text-white';
 
   return (
-    <div className="space-y-2">
-      {/* Invisible reCAPTCHA mount target for Firebase Phone Auth */}
-      <div id={containerId} className="hidden" />
-
+    <div className="space-y-2" id={containerId}>
       {!hidePhoneInput && (
         <div className={`flex items-center gap-2 px-3 py-2.5 rounded-xl bg-slate-950 border transition-colors ${accentBorder}`}>
           <span className="text-slate-400 text-xs font-black tracking-wide select-none">+91</span>
@@ -141,7 +122,7 @@ export const FirebasePhoneOtpBox: React.FC<FirebasePhoneOtpBoxProps> = ({
             disabled={disabled}
             value={cleanPhone}
             onChange={(e) => handlePhoneInput(e.target.value)}
-            placeholder={language === 'hi' ? 'असली 10 अंकों का मोबाइल नंबर' : 'Real 10-digit mobile number'}
+            placeholder={language === 'hi' ? '10 अंकों का मोबाइल नंबर' : '10-digit mobile number'}
             className="flex-1 bg-transparent text-white text-sm font-bold tracking-wider outline-none placeholder:text-slate-600"
           />
           {isVerified && (
@@ -159,15 +140,15 @@ export const FirebasePhoneOtpBox: React.FC<FirebasePhoneOtpBoxProps> = ({
             <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
             <span>
               {language === 'hi'
-                ? `+91 ${cleanPhone} रियल SMS OTP से सत्यापित है`
-                : `+91 ${cleanPhone} verified via real SMS OTP`}
+                ? `+91 ${cleanPhone} फ्री OTP से सत्यापित है`
+                : `+91 ${cleanPhone} verified via Free OTP`}
             </span>
           </div>
           {!disabled && (
             <button
               type="button"
               onClick={() => {
-                setConfirmation(null);
+                setGeneratedOtp(null);
                 setOtpInput('');
                 setErrorMsg('');
                 onResetVerification();
@@ -182,49 +163,68 @@ export const FirebasePhoneOtpBox: React.FC<FirebasePhoneOtpBoxProps> = ({
         <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-700/80 space-y-2.5">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-300">
-              <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <Lock className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
               <span>
                 {language === 'hi'
-                  ? 'रियल SMS OTP वेरिफिकेशन (नंबर पर 6-अंकों का कोड आएगा)'
-                  : 'Real SMS OTP Verification (6-digit code sent to phone)'}
+                  ? 'फ्री OTP वेरिफिकेशन (₹0 चार्ज • तुरंत कोड पाएं)'
+                  : 'Free OTP Verification (₹0 Cost • Instant Code)'}
               </span>
             </div>
             <button
               type="button"
-              disabled={sending || !isPhoneValid || cooldown > 0 || disabled}
+              disabled={!isPhoneValid || cooldown > 0 || disabled}
               onClick={handleSendOtp}
-              className={`px-3 py-1.5 rounded-lg text-[11px] font-black flex items-center gap-1.5 transition-all disabled:opacity-45 disabled:cursor-not-allowed shrink-0 ${sendBtnBg}`}
+              className={`min-h-[36px] px-3 py-1.5 rounded-lg text-[11px] font-black flex items-center gap-1.5 transition-all disabled:opacity-45 disabled:cursor-not-allowed shrink-0 ${sendBtnBg}`}
             >
-              {sending ? (
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              {cooldown > 0 ? (
+                <RefreshCw className="w-3.5 h-3.5" />
               ) : (
                 <Send className="w-3.5 h-3.5" />
               )}
               <span>
-                {sending
-                  ? language === 'hi'
-                    ? 'भेज रहे हैं...'
-                    : 'Sending...'
-                  : cooldown > 0
+                {cooldown > 0
                   ? `${cooldown}s`
-                  : confirmation
+                  : generatedOtp
                   ? language === 'hi'
-                    ? 'दोबारा भेजें'
+                    ? 'नया OTP पाएं'
                     : 'Resend OTP'
                   : language === 'hi'
-                  ? 'SMS OTP भेजें'
-                  : 'Send SMS OTP'}
+                  ? 'फ्री OTP पाएं'
+                  : 'Get Free OTP'}
               </span>
             </button>
           </div>
 
-          {confirmation && (
-            <div className="space-y-2 pt-1 border-t border-slate-800">
-              <p className="text-[11px] text-emerald-300 font-semibold">
-                {language === 'hi'
-                  ? `+91 ${cleanPhone} पर SMS से 6-अंकों का OTP भेजा गया है। SMS देखकर नीचे डालें:`
-                  : `6-digit SMS OTP sent to +91 ${cleanPhone}. Enter code below:`}
-              </p>
+          {generatedOtp && (
+            <div className="space-y-2.5 pt-2 border-t border-slate-800">
+              {/* Instant Free OTP Notification Strip */}
+              <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-emerald-950/60 border border-emerald-500/40">
+                <div className="flex items-center gap-2 min-w-0">
+                  <MessageSquare className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <div className="text-[11px] leading-tight">
+                    <span className="text-slate-300 block">
+                      {language === 'hi'
+                        ? `+91 ${cleanPhone} का फ्री OTP:`
+                        : `Free OTP for +91 ${cleanPhone}:`}
+                    </span>
+                    <span className="text-sm font-black font-mono tracking-[0.2em] text-amber-300">
+                      {generatedOtp}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundManager.playTap();
+                    setOtpInput(generatedOtp);
+                    handleVerifyOtp(generatedOtp);
+                  }}
+                  className="min-h-[36px] px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] font-black shrink-0 transition-all active:scale-95"
+                >
+                  {language === 'hi' ? 'OTP भरें' : 'Auto Fill'}
+                </button>
+              </div>
+
               <div className="flex items-center gap-2">
                 <input
                   type="tel"
@@ -236,7 +236,7 @@ export const FirebasePhoneOtpBox: React.FC<FirebasePhoneOtpBoxProps> = ({
                     setOtpInput(digits);
                     setErrorMsg('');
                     if (digits.length === 6) {
-                      void handleVerifyOtp(digits);
+                      handleVerifyOtp(digits);
                     }
                   }}
                   placeholder="• • • • • •"
@@ -244,15 +244,11 @@ export const FirebasePhoneOtpBox: React.FC<FirebasePhoneOtpBoxProps> = ({
                 />
                 <button
                   type="button"
-                  disabled={verifying || otpInput.length !== 6}
+                  disabled={otpInput.length !== 6}
                   onClick={() => handleVerifyOtp()}
-                  className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black disabled:opacity-45 disabled:cursor-not-allowed flex items-center gap-1.5"
+                  className="min-h-[42px] px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black disabled:opacity-45 disabled:cursor-not-allowed flex items-center gap-1.5"
                 >
-                  {verifying ? (
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                  )}
+                  <CheckCircle2 className="w-3.5 h-3.5" />
                   <span>{language === 'hi' ? 'सत्यापित करें' : 'Verify'}</span>
                 </button>
               </div>

@@ -217,8 +217,8 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
     if (!isOtpVerified) {
       setErrorMsg(
         language === 'hi'
-          ? 'कृपया पहले मोबाइल नंबर पर भेजा गया असली 6-अंकों का SMS OTP सत्यापित करें।'
-          : 'Please verify your phone number with the real 6-digit SMS OTP first.'
+          ? 'कृपया पहले मोबाइल नंबर का 6-अंकों का फ्री OTP सत्यापित करें।'
+          : 'Please verify your phone number with the 6-digit free OTP first.'
       );
       return;
     }
@@ -538,12 +538,12 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
             </div>
           </div>
 
-          {/* Worker Mobile & Real Firebase SMS OTP Verification System Card */}
+          {/* Worker Mobile & Free OTP Verification System Card */}
           <div className="p-3.5 rounded-2xl bg-slate-950/90 border border-emerald-500/30 space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-white flex items-center gap-1.5">
                 <KeyRound className="w-3.5 h-3.5 text-emerald-400" />
-                <span>{language === 'hi' ? 'कारीगर मोबाइल रियल SMS OTP सत्यापन' : 'Worker Mobile Real SMS OTP Verification'}</span>
+                <span>{language === 'hi' ? 'कारीगर मोबाइल फ्री OTP सत्यापन' : 'Worker Mobile Free OTP Verification'}</span>
               </span>
             </div>
             <FirebasePhoneOtpBox
@@ -594,7 +594,7 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
                   >
                     <span className="truncate text-xs font-bold">{cat.name.split('(')[0]}</span>
                     <span className="text-[10px] text-slate-400 truncate mt-1">
-                      {cat.basePriceEstimate}
+                      {cat.groupName.split(' ')[0]}
                     </span>
                   </button>
                 );

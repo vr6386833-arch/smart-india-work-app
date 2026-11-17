@@ -596,7 +596,9 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                       </p>
 
                       <div className="mt-2 pt-1.5 border-t border-slate-800/60 flex items-center justify-between text-[10px]">
-                        <span className="text-emerald-400 font-semibold">{cat.basePriceEstimate}</span>
+                        <span className="text-slate-400 font-medium">
+                          {language === 'hi' ? `${cat.subcategories.length} प्रकार के काम` : `${cat.subcategories.length} services`}
+                        </span>
                         <ChevronRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-blue-400 group-hover:translate-x-0.5 transition-all" />
                       </div>
 
@@ -851,9 +853,6 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                           <h4 className="text-xs font-bold text-white leading-snug">
                             {language === 'hi' ? cat.nameHi : cat.name}
                           </h4>
-                          <span className="text-[11px] font-bold text-emerald-400 shrink-0">
-                            {cat.basePriceEstimate}
-                          </span>
                         </div>
                         <p className="text-[10px] text-slate-400 mt-1 line-clamp-2">
                           {(language === 'hi' && cat.subcategoriesHi ? cat.subcategoriesHi : cat.subcategories).join(' • ')}
