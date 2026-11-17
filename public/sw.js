@@ -3,10 +3,8 @@
  * Handles High-Priority Background Push, Chrome Offline Caching & Sync
  */
 
-const CACHE_NAME = 'smart-india-work-v1';
+const CACHE_NAME = 'smart-india-work-v2';
 const PRECACHE_ASSETS = [
-  '/',
-  '/index.html',
   '/manifest.json',
   '/pwa-192x192.png',
   '/pwa-512x512.png',
@@ -40,20 +38,27 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Network First with Fallback to Cache Fetch Handler for Chrome PWA Compliance
+// Network First with Bypass for HTML & Localhost Capacitor Assets
 self.addEventListener('fetch', (event) => {
-  // Only handle GET requests and skip browser extensions / dev websockets
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
-  if (url.protocol === 'chrome-extension:' || url.pathname.includes('/@vite/') || url.pathname.includes('/@react-refresh')) {
+  if (
+    url.hostname === 'localhost' ||
+    url.protocol === 'chrome-extension:' ||
+    url.pathname.includes('/@vite/') ||
+    url.pathname.includes('/@react-refresh')
+  ) {
     return;
   }
 
+  const isHtmlNav =
+    event.request.mode === 'navigate' ||
+    event.request.headers.get('accept')?.includes('text/html');
+
   event.respondWith(
-    fetch(event.request)
+    fetch(isHtmlNav ? new Request(event.request, { cache: 'no-store' }) : event.request)
       .then((networkResponse) => {
-        // Cache valid static responses
-        if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
+        if (!isHtmlNav && networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
           const responseToCache = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => {
             cache.put(event.request, responseToCache);
@@ -66,9 +71,8 @@ self.addEventListener('fetch', (event) => {
           if (cachedResponse) {
             return cachedResponse;
           }
-          // If HTML navigation, return offline cached root
-          if (event.request.headers.get('accept')?.includes('text/html')) {
-            return caches.match('/');
+          if (isHtmlNav) {
+            return caches.match('/index.html');
           }
         });
       })

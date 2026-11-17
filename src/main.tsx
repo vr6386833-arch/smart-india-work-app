@@ -8,13 +8,23 @@ import { CrashGuard } from './services/crashGuard';
 // Initialize Android Play Store CrashGuard Engine
 CrashGuard.init();
 
-// Register Service Worker for Google Chrome PWA Installability & Offline Support
+// Register Service Worker for Google Chrome PWA Installability (skip inside native Android Capacitor WebView)
+const isNativeCapacitor =
+  typeof window !== 'undefined' &&
+  Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+
 if ('serviceWorker' in navigator && typeof window !== 'undefined') {
   window.addEventListener('load', () => {
+    if (isNativeCapacitor) {
+      navigator.serviceWorker.getRegistrations().then((regs) => {
+        regs.forEach((r) => r.unregister());
+      }).catch(() => {});
+      return;
+    }
     navigator.serviceWorker
       .register('/sw.js', { scope: '/' })
       .then((registration) => {
-        console.log('✅ PWA Service Worker active with scope:', registration.scope);
+        registration.update().catch(() => {});
       })
       .catch((error) => {
         console.warn('PWA Service Worker registration skipped:', error);
