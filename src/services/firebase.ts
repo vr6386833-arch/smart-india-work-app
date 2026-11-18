@@ -132,13 +132,72 @@ try {
 
 export { app, db, auth };
 
+// Normalize any Indian phone string (+91 98765 43210, 09876543210, 9876543210) to 10 digits
+export function normalizeIndianPhone10(phone?: string): string {
+  const digits = (phone || '').replace(/\D/g, '');
+  if (digits.length >= 10) return digits.slice(-10);
+  return digits;
+}
+
 // Validate real 10-digit Indian mobile number (must start with 6, 7, 8, or 9 and not be trivial digits)
 export function validateIndianMobile10(digits: string): boolean {
-  const clean = digits.replace(/\D/g, '');
+  const clean = normalizeIndianPhone10(digits);
   if (!/^[6-9]\d{9}$/.test(clean)) return false;
   if (/^(\d)\1{9}$/.test(clean)) return false;
   if (clean === '9876543210' || clean === '6789012345') return false;
   return true;
+}
+
+// Look up an existing live Customer ID in Firestore by normalized 10-digit mobile number
+export async function findExistingCustomerByPhone(phoneDigits: string): Promise<CustomerProfile | null> {
+  const target10 = normalizeIndianPhone10(phoneDigits);
+  if (!db || !target10 || target10.length !== 10) return null;
+  try {
+    const snap = await getDocs(collection(db, 'customers'));
+    const matches: CustomerProfile[] = [];
+    snap.forEach((docSnap) => {
+      const raw = docSnap.data() as CustomerProfile;
+      if (!raw || isLegacyDemoCustomer(raw) || raw.id?.startsWith('c_new_guest')) return;
+      if (normalizeIndianPhone10(raw.phone) === target10) {
+        matches.push(raw);
+      }
+    });
+    if (matches.length === 0) return null;
+    matches.sort((a, b) => (b.totalBookingsCount || 0) - (a.totalBookingsCount || 0) || extractRecordTimeMs(b.id) - extractRecordTimeMs(a.id));
+    return matches[0];
+  } catch (err) {
+    logFirestoreError(err, OperationType.LIST, 'customers');
+    return null;
+  }
+}
+
+// Look up an existing live Worker ID in Firestore by normalized 10-digit mobile number
+export async function findExistingWorkerByPhone(phoneDigits: string): Promise<WorkerProfile | null> {
+  const target10 = normalizeIndianPhone10(phoneDigits);
+  if (!db || !target10 || target10.length !== 10) return null;
+  try {
+    const snap = await getDocs(collection(db, 'workers'));
+    const matches: WorkerProfile[] = [];
+    snap.forEach((docSnap) => {
+      const raw = docSnap.data() as WorkerProfile;
+      if (!raw || isLegacyDemoWorker(raw)) return;
+      if (normalizeIndianPhone10(raw.phone) === target10) {
+        matches.push(raw);
+      }
+    });
+    if (matches.length === 0) return null;
+    // Prefer locked record (cannot bypass unpaid fee) or highest completed jobs / most recent ID
+    matches.sort(
+      (a, b) =>
+        (b.isBlockedDueToUnpaidFee ? 1 : 0) - (a.isBlockedDueToUnpaidFee ? 1 : 0) ||
+        (b.completedJobsCount || 0) - (a.completedJobsCount || 0) ||
+        extractRecordTimeMs(b.id) - extractRecordTimeMs(a.id)
+    );
+    return matches[0];
+  } catch (err) {
+    logFirestoreError(err, OperationType.LIST, 'workers');
+    return null;
+  }
 }
 
 // Validate genuine 12-digit NPCI Bharat UPI UTR / RRN number (rejects trivial/fake sequences)

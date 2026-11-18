@@ -43,6 +43,9 @@ import {
   isLegacyDemoBooking,
   isValidRealUpiUtr,
   testFirestoreConnection, 
+  normalizeIndianPhone10,
+  findExistingCustomerByPhone,
+  findExistingWorkerByPhone,
   syncBookingToFirestore, 
   claimBroadcastBookingInFirestore,
   claimJobPostInFirestore,
@@ -695,7 +698,9 @@ export default function App() {
 
       // Alert eligible Worker about any newly arrived Open Broadcast OR Direct Booking
       const curWorker = activeWorkerRef.current;
+      const isWorkerScreen = curView === 'worker' || curView === 'dual';
       const workerEligibleForAlerts =
+        isWorkerScreen &&
         curWorkerId !== DEFAULT_STANDBY_WORKER.id &&
         !curWorker?.isIdPaused &&
         !curWorker?.isBlockedDueToUnpaidFee &&
@@ -711,7 +716,7 @@ export default function App() {
         );
         const broadcastPending = openBroadcasts.find(
           (b) =>
-            b.customerId !== curCustId &&
+            (curView === 'worker' || b.customerId !== curCustId) &&
             !alertedBookingIdsRef.current.has(b.id)
         );
         const leadToAlert = directPending || broadcastPending;
@@ -815,6 +820,59 @@ export default function App() {
       unsubUpiClaims();
     };
   }, [effectiveCutoffMs, showToast]);
+
+  // Surface pending Open Broadcast leads immediately whenever worker profile/view becomes active
+  React.useEffect(() => {
+    if (activeView !== 'worker' && activeView !== 'dual') return;
+    if (
+      activeWorker.id === DEFAULT_STANDBY_WORKER.id ||
+      activeWorker.isIdPaused ||
+      activeWorker.isBlockedDueToUnpaidFee ||
+      activeWorker.isOnline === false
+    ) {
+      return;
+    }
+    const unalerted = broadcastBookings.find(
+      (b) =>
+        !dismissedBroadcastIds.includes(b.id) &&
+        !alertedBookingIdsRef.current.has(b.id)
+    );
+    if (!unalerted) return;
+
+    alertedBookingIdsRef.current.add(unalerted.id);
+    setIncomingBookingAlert(unalerted);
+    setWorkerNotifications((prev) => {
+      if (prev.some((n) => n.bookingId === unalerted.id)) return prev;
+      const incomingNotif: WorkerNotification = {
+        id: `notif_cloud_${unalerted.id}`,
+        workerId: unalerted.workerId,
+        type: 'new_booking',
+        title: `🚨 [${unalerted.serviceCategory}] नया काम बुक हुआ - पहले स्वीकार करें (${unalerted.customerName})`,
+        titleHi: `🚨 [${unalerted.serviceCategory}] नया काम बुक हुआ - पहले स्वीकार करें (${unalerted.customerName})`,
+        message: `Customer ${unalerted.customerName} booked ${unalerted.serviceCategory} in ${unalerted.customerLocality}. First worker to accept claims the job!`,
+        messageHi: `ग्राहक ${unalerted.customerName} ने ${unalerted.customerLocality} में [${unalerted.serviceCategory}] बुक किया है। जो कारीगर पहले स्वीकार करेगा, काम उसका होगा!`,
+        time: 'Live Now',
+        isRead: false,
+        bookingId: unalerted.id,
+        customerName: unalerted.customerName,
+        customerPhone: unalerted.customerPhone,
+        customerAddress: unalerted.customerAddress,
+        customerLocality: unalerted.customerLocality,
+        category: unalerted.serviceCategory,
+        amount: unalerted.estimatedAmount,
+      };
+      return [incomingNotif, ...prev];
+    });
+    soundManager.playIncomingJobAlert();
+  }, [
+    broadcastBookings,
+    dismissedBroadcastIds,
+    activeView,
+    activeWorker.id,
+    activeWorker.isIdPaused,
+    activeWorker.isBlockedDueToUnpaidFee,
+    activeWorker.isOnline,
+  ]);
 
   const activeCallSession = React.useMemo(() => {
     if (!activeBooking) return null;
@@ -2468,8 +2526,48 @@ export default function App() {
     });
   };
 
-  // 16. Add New Customer Profile
-  const handleAddCustomer = (newCustData: Omit<CustomerProfile, 'id'>) => {
+  // 16. Add New Customer Profile (Deduplicates by 10-digit mobile number so reinstall never creates duplicate Owner entries)
+  const handleAddCustomer = async (newCustData: Omit<CustomerProfile, 'id'>) => {
+    const clean10 = normalizeIndianPhone10(newCustData.phone);
+    let existingCust = clean10.length === 10
+      ? customers.find((c) => !c.id.startsWith('c_new_guest') && normalizeIndianPhone10(c.phone) === clean10) || null
+      : null;
+    if (!existingCust && clean10.length === 10) {
+      existingCust = await findExistingCustomerByPhone(clean10);
+    }
+
+    if (existingCust) {
+      const restoredCustomer: CustomerProfile = {
+        ...existingCust,
+        city: newCustData.city || existingCust.city,
+        locality: newCustData.locality || existingCust.locality,
+        address: newCustData.address || existingCust.address,
+        lastActive: 'अभी सक्रिय',
+      };
+      setCustomers((prev) => {
+        const exists = prev.some((c) => c.id === restoredCustomer.id);
+        return exists
+          ? prev.map((c) => (c.id === restoredCustomer.id ? restoredCustomer : c))
+          : [restoredCustomer, ...prev];
+      });
+      setActiveCustomerId(restoredCustomer.id);
+      try {
+        safeStorage.setItem('smart_india_active_customer_id_v4', restoredCustomer.id);
+        if (!isOwnerSession) {
+          safeStorage.setItem('smart_india_preferred_role_v4', 'customer');
+        }
+      } catch {}
+      syncCustomerToFirestore(restoredCustomer);
+      soundManager.playSuccess();
+      showToast(
+        language === 'hi'
+          ? `✅ इस नंबर पर पहले से "${restoredCustomer.name}" की ID बनी है — आपकी पुरानी Customer ID वापस खुल गई!`
+          : `✅ Existing Customer ID "${restoredCustomer.name}" restored — no duplicate created.`,
+        'success'
+      );
+      return;
+    }
+
     const newId = `CUST_${Date.now()}`;
     const newCustomer: CustomerProfile = {
       ...newCustData,
@@ -2514,8 +2612,48 @@ export default function App() {
     soundManager.playSuccess();
   };
 
-  // 19. Add New Worker Functionality (Name, Age, Aadhaar, Phone, Category)
-  const handleAddWorker = (newWorkerData: Omit<WorkerProfile, 'id'>) => {
+  // 19. Add New Worker Functionality (Deduplicates by 10-digit mobile number so reinstall never creates duplicate/renamed IDs for Owner!)
+  const handleAddWorker = async (newWorkerData: Omit<WorkerProfile, 'id'>) => {
+    const clean10 = normalizeIndianPhone10(newWorkerData.phone);
+    let existingWorker = clean10.length === 10
+      ? workers.find((w) => w.id !== DEFAULT_STANDBY_WORKER.id && normalizeIndianPhone10(w.phone) === clean10) || null
+      : null;
+    if (!existingWorker && clean10.length === 10) {
+      existingWorker = await findExistingWorkerByPhone(clean10);
+    }
+
+    if (existingWorker) {
+      // Preserve registered name, ID code, wallet balance, completed jobs, and any unpaid fee lock
+      const restoredWorker: WorkerProfile = {
+        ...existingWorker,
+        city: newWorkerData.city || existingWorker.city,
+        locality: newWorkerData.locality || existingWorker.locality,
+        isOnline: !existingWorker.isIdPaused,
+      };
+      setWorkers((prev) => {
+        const exists = prev.some((w) => w.id === restoredWorker.id);
+        return exists
+          ? prev.map((w) => (w.id === restoredWorker.id ? restoredWorker : w))
+          : [restoredWorker, ...prev];
+      });
+      setActiveWorkerId(restoredWorker.id);
+      try {
+        safeStorage.setItem('smart_india_active_worker_id_v4', restoredWorker.id);
+        if (!isOwnerSession) {
+          safeStorage.setItem('smart_india_preferred_role_v4', 'worker');
+        }
+      } catch {}
+      syncWorkerToFirestore(restoredWorker);
+      soundManager.playSuccess();
+      showToast(
+        language === 'hi'
+          ? `✅ इस नंबर पर "${restoredWorker.name}" (${restoredWorker.workerIdCode || 'Verified'}) पहले से पंजीकृत है — आपकी पुरानी ID वापस खुल गई!`
+          : `✅ Existing Worker ID "${restoredWorker.name}" restored — no duplicate or new name created for Owner.`,
+        'success'
+      );
+      return;
+    }
+
     const newWorkerId = `w_${Date.now()}`;
     const newWorker: WorkerProfile = {
       ...newWorkerData,
@@ -2664,11 +2802,13 @@ export default function App() {
           : "h-[100dvh] max-h-[100dvh] bg-slate-950 flex flex-col overflow-hidden font-['Plus_Jakarta_Sans',sans-serif] text-slate-100 antialiased selection:bg-orange-500 selection:text-slate-950"
       }
     >
-      {/* First-Install Onboarding Screen: Choose & Create Customer ID or Worker ID */}
+      {/* First-Install Onboarding Screen: Choose, Create, or Recover Customer/Worker ID */}
       {showOnboarding && (
         <OnboardingAuthScreen
           language={language}
           onToggleLanguage={(lang) => setLanguage(lang)}
+          workers={workers}
+          customers={customers}
           onCreateCustomer={(custData) => {
             handleAddCustomer(custData);
             try {
@@ -2688,6 +2828,46 @@ export default function App() {
             setIsOwnerSession(false);
             setActiveView('worker');
             setShowOnboarding(false);
+          }}
+          onRecoverCustomer={(existingCust) => {
+            setCustomers((prev) =>
+              prev.some((c) => c.id === existingCust.id) ? prev : [existingCust, ...prev]
+            );
+            setActiveCustomerId(existingCust.id);
+            try {
+              safeStorage.setItem('smart_india_active_customer_id_v4', existingCust.id);
+              safeStorage.setItem('smart_india_onboarded_v4', 'true');
+              safeStorage.setItem('smart_india_preferred_role_v4', 'customer');
+            } catch {}
+            setIsOwnerSession(false);
+            setActiveView('customer');
+            setShowOnboarding(false);
+            showToast(
+              language === 'hi'
+                ? `✅ स्वागत है ${existingCust.name}! आपकी पुरानी Customer ID वापस खुल गई।`
+                : `✅ Welcome back ${existingCust.name}! Your Customer ID is restored.`,
+              'success'
+            );
+          }}
+          onRecoverWorker={(existingWrk) => {
+            setWorkers((prev) =>
+              prev.some((w) => w.id === existingWrk.id) ? prev : [existingWrk, ...prev]
+            );
+            setActiveWorkerId(existingWrk.id);
+            try {
+              safeStorage.setItem('smart_india_active_worker_id_v4', existingWrk.id);
+              safeStorage.setItem('smart_india_onboarded_v4', 'true');
+              safeStorage.setItem('smart_india_preferred_role_v4', 'worker');
+            } catch {}
+            setIsOwnerSession(false);
+            setActiveView('worker');
+            setShowOnboarding(false);
+            showToast(
+              language === 'hi'
+                ? `✅ स्वागत है ${existingWrk.name}! आपकी पुरानी Worker ID (${existingWrk.workerIdCode || 'Active'}) वापस खुल गई।`
+                : `✅ Welcome back ${existingWrk.name}! Your Worker ID is restored.`,
+              'success'
+            );
           }}
           onSkipAsGuest={() => {
             try {

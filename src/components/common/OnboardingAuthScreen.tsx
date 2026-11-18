@@ -23,14 +23,23 @@ import { CATEGORIES } from '../../data/mockData';
 import { CustomerProfile, WorkerProfile, Language } from '../../types';
 import { soundManager } from '../../services/soundEffects';
 import { compressDocumentImageFile } from '../../utils/qrImageHelper';
-import { validateIndianMobile10 } from '../../services/firebase';
+import {
+  validateIndianMobile10,
+  normalizeIndianPhone10,
+  findExistingCustomerByPhone,
+  findExistingWorkerByPhone,
+} from '../../services/firebase';
 import { FirebasePhoneOtpBox } from './FirebasePhoneOtpBox';
 
 interface OnboardingAuthScreenProps {
   language: Language;
   onToggleLanguage: (lang: Language) => void;
+  workers?: WorkerProfile[];
+  customers?: CustomerProfile[];
   onCreateCustomer: (custData: Omit<CustomerProfile, 'id'>) => void;
   onCreateWorker: (workerData: Omit<WorkerProfile, 'id'>) => void;
+  onRecoverCustomer?: (existingCustomer: CustomerProfile) => void;
+  onRecoverWorker?: (existingWorker: WorkerProfile) => void;
   onSkipAsGuest: () => void;
   onOpenOwnerPortal?: () => void;
 }
@@ -49,13 +58,23 @@ const POPULAR_CITIES = [
 export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
   language,
   onToggleLanguage,
+  workers = [],
+  customers = [],
   onCreateCustomer,
   onCreateWorker,
+  onRecoverCustomer,
+  onRecoverWorker,
   onSkipAsGuest,
   onOpenOwnerPortal,
 }) => {
-  const [step, setStep] = useState<'choose' | 'customer_form' | 'worker_form'>('choose');
+  const [step, setStep] = useState<'choose' | 'customer_form' | 'worker_form' | 'recover_login'>('choose');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [recoverPhone, setRecoverPhone] = useState('');
+  const [isRecoverVerified, setIsRecoverVerified] = useState(false);
+  const [isRecoverSearching, setIsRecoverSearching] = useState(false);
+  const [foundCustomer, setFoundCustomer] = useState<CustomerProfile | null>(null);
+  const [foundWorker, setFoundWorker] = useState<WorkerProfile | null>(null);
+  const [recoverNotFound, setRecoverNotFound] = useState(false);
   const secretOwnerTapRef = useRef<{ count: number; lastTap: number }>({ count: 0, lastTap: 0 });
 
   const handleSecretLogoTap = () => {
@@ -269,6 +288,52 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
     });
   };
 
+  const handleRecoverSearch = async (verifiedPhone10: string) => {
+    const clean10 = normalizeIndianPhone10(verifiedPhone10);
+    setIsRecoverSearching(true);
+    setErrorMsg(null);
+    setRecoverNotFound(false);
+    setFoundCustomer(null);
+    setFoundWorker(null);
+    try {
+      const localCust = customers.find(
+        (c) => !c.id?.startsWith('c_new_guest') && normalizeIndianPhone10(c.phone) === clean10
+      ) || null;
+      const localWrk = workers.find(
+        (w) => w.id !== 'wrk_standby_live' && normalizeIndianPhone10(w.phone) === clean10
+      ) || null;
+
+      const [cloudCust, cloudWrk] = await Promise.all([
+        findExistingCustomerByPhone(clean10),
+        findExistingWorkerByPhone(clean10),
+      ]);
+
+      const resolvedCust = cloudCust || localCust;
+      const resolvedWrk = cloudWrk || localWrk;
+
+      if (resolvedCust && !resolvedWrk && onRecoverCustomer) {
+        soundManager.playSuccess();
+        onRecoverCustomer(resolvedCust);
+        return;
+      }
+      if (resolvedWrk && !resolvedCust && onRecoverWorker) {
+        soundManager.playSuccess();
+        onRecoverWorker(resolvedWrk);
+        return;
+      }
+      if (resolvedCust || resolvedWrk) {
+        setFoundCustomer(resolvedCust);
+        setFoundWorker(resolvedWrk);
+        soundManager.playSuccess();
+      } else {
+        setRecoverNotFound(true);
+        soundManager.playWarning();
+      }
+    } finally {
+      setIsRecoverSearching(false);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 bg-slate-950 text-slate-100 flex flex-col overflow-y-auto overscroll-contain"
@@ -408,8 +473,29 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
               </div>
             </button>
 
+            {/* Existing ID Recovery / Login Button */}
+            <button
+              type="button"
+              onClick={() => {
+                soundManager.playTap();
+                setErrorMsg(null);
+                setRecoverNotFound(false);
+                setFoundCustomer(null);
+                setFoundWorker(null);
+                setStep('recover_login');
+              }}
+              className="w-full py-3 px-4 rounded-2xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/45 text-xs font-black text-amber-200 flex items-center justify-between gap-2 transition-all active:scale-[0.98]"
+            >
+              <span className="text-left">
+                {language === 'hi'
+                  ? '🔑 पहले से ID बनी है? मोबाइल नंबर से पुरानी ID खोलें'
+                  : '🔑 Already registered? Recover / Login with Mobile'}
+              </span>
+              <ArrowRight className="w-4 h-4 text-amber-300 shrink-0" />
+            </button>
+
             {/* Quick browse */}
-            <div className="pt-2 space-y-2.5 text-center">
+            <div className="pt-1 space-y-2.5 text-center">
               <button
                 type="button"
                 onClick={() => {
@@ -422,6 +508,162 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
                   ? 'अभी बिना ID के देखें (New Customer ID)'
                   : 'Browse Without ID First (New Customer ID)'}
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* STEP 1B: RECOVER / LOGIN EXISTING ID BY MOBILE */}
+        {step === 'recover_login' && (
+          <div className="space-y-3.5 my-auto py-2 animate-in fade-in duration-200">
+            <button
+              type="button"
+              onClick={() => {
+                soundManager.playTap();
+                setErrorMsg(null);
+                setStep('choose');
+              }}
+              className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-300 hover:text-white"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>{language === 'hi' ? 'वापस चुनें' : 'Back'}</span>
+            </button>
+
+            <div className="bg-slate-900 border border-amber-500/40 rounded-3xl p-4 sm:p-5 space-y-3.5 shadow-xl">
+              <div className="flex items-center gap-2.5 border-b border-slate-800 pb-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-300 shrink-0">
+                  <Phone className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-black text-white">
+                    {language === 'hi' ? 'पुरानी ID वापस खोलें (Login)' : 'Recover Existing ID'}
+                  </h2>
+                  <p className="text-[11px] text-slate-400">
+                    {language === 'hi'
+                      ? 'ऐप डिलीट होने पर भी आपका डेटा क्लाउड में सुरक्षित रहता है — बस मोबाइल नंबर व फ्री OTP डालें'
+                      : 'Your data stays saved in cloud — verify your registered mobile to restore'}
+                  </p>
+                </div>
+              </div>
+
+              <FirebasePhoneOtpBox
+                phoneDigits={recoverPhone}
+                onPhoneChange={(d) => {
+                  setRecoverPhone(d);
+                  setFoundCustomer(null);
+                  setFoundWorker(null);
+                  setRecoverNotFound(false);
+                }}
+                isVerified={isRecoverVerified}
+                onVerified={(vPhone) => {
+                  setRecoverPhone(vPhone);
+                  setIsRecoverVerified(true);
+                  handleRecoverSearch(vPhone);
+                }}
+                onResetVerification={() => {
+                  setIsRecoverVerified(false);
+                  setFoundCustomer(null);
+                  setFoundWorker(null);
+                  setRecoverNotFound(false);
+                }}
+                language={language}
+                accentColor="amber"
+                containerId="recaptcha-onboard-recover"
+              />
+
+              {isRecoverVerified && !foundCustomer && !foundWorker && (
+                <button
+                  type="button"
+                  disabled={isRecoverSearching}
+                  onClick={() => handleRecoverSearch(recoverPhone)}
+                  className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-lg disabled:opacity-50"
+                >
+                  {isRecoverSearching
+                    ? (language === 'hi' ? 'क्लाउड में आपकी ID खोजी जा रही है...' : 'Searching Cloud Database...')
+                    : (language === 'hi' ? '🔍 मेरी पुरानी ID खोलें' : '🔍 Open My Existing ID')}
+                </button>
+              )}
+
+              {(foundCustomer || foundWorker) && (
+                <div className="space-y-2.5 pt-1">
+                  <p className="text-[11px] font-bold text-emerald-300">
+                    {language === 'hi' ? '✓ आपकी पुरानी ID मिल गई! चुनें:' : '✓ Found your saved profile(s):'}
+                  </p>
+                  {foundCustomer && onRecoverCustomer && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        soundManager.playSuccess();
+                        onRecoverCustomer(foundCustomer);
+                      }}
+                      className="w-full p-3 rounded-2xl bg-blue-950/70 border border-blue-500/50 hover:border-blue-400 flex items-center justify-between text-left"
+                    >
+                      <div>
+                        <span className="text-[10px] font-bold text-blue-300 uppercase block">
+                          {language === 'hi' ? 'ग्राहक ID (Customer)' : 'Customer ID'}
+                        </span>
+                        <span className="text-sm font-black text-white block">{foundCustomer.name}</span>
+                        <span className="text-[10px] text-slate-300">{foundCustomer.locality}, {foundCustomer.city}</span>
+                      </div>
+                      <ArrowRight className="w-4 h-4 text-blue-300" />
+                    </button>
+                  )}
+                  {foundWorker && onRecoverWorker && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        soundManager.playSuccess();
+                        onRecoverWorker(foundWorker);
+                      }}
+                      className="w-full p-3 rounded-2xl bg-emerald-950/70 border border-emerald-500/50 hover:border-emerald-400 flex items-center justify-between text-left"
+                    >
+                      <div>
+                        <span className="text-[10px] font-bold text-emerald-300 uppercase block">
+                          {language === 'hi' ? `कारीगर ID (${foundWorker.workerIdCode || 'Worker'})` : `Worker ID (${foundWorker.workerIdCode || 'Worker'})`}
+                        </span>
+                        <span className="text-sm font-black text-white block">{foundWorker.name}</span>
+                        <span className="text-[10px] text-slate-300 capitalize">
+                          {foundWorker.category.replace(/_/g, ' ')} • {foundWorker.locality}
+                        </span>
+                      </div>
+                      <ArrowRight className="w-4 h-4 text-emerald-300" />
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {recoverNotFound && (
+                <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-2.5 text-center">
+                  <p className="text-xs font-semibold text-amber-200">
+                    {language === 'hi'
+                      ? `+91 ${recoverPhone} से कोई पुरानी ID नहीं मिली। आप अभी नई ID बना सकते हैं (नंबर पहले से सत्यापित है!):`
+                      : `No saved ID found for +91 ${recoverPhone}. Create a new ID below (phone already verified!):`}
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustPhone(recoverPhone);
+                        setIsCustPhoneVerified(true);
+                        setStep('customer_form');
+                      }}
+                      className="py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs"
+                    >
+                      {language === 'hi' ? '+ Customer ID' : '+ Customer ID'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setWrkPhone(recoverPhone);
+                        setIsWrkPhoneVerified(true);
+                        setStep('worker_form');
+                      }}
+                      className="py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs"
+                    >
+                      {language === 'hi' ? '+ Worker ID' : '+ Worker ID'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
