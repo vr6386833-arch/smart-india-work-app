@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   Home, 
   Search, 
@@ -40,11 +40,11 @@ import {
   X
 } from 'lucide-react';
 import { CATEGORIES } from '../../data/mockData';
-import { WorkerProfile, CustomerProfile, JobPost, Booking, Language, ChatMessage, SupportTicket } from '../../types';
+import { WorkerProfile, CustomerProfile, JobPost, Booking, Language, ChatMessage, SupportTicket, CallSession } from '../../types';
 import { WorkerDetailModal } from './WorkerDetailModal';
 import { PostJobModal } from './PostJobModal';
 import { LiveTrackingView } from './LiveTrackingView';
-import { ChatCallModal } from './ChatCallModal';
+import { ChatCallModal, SendMessageOptions } from './ChatCallModal';
 import { RatingModal } from './RatingModal';
 import { AddCustomerModal } from './AddCustomerModal';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
@@ -69,7 +69,10 @@ interface CustomerAppProps {
   onUpdateCustomerProfile?: (updated: Partial<CustomerProfile>) => void;
   onCancelBooking?: () => void;
   chatMessages: ChatMessage[];
-  onSendMessage: (text: string) => void;
+  onSendMessage: (text: string, options?: SendMessageOptions) => void;
+  activeCallSession?: CallSession | null;
+  answeredCallSession?: CallSession | null;
+  onConsumeAnsweredCall?: () => void;
   supportTickets: SupportTicket[];
   onCreateSupportTicket: (subject: string, category: 'wallet_payment' | 'worker_conduct' | 'job_quality' | 'technical_app') => void;
   onUpdateBookingProgress?: (progress: number) => void;
@@ -108,6 +111,9 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
   onCancelBooking,
   chatMessages,
   onSendMessage,
+  activeCallSession = null,
+  answeredCallSession = null,
+  onConsumeAnsweredCall,
   supportTickets,
   onCreateSupportTicket,
   onUpdateBookingProgress,
@@ -162,6 +168,21 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
   const [preselectedPostCategory, setPreselectedPostCategory] = useState<string | undefined>(undefined);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isCallOpen, setIsCallOpen] = useState(false);
+
+  const activeBookingMessages = safeActiveBooking
+    ? chatMessages.filter((m) => !m.bookingId || m.bookingId === safeActiveBooking.id)
+    : [];
+
+  useEffect(() => {
+    if (
+      answeredCallSession &&
+      safeActiveBooking &&
+      answeredCallSession.bookingId === safeActiveBooking.id
+    ) {
+      setIsCallOpen(true);
+      setIsChatOpen(false);
+    }
+  }, [answeredCallSession, safeActiveBooking]);
   const [isRatingOpen, setIsRatingOpen] = useState(false);
   const [isNewTicketOpen, setIsNewTicketOpen] = useState(false);
   const [isAddCustomerOpen, setIsAddCustomerOpen] = useState(false);
@@ -1577,6 +1598,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
           setIsCallOpen(false);
         }}
         mode={isCallOpen ? 'call' : 'chat'}
+        bookingId={safeActiveBooking?.id}
         otherPartyName={
           safeActiveBooking?.workerName ||
           (language === 'hi' ? 'कारीगर पार्टनर' : 'Service Partner')
@@ -1588,8 +1610,13 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
           'https://images.unsplash.com/photo-1540569014015-19a7be504e3a?auto=format&fit=crop&w=400&q=80'
         }
         currentRole="customer"
-        messages={chatMessages}
+        currentPartyName={customer.name}
+        currentPartyPhone={customer.phone}
+        messages={activeBookingMessages}
         onSendMessage={onSendMessage}
+        activeCallSession={activeCallSession}
+        shouldAutoAnswerSession={answeredCallSession}
+        onConsumeAutoAnswer={onConsumeAnsweredCall}
       />
 
       {safeActiveBooking && (

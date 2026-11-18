@@ -127,6 +127,15 @@ export type BookingStatus =
   | 'completed'
   | 'cancelled';
 
+export interface LiveGeoLocation {
+  lat: number;
+  lng: number;
+  accuracy?: number;
+  speedKmh?: number | null;
+  heading?: number | null;
+  updatedAtMs: number;
+}
+
 export interface Booking {
   id: string;
   jobId?: string;
@@ -164,6 +173,8 @@ export interface Booking {
   createdAt: string;
   scheduledTime?: string;
   workerLocationProgress: number; // 0% to 100% towards customer
+  customerLiveLocation?: LiveGeoLocation;
+  workerLiveLocation?: LiveGeoLocation;
   jobPhotos?: string[];
   completedWorkPhotos?: string[];
   customerRating?: number;
@@ -189,11 +200,34 @@ export interface ChatMessage {
   senderName: string;
   text: string;
   timestamp: string;
+  createdAtMs?: number;
   isAudio?: boolean;
   audioDurationSeconds?: number;
+  audioDataUrl?: string;
   imageUrl?: string;
   isCallEvent?: boolean;
   callDurationSeconds?: number;
+}
+
+export type CallSessionStatus = 'ringing' | 'connected' | 'ended' | 'rejected' | 'missed';
+
+export interface CallSession {
+  id: string;
+  bookingId: string;
+  callerRole: 'customer' | 'worker';
+  callerName: string;
+  callerPhone?: string;
+  calleeRole: 'customer' | 'worker';
+  calleeName: string;
+  status: CallSessionStatus;
+  offerSdp?: string;
+  answerSdp?: string;
+  callerCandidates?: string[];
+  calleeCandidates?: string[];
+  startedAtMs: number;
+  connectedAtMs?: number;
+  endedAtMs?: number;
+  updatedAtMs: number;
 }
 
 export interface SupportTicket {

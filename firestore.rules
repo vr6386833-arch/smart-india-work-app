@@ -89,8 +89,22 @@ service cloud.firestore {
     match /chat_messages/{messageId} {
       allow read: if true;
       allow create: if request.resource.data.keys().hasAll(['id', 'bookingId', 'senderRole', 'text'])
+                    && request.resource.data.senderRole in ['customer', 'worker']
+                    && isNonEmptyString(request.resource.data.bookingId)
                     && isNonEmptyString(request.resource.data.text);
       allow update: if false;
+      allow delete: if true;
+    }
+
+    // 6a. Real-Time WebRTC Call Signaling Sessions
+    match /call_sessions/{sessionId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll(['id', 'bookingId', 'callerRole', 'calleeRole', 'status', 'startedAtMs'])
+                    && request.resource.data.callerRole in ['customer', 'worker']
+                    && request.resource.data.calleeRole in ['customer', 'worker']
+                    && request.resource.data.status in ['ringing', 'connected', 'ended', 'rejected', 'missed']
+                    && isNonEmptyString(request.resource.data.bookingId);
+      allow update: if request.resource.data.status in ['ringing', 'connected', 'ended', 'rejected', 'missed'];
       allow delete: if true;
     }
 

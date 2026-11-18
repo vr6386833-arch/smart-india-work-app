@@ -29,6 +29,7 @@ import {
 import { QRCodeSVG } from 'qrcode.react';
 import { Booking, Language } from '../../types';
 import { soundManager } from '../../services/soundEffects';
+import { OlaLiveTrackingMap } from '../common/OlaLiveTrackingMap';
 
 interface LiveTrackingViewProps {
   booking: Booking;
@@ -145,6 +146,19 @@ export const LiveTrackingView: React.FC<LiveTrackingViewProps> = ({
       </div>
 
       <div className="p-4 space-y-4">
+        {/* 1b. Real Interactive Google Maps Live GPS View */}
+        {!isCompleted && (
+          <OlaLiveTrackingMap
+            booking={booking}
+            language={language}
+            isWorkerMode={false}
+            compactMapOnly={true}
+            onOpenChat={onOpenChat}
+            onOpenCall={onOpenCall}
+            onTriggerSos={onTriggerSos}
+          />
+        )}
+
         {/* 2. Secure Arrival Verification OTP Card */}
         <div className="bg-gradient-to-r from-amber-500/10 via-slate-900 to-amber-500/10 rounded-2xl p-4 border border-amber-500/30 shadow-lg">
           <div className="flex items-start justify-between">

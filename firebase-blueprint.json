@@ -16,6 +16,8 @@
         "status": { "type": "string", "enum": ["requested", "searching", "accepted", "arrived", "in_progress", "completed", "cancelled"] },
         "arrivalOtp": { "type": "string" },
         "isOtpVerified": { "type": "boolean" },
+        "customerLiveLocation": { "type": "object" },
+        "workerLiveLocation": { "type": "object" },
         "createdAt": { "type": "string" }
       },
       "required": ["id", "customerName", "status"]
@@ -104,6 +106,27 @@
         "reviewedAtText": { "type": "string" }
       },
       "required": ["id", "workerId", "purpose", "amount", "utrNumber", "status"]
+    },
+    "CallSession": {
+      "title": "CallSession",
+      "description": "Real-time cross-device WebRTC voice call signaling session between customer and worker",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "bookingId": { "type": "string" },
+        "callerRole": { "type": "string", "enum": ["customer", "worker"] },
+        "callerName": { "type": "string" },
+        "calleeRole": { "type": "string", "enum": ["customer", "worker"] },
+        "calleeName": { "type": "string" },
+        "status": { "type": "string", "enum": ["ringing", "connected", "ended", "rejected", "missed"] },
+        "offerSdp": { "type": "string" },
+        "answerSdp": { "type": "string" },
+        "callerCandidates": { "type": "array" },
+        "calleeCandidates": { "type": "array" },
+        "startedAtMs": { "type": "number" },
+        "updatedAtMs": { "type": "number" }
+      },
+      "required": ["id", "bookingId", "callerRole", "calleeRole", "status", "startedAtMs"]
     }
   },
   "firestore": {
@@ -130,6 +153,10 @@
     "/upi_payment_claims/{claimId}": {
       "schema": { "$ref": "#/entities/UpiPaymentRequest" },
       "description": "Collection of worker UPI UTR payment claims pending owner bank verification"
+    },
+    "/call_sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/CallSession" },
+      "description": "Collection of live WebRTC voice call signaling sessions"
     }
   }
 }

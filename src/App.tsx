@@ -29,7 +29,8 @@ import {
   WorkerJobRecord,
   OwnerPayoutRecord,
   WorkerNotification,
-  UpiPaymentRequest
+  UpiPaymentRequest,
+  CallSession
 } from './types';
 import { StorageService } from './services/storageService';
 import { safeStorage } from './services/safeStorage';
@@ -43,6 +44,7 @@ import {
   isValidRealUpiUtr,
   testFirestoreConnection, 
   syncBookingToFirestore, 
+  updateBookingLiveLocation,
   syncJobToFirestore,
   syncWorkerToFirestore, 
   syncCustomerToFirestore,
@@ -58,6 +60,8 @@ import {
   listenToCommissions,
   listenToPayouts,
   listenToChatMessages,
+  listenToCallSessions,
+  updateCallSessionStatus,
   listenToAppConfig,
   listenToUpiPaymentClaims,
   purgeAllFirestoreData
@@ -65,6 +69,7 @@ import {
 import { Header } from './components/common/Header';
 import { PhoneFrame } from './components/common/PhoneFrame';
 import { CustomerApp } from './components/customer/CustomerApp';
+import { SendMessageOptions } from './components/customer/ChatCallModal';
 import { WorkerApp } from './components/worker/WorkerApp';
 import { WorkerIdCardModal } from './components/worker/WorkerIdCardModal';
 import { AddCustomerModal } from './components/customer/AddCustomerModal';
@@ -88,7 +93,7 @@ import { AwsCloudService } from './services/awsCloudService';
 import { soundManager } from './services/soundEffects';
 import { PushNotificationService } from './services/pushNotificationService';
 import { IndexedDbSyncService } from './services/indexedDbSyncService';
-import { Sparkles, RefreshCw, Zap, ShieldCheck } from 'lucide-react';
+import { Sparkles, RefreshCw, Zap, ShieldCheck, PhoneIncoming, PhoneOff, AlertTriangle } from 'lucide-react';
 
 // One-time synchronous migration to wipe pre-launch test records from localStorage before first render
 function ensureCleanLaunchV5Migration() {
@@ -175,12 +180,23 @@ export default function App() {
   const [isApkDownloadOpen, setIsApkDownloadOpen] = useState(false);
   const [isCloudConnected, setIsCloudConnected] = useState(true);
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [isGmpQuotaExceeded, setIsGmpQuotaExceeded] = useState(false);
+  const [callSessions, setCallSessions] = useState<CallSession[]>([]);
+  const [answeredCallSession, setAnsweredCallSession] = useState<CallSession | null>(null);
+  const lastNotifiedMsgIdRef = React.useRef<string | null>(null);
   const [appToast, setAppToast] = useState<{ message: string; type: 'warning' | 'info' | 'success' } | null>(null);
   const showToast = React.useCallback((message: string, type: 'warning' | 'info' | 'success' = 'warning') => {
     setAppToast({ message, type });
     setTimeout(() => {
       setAppToast((prev) => (prev?.message === message ? null : prev));
     }, 4500);
+  }, []);
+
+  // Case A Tier 1 & Tier 2 Google Maps Platform quota-exceeded listener
+  React.useEffect(() => {
+    const handleQuota = () => setIsGmpQuotaExceeded(true);
+    window.addEventListener('gmp-quota-exceeded', handleQuota);
+    return () => window.removeEventListener('gmp-quota-exceeded', handleQuota);
   }, []);
 
   // Initialize background push notifications and local offline IndexedDB auto-sync
@@ -618,7 +634,9 @@ export default function App() {
           prev.isOtpVerified === latest.isOtpVerified &&
           prev.isLocationShared === latest.isLocationShared &&
           prev.paymentStatus === latest.paymentStatus &&
-          prev.customerRating === latest.customerRating
+          prev.customerRating === latest.customerRating &&
+          prev.customerLiveLocation?.updatedAtMs === latest.customerLiveLocation?.updatedAtMs &&
+          prev.workerLiveLocation?.updatedAtMs === latest.workerLiveLocation?.updatedAtMs
         ) {
           return prev;
         }
@@ -684,6 +702,28 @@ export default function App() {
         return passesCutoff(tsMs);
       });
       setChatMessages(freshMsgs);
+
+      if (freshMsgs.length > 0) {
+        const latestMsg = freshMsgs[freshMsgs.length - 1] as ChatMessage & { createdAtMs?: number };
+        const msgTime = latestMsg.createdAtMs || extractRecordTimeMs(latestMsg.id);
+        const curView = activeViewRef.current;
+        const myRole = curView === 'worker' ? 'worker' : 'customer';
+        if (
+          curView !== 'dual' &&
+          latestMsg.senderRole !== myRole &&
+          !latestMsg.isCallEvent &&
+          Date.now() - msgTime < 20000 &&
+          latestMsg.id !== lastNotifiedMsgIdRef.current
+        ) {
+          lastNotifiedMsgIdRef.current = latestMsg.id;
+          soundManager.playMessageReceived();
+          showToast(`💬 ${latestMsg.senderName}: ${latestMsg.text.slice(0, 60)}`, 'info');
+        }
+      }
+    });
+
+    const unsubCalls = listenToCallSessions((sessions) => {
+      setCallSessions(sessions || []);
     });
 
     const unsubUpiClaims = listenToUpiPaymentClaims((cloudClaims) => {
@@ -703,9 +743,133 @@ export default function App() {
       unsubCommissions();
       unsubPayouts();
       unsubChat();
+      unsubCalls();
       unsubUpiClaims();
     };
-  }, [effectiveCutoffMs]);
+  }, [effectiveCutoffMs, showToast]);
+
+  const activeCallSession = React.useMemo(() => {
+    if (!activeBooking) return null;
+    const nowMs = Date.now();
+    return (
+      callSessions.find(
+        (s) =>
+          s.bookingId === activeBooking.id &&
+          nowMs - (s.updatedAtMs || s.startedAtMs || 0) < 120000
+      ) || null
+    );
+  }, [callSessions, activeBooking]);
+
+  const incomingRingingCall = React.useMemo(() => {
+    if (!activeBooking) return null;
+    if (activeView === 'dual' || activeView === 'owner' || activeView === 'admin' || activeView === 'studio') {
+      return null;
+    }
+    const myRole: 'customer' | 'worker' = activeView === 'worker' ? 'worker' : 'customer';
+    if (
+      myRole === 'worker' &&
+      (activeWorker.id === DEFAULT_STANDBY_WORKER.id || activeBooking.workerId !== activeWorker.id)
+    ) {
+      return null;
+    }
+    if (myRole === 'customer' && activeBooking.customerId !== customer.id) {
+      return null;
+    }
+    const nowMs = Date.now();
+    return (
+      callSessions.find(
+        (s) =>
+          s.bookingId === activeBooking.id &&
+          s.status === 'ringing' &&
+          !s.endedAtMs &&
+          s.calleeRole === myRole &&
+          nowMs - (s.startedAtMs || 0) < 45000
+      ) || null
+    );
+  }, [callSessions, activeBooking, activeView, activeWorker.id, customer.id]);
+
+  // Ring phone & vibrate when remote incoming call arrives on this phone
+  React.useEffect(() => {
+    if (incomingRingingCall && !answeredCallSession) {
+      soundManager.startRingtone();
+      try {
+        navigator.vibrate?.([450, 200, 450, 200, 450]);
+      } catch {}
+    } else {
+      soundManager.stopRingtone();
+    }
+    return () => {
+      soundManager.stopRingtone();
+    };
+  }, [incomingRingingCall, answeredCallSession]);
+
+  // Background two-way GPS broadcast while booking is active (when geolocation already granted)
+  React.useEffect(() => {
+    if (
+      !activeBooking ||
+      activeBooking.status === 'completed' ||
+      activeBooking.status === 'cancelled' ||
+      (activeView !== 'customer' && activeView !== 'worker')
+    ) {
+      return;
+    }
+    if (activeView === 'worker' && !activeBooking.isLocationShared) {
+      return;
+    }
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
+
+    let watchId: number | null = null;
+    let cancelled = false;
+    let lastSentMs = 0;
+
+    const startWatch = () => {
+      if (cancelled) return;
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          const nowMs = Date.now();
+          if (nowMs - lastSentMs < 5000) return;
+          lastSentMs = nowMs;
+          const speedKmh =
+            typeof pos.coords.speed === 'number' && !Number.isNaN(pos.coords.speed)
+              ? Math.round(pos.coords.speed * 3.6)
+              : null;
+          updateBookingLiveLocation(
+            activeBooking.id,
+            activeView === 'worker' ? 'worker' : 'customer',
+            {
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+              accuracy: Math.round(pos.coords.accuracy),
+              speedKmh,
+              heading: typeof pos.coords.heading === 'number' ? Math.round(pos.coords.heading) : null,
+              updatedAtMs: nowMs,
+            },
+            activeView === 'worker' ? activeWorker.id : undefined
+          );
+        },
+        () => {},
+        { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+      );
+    };
+
+    if (navigator.permissions && navigator.permissions.query) {
+      navigator.permissions
+        .query({ name: 'geolocation' as PermissionName })
+        .then((res) => {
+          if (res.state === 'granted') {
+            startWatch();
+          }
+        })
+        .catch(() => {});
+    }
+
+    return () => {
+      cancelled = true;
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+      }
+    };
+  }, [activeBooking, activeView, activeWorker.id]);
 
   const handleMarkNotificationAsRead = (id: string) => {
     setWorkerNotifications((prev) =>
@@ -1992,32 +2156,27 @@ export default function App() {
   };
 
   // 13. Send Real-Time Cross-Device Chat Message via Firestore
-  const handleSendMessage = (
-    text: string,
-    options?: {
-      isAudio?: boolean;
-      audioDuration?: number;
-      imageUrl?: string;
-      isCallEvent?: boolean;
-      callDuration?: number;
-    }
-  ) => {
+  const handleSendMessage = (text: string, options?: SendMessageOptions) => {
     const now = new Date();
     const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const isWorkerSender = activeView === 'worker';
+    const senderRole: 'customer' | 'worker' =
+      options?.senderRole || (activeView === 'worker' ? 'worker' : 'customer');
+    const isWorkerSender = senderRole === 'worker';
     const sanitizedText = SecurityShieldService.sanitizeInput(text);
     const newMsg: ChatMessage = {
       id: `msg_${Date.now()}_${Math.floor(Math.random() * 999)}`,
-      bookingId: activeBooking?.id || 'live_booking_chat',
-      senderRole: isWorkerSender ? 'worker' : 'customer',
+      bookingId: options?.bookingId || activeBooking?.id || 'live_booking_chat',
+      senderRole,
       senderName: isWorkerSender ? activeWorker.name : customer.name,
       text: sanitizedText,
       timestamp: timeStr,
-      isAudio: options?.isAudio,
-      audioDurationSeconds: options?.audioDuration,
-      imageUrl: options?.imageUrl,
-      isCallEvent: options?.isCallEvent,
-      callDurationSeconds: options?.callDuration,
+      createdAtMs: Date.now(),
+      ...(options?.isAudio !== undefined ? { isAudio: options.isAudio } : {}),
+      ...(options?.audioDuration !== undefined ? { audioDurationSeconds: options.audioDuration } : {}),
+      ...(options?.audioDataUrl ? { audioDataUrl: options.audioDataUrl } : {}),
+      ...(options?.imageUrl ? { imageUrl: options.imageUrl } : {}),
+      ...(options?.isCallEvent !== undefined ? { isCallEvent: options.isCallEvent } : {}),
+      ...(options?.callDuration !== undefined ? { callDurationSeconds: options.callDuration } : {}),
     };
     setChatMessages((prev) => [...prev, newMsg]);
     syncChatMessageToFirestore(newMsg);
@@ -2317,6 +2476,25 @@ export default function App() {
         }}
       />
 
+      {/* Google Maps Platform Quota Exceeded Banner (Required Case A Banner) */}
+      {isGmpQuotaExceeded && (
+        <div className="bg-amber-50 border-b border-amber-200 text-amber-900 px-3 py-2 text-[11px] flex items-center justify-center gap-2 z-50 shrink-0">
+          <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0" />
+          <span className="leading-snug">
+            Google Maps Platform quota reached. If you are the app owner,{' '}
+            <a
+              href="https://developers.google.com/maps/ai/ai-studio?utm_campaign=gmp_mcp_codeassist_v1_aistudio#quota_exceeded_errors"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline font-bold text-amber-950"
+            >
+              visit maps developer site
+            </a>{' '}
+            for instructions to update your account.
+          </span>
+        </div>
+      )}
+
       {/* Offline Mode Banner for Network Disconnections */}
       {!isOnline && (
         <div className="bg-amber-600 text-white text-xs px-4 py-1.5 flex items-center justify-center gap-2 font-medium shadow-md shrink-0 z-50">
@@ -2326,6 +2504,56 @@ export default function App() {
               ? '📶 ऑफलाइन मोड: इंटरनेट डिस्कनेक्ट है - ऐप और डेटा सुरक्षित रूप से लोकल IndexedDB में चल रहा है।'
               : '📶 Offline Mode: Internet disconnected - App is operating safely with local IndexedDB cache.'}
           </span>
+        </div>
+      )}
+
+      {/* Global Incoming Cross-Device Call Alert Overlay */}
+      {incomingRingingCall && !answeredCallSession && (
+        <div className="fixed inset-x-3 top-4 z-[130] max-w-md mx-auto p-3.5 rounded-3xl bg-slate-950/95 backdrop-blur-md border-2 border-emerald-500 shadow-2xl shadow-emerald-950/60 flex items-center justify-between gap-3 animate-in slide-in-from-top duration-300">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-11 h-11 rounded-2xl bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 flex items-center justify-center shrink-0 animate-pulse">
+              <PhoneIncoming className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 block">
+                {language === 'hi' ? '📞 इनकमिंग वॉइस कॉल' : '📞 Incoming Live Call'}
+              </span>
+              <h4 className="text-sm font-black text-white truncate">
+                {incomingRingingCall.callerName}
+              </h4>
+              <p className="text-[10px] text-slate-400">
+                {language === 'hi' ? 'Smart India Work • लाइव इंटरनेट कॉल' : 'Smart India Work • Live Voice'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                soundManager.stopRingtone();
+                soundManager.playCallEnd();
+                updateCallSessionStatus(incomingRingingCall.id, 'rejected');
+              }}
+              className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center gap-1 shadow-md active:scale-95 transition-all"
+            >
+              <PhoneOff className="w-3.5 h-3.5" />
+              <span>{language === 'hi' ? 'काटें' : 'Decline'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                soundManager.stopRingtone();
+                soundManager.playCallConnected();
+                setAnsweredCallSession(incomingRingingCall);
+              }}
+              className="px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs flex items-center gap-1 shadow-md active:scale-95 transition-all"
+            >
+              <PhoneIncoming className="w-3.5 h-3.5" />
+              <span>{language === 'hi' ? 'उठाएं' : 'Answer'}</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -2442,6 +2670,9 @@ export default function App() {
                   onCancelBooking={handleCancelBooking}
                   chatMessages={chatMessages}
                   onSendMessage={handleSendMessage}
+                  activeCallSession={activeCallSession}
+                  answeredCallSession={answeredCallSession}
+                  onConsumeAnsweredCall={() => setAnsweredCallSession(null)}
                   supportTickets={supportTickets}
                   onCreateSupportTicket={handleCreateSupportTicket}
                   onUpdateBookingProgress={handleUpdateBookingProgress}
@@ -2503,6 +2734,9 @@ export default function App() {
                   onAddPortfolio={handleAddPortfolio}
                   chatMessages={chatMessages}
                   onSendMessage={handleSendMessage}
+                  activeCallSession={activeCallSession}
+                  answeredCallSession={answeredCallSession}
+                  onConsumeAnsweredCall={() => setAnsweredCallSession(null)}
                   onUpdateWorker={handleUpdateWorker}
                   records={workerJobRecords}
                   onAddRecord={handleAddWorkerJobRecord}
@@ -2563,6 +2797,9 @@ export default function App() {
               onCancelBooking={handleCancelBooking}
               chatMessages={chatMessages}
               onSendMessage={handleSendMessage}
+              activeCallSession={activeCallSession}
+              answeredCallSession={answeredCallSession}
+              onConsumeAnsweredCall={() => setAnsweredCallSession(null)}
               supportTickets={supportTickets}
               onCreateSupportTicket={handleCreateSupportTicket}
               onUpdateBookingProgress={handleUpdateBookingProgress}
@@ -2648,6 +2885,9 @@ export default function App() {
               onAddPortfolio={handleAddPortfolio}
               chatMessages={chatMessages}
               onSendMessage={handleSendMessage}
+              activeCallSession={activeCallSession}
+              answeredCallSession={answeredCallSession}
+              onConsumeAnsweredCall={() => setAnsweredCallSession(null)}
               onUpdateWorker={handleUpdateWorker}
               records={workerJobRecords}
               onAddRecord={handleAddWorkerJobRecord}
@@ -2763,6 +3003,8 @@ export default function App() {
                   setOwnerPayouts([]);
                   setUpiPaymentClaims([]);
                   setChatMessages([]);
+                  setCallSessions([]);
+                  setAnsweredCallSession(null);
                   purgeAllFirestoreData();
                   const resetCfg: AppOwnerPaymentConfig = {
                     ...appOwnerConfig,

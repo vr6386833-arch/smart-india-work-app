@@ -44,7 +44,7 @@ import {
   Crown,
   Zap
 } from 'lucide-react';
-import { WorkerProfile, JobPost, Booking, WalletTransaction, Language, ChatMessage, AppOwnerPaymentConfig, CommissionRecord, WorkerJobRecord, WorkerNotification, UpiPaymentRequest } from '../../types';
+import { WorkerProfile, JobPost, Booking, WalletTransaction, Language, ChatMessage, AppOwnerPaymentConfig, CommissionRecord, WorkerJobRecord, WorkerNotification, UpiPaymentRequest, CallSession } from '../../types';
 import { OtpVerificationDialog } from './OtpVerificationDialog';
 import { WalletManagerModal } from './WalletManagerModal';
 import { KycVerificationModal } from './KycVerificationModal';
@@ -52,7 +52,7 @@ import { PortfolioManagerModal } from './PortfolioManagerModal';
 import { DynamicUpiQrModal } from './DynamicUpiQrModal';
 import { CompanyQrPaymentModal } from './CompanyQrPaymentModal';
 import { PayAppOwnerModal } from './PayAppOwnerModal';
-import { ChatCallModal } from '../customer/ChatCallModal';
+import { ChatCallModal, SendMessageOptions } from '../customer/ChatCallModal';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
 import { OwnerPinModal } from '../common/OwnerPinModal';
 import { WorkerIdCardModal } from './WorkerIdCardModal';
@@ -89,7 +89,10 @@ interface WorkerAppProps {
   onAddPortfolio: (title: string, tag: string, desc: string, img: string) => void;
   onUpdateWorker?: (updated: WorkerProfile) => void;
   chatMessages: ChatMessage[];
-  onSendMessage: (text: string) => void;
+  onSendMessage: (text: string, options?: SendMessageOptions) => void;
+  activeCallSession?: CallSession | null;
+  answeredCallSession?: CallSession | null;
+  onConsumeAnsweredCall?: () => void;
   records?: WorkerJobRecord[];
   onAddRecord?: (record: WorkerJobRecord) => void;
   onDeleteRecord?: (recordId: string) => void;
@@ -145,6 +148,9 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
   onUpdateWorker,
   chatMessages,
   onSendMessage,
+  activeCallSession = null,
+  answeredCallSession = null,
+  onConsumeAnsweredCall,
   records = [],
   onAddRecord,
   onDeleteRecord,
@@ -241,6 +247,21 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isCallOpen, setIsCallOpen] = useState(false);
   const [isOwnerPinOpen, setIsOwnerPinOpen] = useState(false);
+
+  const activeBookingMessages = myActiveBooking
+    ? chatMessages.filter((m) => !m.bookingId || m.bookingId === myActiveBooking.id)
+    : [];
+
+  useEffect(() => {
+    if (
+      answeredCallSession &&
+      myActiveBooking &&
+      answeredCallSession.bookingId === myActiveBooking.id
+    ) {
+      setIsCallOpen(true);
+      setIsChatOpen(false);
+    }
+  }, [answeredCallSession, myActiveBooking]);
   const secretOwnerTapRef = useRef<{ count: number; lastTap: number }>({ count: 0, lastTap: 0 });
 
   const leadFeeRupees = (isAccountBlocked ? unpaidFeeAmount : appOwnerConfig?.perJobFeeRupees) || 10;
@@ -1376,24 +1397,22 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                         )}
                       </div>
                     ) : (
-                      <div className="ml-9 p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-2.5">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                            <span className="text-[11px] font-bold text-white">
-                              {language === 'hi' ? 'ओला लाइव नेविगेशन सिस्टम' : 'Ola Live Navigation Map'}
-                            </span>
-                          </div>
-                          <span className="text-[10px] font-mono text-emerald-400 font-bold bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-500/30">
-                            {myActiveBooking.workerLocationProgress ? `${Math.round(myActiveBooking.workerLocationProgress)}% En Route` : '0%'}
-                          </span>
-                        </div>
-
-                        <p className="text-[10px] text-slate-400 leading-snug">
-                          {language === 'hi'
-                            ? `ग्राहक के पते (${myActiveBooking.customerAddress || myActiveBooking.customerLocality}) के लिए लाइव डिवाइस GPS नेविगेशन और Google Maps रास्ता खोलें।`
-                            : `Open live device GPS navigation and Google Maps directions for ${myActiveBooking.customerAddress || myActiveBooking.customerLocality}.`}
-                        </p>
+                      <div className="ml-2 sm:ml-9 space-y-2.5">
+                        <OlaLiveTrackingMap
+                          booking={myActiveBooking}
+                          language={language}
+                          isWorkerMode={true}
+                          compactMapOnly={true}
+                          onOpenChat={() => setIsChatOpen(true)}
+                          onOpenCall={() => setIsCallOpen(true)}
+                          onWorkerArrived={() => {
+                            if (onUpdateBookingProgress) {
+                              onUpdateBookingProgress(100);
+                            }
+                            onReachLocation();
+                          }}
+                          onTriggerSos={onTriggerSos}
+                        />
 
                         <div className="flex items-center gap-2">
                           <button
@@ -1405,7 +1424,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                             className="flex-1 py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-950/40 active:scale-98 transition-all"
                           >
                             <Navigation className="w-3.5 h-3.5" />
-                            <span>{language === 'hi' ? 'ओला लाइव नेविगेशन मैप खोलें' : 'Open Ola Live GPS Map'}</span>
+                            <span>{language === 'hi' ? 'फुल-स्क्रीन Google Maps खोलें' : 'Open Fullscreen Maps'}</span>
                           </button>
 
                           <button
@@ -2495,13 +2514,19 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
             setIsCallOpen(false);
           }}
           mode={isCallOpen ? 'call' : 'chat'}
+          bookingId={myActiveBooking.id}
           otherPartyName={myActiveBooking.customerName}
-          otherPartyPhone={isOtpVerified ? myActiveBooking.customerPhone : 'XXXX-XXXX-23'}
+          otherPartyPhone={myActiveBooking.isLocationShared ? myActiveBooking.customerPhone : 'XXXX-XXXX-23'}
           otherPartyRole="Customer"
           otherPartyAvatar="https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=400&q=80"
           currentRole="worker"
-          messages={chatMessages}
+          currentPartyName={worker.name}
+          currentPartyPhone={worker.phone}
+          messages={activeBookingMessages}
           onSendMessage={onSendMessage}
+          activeCallSession={activeCallSession}
+          shouldAutoAnswerSession={answeredCallSession}
+          onConsumeAutoAnswer={onConsumeAnsweredCall}
         />
       )}
 

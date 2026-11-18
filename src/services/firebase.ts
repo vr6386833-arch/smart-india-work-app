@@ -5,6 +5,8 @@ import {
   collection, 
   doc, 
   setDoc, 
+  updateDoc,
+  arrayUnion,
   getDocs, 
   deleteDoc,
   onSnapshot, 
@@ -20,7 +22,7 @@ import {
   signInWithPopup,
 } from 'firebase/auth';
 import firebaseConfigJson from '../../firebase-applet-config.json';
-import { Booking, WorkerProfile, CustomerProfile, CommissionRecord, OwnerPayoutRecord, JobPost, ChatMessage, AppOwnerPaymentConfig, UpiPaymentRequest } from '../types';
+import { Booking, WorkerProfile, CustomerProfile, CommissionRecord, OwnerPayoutRecord, JobPost, ChatMessage, AppOwnerPaymentConfig, UpiPaymentRequest, LiveGeoLocation, CallSession, CallSessionStatus } from '../types';
 
 // Baseline timestamp is 0 by default so live records on any real device clock always sync; legacy demo IDs are filtered explicitly
 export const CLEAN_LAUNCH_CUTOFF_MS = 0;
@@ -200,6 +202,42 @@ export async function syncBookingToFirestore(booking: Booking): Promise<void> {
     }, { merge: true });
   } catch (err) {
     console.error('Error syncing booking to cloud:', err);
+  }
+}
+
+// Sync real-time customer or worker live GPS coordinates onto active booking
+export async function updateBookingLiveLocation(
+  bookingId: string,
+  role: 'customer' | 'worker',
+  location: LiveGeoLocation,
+  workerId?: string
+): Promise<void> {
+  if (!db || !bookingId) return;
+  try {
+    const bookingRef = doc(db, 'bookings', bookingId);
+    const cleanLoc: LiveGeoLocation = {
+      lat: Number(location.lat.toFixed(6)),
+      lng: Number(location.lng.toFixed(6)),
+      accuracy: typeof location.accuracy === 'number' ? Math.round(location.accuracy) : undefined,
+      speedKmh: location.speedKmh ?? null,
+      heading: location.heading ?? null,
+      updatedAtMs: location.updatedAtMs || Date.now(),
+    };
+    const fieldName = role === 'worker' ? 'workerLiveLocation' : 'customerLiveLocation';
+    await setDoc(bookingRef, {
+      [fieldName]: stripUndefined(cleanLoc),
+      updatedAtMs: Date.now(),
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+
+    if (role === 'worker' && workerId && workerId !== 'wrk_standby_live') {
+      await setDoc(doc(db, 'workers', workerId), {
+        currentLocation: { lat: cleanLoc.lat, lng: cleanLoc.lng },
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+    }
+  } catch (err) {
+    console.error('Error syncing live GPS location to cloud:', err);
   }
 }
 
@@ -428,18 +466,106 @@ export function listenToPayouts(callback: (payouts: OwnerPayoutRecord[]) => void
   }
 }
 
-// Sync real-time chat message to Firestore
+// Sync real-time chat message to Firestore (MUST stripUndefined so optional audio/image fields never crash setDoc)
 export async function syncChatMessageToFirestore(message: ChatMessage): Promise<void> {
   if (!db) return;
   try {
+    const safeText = (message.text || ' ').trim().slice(0, 950) || '💬';
+    const cleanPayload = stripUndefined({
+      ...message,
+      text: safeText,
+      createdAtMs: message.createdAtMs || Date.now(),
+    });
     const msgRef = doc(db, 'chat_messages', message.id);
     await setDoc(msgRef, {
-      ...message,
-      createdAtMs: Date.now(),
+      ...cleanPayload,
       createdAt: serverTimestamp(),
     }, { merge: true });
   } catch (err) {
     console.error('Error syncing chat message to cloud:', err);
+  }
+}
+
+// Real-time Cross-Device WebRTC Voice Call Signaling via Firestore
+export async function startCallSession(session: CallSession): Promise<void> {
+  if (!db) return;
+  try {
+    const callRef = doc(db, 'call_sessions', session.id);
+    await setDoc(callRef, {
+      ...stripUndefined(session),
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+  } catch (err) {
+    console.error('Error starting call session in Firestore:', err);
+  }
+}
+
+export async function answerCallSession(sessionId: string, answerSdp: string): Promise<void> {
+  if (!db || !sessionId) return;
+  try {
+    const nowMs = Date.now();
+    await setDoc(doc(db, 'call_sessions', sessionId), {
+      status: 'connected' as CallSessionStatus,
+      answerSdp,
+      connectedAtMs: nowMs,
+      updatedAtMs: nowMs,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+  } catch (err) {
+    console.error('Error answering call session in Firestore:', err);
+  }
+}
+
+export async function updateCallSessionStatus(sessionId: string, status: CallSessionStatus): Promise<void> {
+  if (!db || !sessionId) return;
+  try {
+    const nowMs = Date.now();
+    await setDoc(doc(db, 'call_sessions', sessionId), {
+      status,
+      ...(status === 'ended' || status === 'rejected' || status === 'missed' ? { endedAtMs: nowMs } : {}),
+      updatedAtMs: nowMs,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+  } catch (err) {
+    console.error('Error updating call session status:', err);
+  }
+}
+
+export async function addCallIceCandidate(
+  sessionId: string,
+  role: 'caller' | 'callee',
+  candidateJson: string
+): Promise<void> {
+  if (!db || !sessionId || !candidateJson) return;
+  try {
+    const field = role === 'caller' ? 'callerCandidates' : 'calleeCandidates';
+    await updateDoc(doc(db, 'call_sessions', sessionId), {
+      [field]: arrayUnion(candidateJson),
+      updatedAtMs: Date.now(),
+    });
+  } catch (err) {
+    console.error('Error adding ICE candidate to Firestore:', err);
+  }
+}
+
+export function listenToCallSessions(callback: (sessions: CallSession[]) => void): () => void {
+  if (!db) return () => {};
+  try {
+    const colRef = collection(db, 'call_sessions');
+    const unsub = onSnapshot(colRef, (snapshot) => {
+      const list: CallSession[] = [];
+      snapshot.forEach((docSnap) => {
+        list.push(docSnap.data() as CallSession);
+      });
+      list.sort((a, b) => (b.startedAtMs || 0) - (a.startedAtMs || 0));
+      callback(list);
+    }, (err) => {
+      console.warn('Firestore call_sessions subscription notice:', err);
+    });
+    return unsub;
+  } catch (e) {
+    console.warn('Unable to subscribe to call_sessions:', e);
+    return () => {};
   }
 }
 
@@ -565,6 +691,7 @@ export async function purgeAllFirestoreData(): Promise<void> {
     'commissions',
     'owner_payouts',
     'chat_messages',
+    'call_sessions',
     'upi_payment_claims',
   ];
   try {

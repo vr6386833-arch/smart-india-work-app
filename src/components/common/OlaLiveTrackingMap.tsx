@@ -21,8 +21,10 @@ import {
   ExternalLink,
   UserCheck,
 } from 'lucide-react';
-import { Booking, Language } from '../../types';
+import { Booking, Language, LiveGeoLocation } from '../../types';
 import { soundManager } from '../../services/soundEffects';
+import { updateBookingLiveLocation } from '../../services/firebase';
+import { GoogleLiveMap, haversineDistanceKm } from './GoogleLiveMap';
 
 interface OlaLiveTrackingMapProps {
   booking: Booking;
@@ -34,6 +36,7 @@ interface OlaLiveTrackingMapProps {
   showEmergencyModal?: boolean;
   initialProgress?: number;
   isWorkerMode?: boolean;
+  compactMapOnly?: boolean;
   onTriggerSos?: () => void;
 }
 
@@ -44,18 +47,15 @@ export const OlaLiveTrackingMap: React.FC<OlaLiveTrackingMapProps> = ({
   onOpenCall,
   onWorkerArrived,
   isWorkerMode = false,
+  compactMapOnly = false,
   onTriggerSos,
 }) => {
   const [useRealGps, setUseRealGps] = useState<boolean>(false);
-  const [realCoords, setRealCoords] = useState<{
-    lat: number;
-    lng: number;
-    accuracy: number;
-    speedKmh: number | null;
-  } | null>(null);
+  const [realCoords, setRealCoords] = useState<LiveGeoLocation | null>(null);
   const [gpsErrorMsg, setGpsErrorMsg] = useState<string | null>(null);
   const [gpsLoading, setGpsLoading] = useState<boolean>(false);
   const watchIdRef = useRef<number | null>(null);
+  const lastSyncedRef = useRef<{ lat: number; lng: number; timeMs: number } | null>(null);
 
   const [isCopiedOtp, setIsCopiedOtp] = useState<boolean>(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
@@ -75,6 +75,22 @@ export const OlaLiveTrackingMap: React.FC<OlaLiveTrackingMapProps> = ({
     setUseRealGps(false);
     setGpsLoading(false);
     setRealCoords(null);
+  };
+
+  const pushCoordsToCloud = (loc: LiveGeoLocation) => {
+    const prev = lastSyncedRef.current;
+    const now = Date.now();
+    const movedKm = prev ? haversineDistanceKm(prev, loc) || 0 : 1;
+    // Throttle writes: sync if first fix, moved > 8m, or > 4s elapsed
+    if (!prev || movedKm >= 0.008 || now - prev.timeMs >= 4000) {
+      lastSyncedRef.current = { lat: loc.lat, lng: loc.lng, timeMs: now };
+      updateBookingLiveLocation(
+        booking.id,
+        isWorkerMode ? 'worker' : 'customer',
+        loc,
+        isWorkerMode ? booking.workerId : undefined
+      );
+    }
   };
 
   const startRealGps = () => {
@@ -104,12 +120,16 @@ export const OlaLiveTrackingMap: React.FC<OlaLiveTrackingMapProps> = ({
           typeof rawSpeed === 'number' && !Number.isNaN(rawSpeed) && rawSpeed >= 0
             ? Math.round(rawSpeed * 3.6)
             : null;
-        setRealCoords({
+        const loc: LiveGeoLocation = {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
           accuracy: Math.round(pos.coords.accuracy),
           speedKmh,
-        });
+          heading: typeof pos.coords.heading === 'number' && !Number.isNaN(pos.coords.heading) ? pos.coords.heading : null,
+          updatedAtMs: Date.now(),
+        };
+        setRealCoords(loc);
+        pushCoordsToCloud(loc);
       },
       (err) => {
         setGpsLoading(false);
@@ -128,14 +148,15 @@ export const OlaLiveTrackingMap: React.FC<OlaLiveTrackingMapProps> = ({
           );
         }
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 4000 }
     );
   };
 
-  // Auto-start genuine GPS watch ONLY if geolocation permission was already granted by the device
+  // Auto-start genuine GPS watch if geolocation permission was already granted by the device
   useEffect(() => {
     let active = true;
-    if (!booking.isLocationShared) {
+    const canShare = isWorkerMode ? Boolean(booking.isLocationShared) : booking.status !== 'completed' && booking.status !== 'cancelled';
+    if (!canShare) {
       stopGpsWatch();
       return;
     }
@@ -161,7 +182,7 @@ export const OlaLiveTrackingMap: React.FC<OlaLiveTrackingMapProps> = ({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [booking.isLocationShared, booking.id]);
+  }, [booking.isLocationShared, booking.id, isWorkerMode]);
 
   const toggleRealGps = () => {
     soundManager.playTap();
@@ -182,29 +203,42 @@ export const OlaLiveTrackingMap: React.FC<OlaLiveTrackingMapProps> = ({
 
   const destinationAddress =
     booking.customerAddress || booking.customerLocality || (language === 'hi' ? 'ग्राहक का पता' : 'Customer Location');
-  const googleMapsDirUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(
-    destinationAddress
-  )}`;
+
+  const customerLiveLoc: LiveGeoLocation | null =
+    !isWorkerMode && realCoords ? realCoords : booking.customerLiveLocation || null;
+  const workerLiveLoc: LiveGeoLocation | null =
+    isWorkerMode && realCoords ? realCoords : booking.workerLiveLocation || null;
+
+  const targetCoords = isWorkerMode ? customerLiveLoc : workerLiveLoc || customerLiveLoc;
+  const googleMapsDirUrl = targetCoords
+    ? `https://www.google.com/maps/dir/?api=1&destination=${targetCoords.lat},${targetCoords.lng}`
+    : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destinationAddress)}`;
 
   const shareText = `Smart India Work Booking #${booking.id}
 Worker: ${booking.workerName} (${booking.serviceCategory})
 Area: ${booking.customerLocality}
 Status: ${isArrived ? 'Arrived at Doorstep' : booking.isLocationShared ? 'Accepted / Active' : 'Pending Acceptance'}`;
 
+  const isMapUnlocked = !isWorkerMode || Boolean(booking.isLocationShared);
+
   return (
     <div
       className={`relative flex flex-col w-full ${
-        isFullscreen ? 'fixed inset-0 z-50 bg-slate-950 h-screen' : 'h-full bg-slate-950'
+        isFullscreen
+          ? 'fixed inset-0 z-50 bg-slate-950 h-screen'
+          : compactMapOnly
+          ? 'rounded-2xl border border-emerald-500/30 bg-slate-950 overflow-hidden shadow-lg'
+          : 'h-full bg-slate-950'
       } overflow-y-auto select-none`}
     >
       {/* 1. Top Honest GPS Header HUD */}
       <div className="relative z-30 px-3.5 py-2.5 bg-gradient-to-r from-emerald-950 via-slate-900 to-teal-950 border-b border-emerald-500/40 shadow-xl flex items-center justify-between">
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-10 h-10 rounded-2xl bg-emerald-500 text-slate-950 flex items-center justify-center font-black shadow-lg shadow-emerald-500/30 shrink-0">
+          <div className="w-9 h-9 rounded-2xl bg-emerald-500 text-slate-950 flex items-center justify-center font-black shadow-lg shadow-emerald-500/30 shrink-0">
             {isArrived ? (
-              <CheckCircle2 className="w-6 h-6 stroke-[2.5]" />
+              <CheckCircle2 className="w-5 h-5 stroke-[2.5]" />
             ) : (
-              <Navigation className="w-5 h-5 stroke-[2.5]" />
+              <Navigation className="w-4 h-4 stroke-[2.5]" />
             )}
           </div>
 
@@ -221,24 +255,21 @@ Status: ${isArrived ? 'Arrived at Doorstep' : booking.isLocationShared ? 'Accept
                     : 'Arrived at Doorstep'
                   : useRealGps && realCoords
                   ? language === 'hi'
-                    ? 'रियल डिवाइस GPS सक्रिय'
-                    : 'Real Device GPS Active'
+                    ? 'लाइव Google Maps GPS सक्रिय'
+                    : 'Live Google Maps GPS Active'
                   : language === 'hi'
-                  ? 'असली लोकेशन व रास्ता'
-                  : 'Live Location & Directions'}
+                  ? 'रियल Google Maps लाइव ट्रैकिंग'
+                  : 'Real Google Maps Live Tracking'}
               </span>
               {useRealGps && realCoords && (
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
               )}
             </div>
             <h4 className="text-xs font-bold text-white truncate max-w-[210px]">
-              {booking.isLocationShared
+              {isMapUnlocked
                 ? destinationAddress
                 : booking.customerLocality || (language === 'hi' ? 'सामान्य क्षेत्र' : 'General Area')}
             </h4>
-            <p className="text-[10px] text-slate-300 truncate max-w-[210px]">
-              {booking.serviceCategory} • {booking.workerName}
-            </p>
           </div>
         </div>
 
@@ -269,136 +300,80 @@ Status: ${isArrived ? 'Arrived at Doorstep' : booking.isLocationShared ? 'Accept
         </div>
       </div>
 
-      {/* 2. Honest Real GPS Map & Radar Canvas (Zero Fake Movement) */}
-      <div
-        className={`relative w-full ${
-          isFullscreen ? 'flex-1 min-h-[260px]' : 'h-60 sm:h-64'
-        } overflow-hidden transition-all duration-300 ${
-          mapTheme === 'dark' ? 'bg-[#0B131F]' : 'bg-[#E5E9EC]'
-        }`}
-      >
-        <div
-          className={`absolute inset-0 pointer-events-none ${
-            mapTheme === 'dark'
-              ? 'opacity-30 bg-[radial-gradient(#38bdf8_1px,transparent_1px)] [background-size:20px_20px]'
-              : 'opacity-40 bg-[radial-gradient(#64748b_1px,transparent_1px)] [background-size:20px_20px]'
-          }`}
-        />
+      {/* 2. Real Interactive Google Maps + Two-Phone GPS Controls */}
+      <div className="relative w-full">
+        {isMapUnlocked ? (
+          <>
+            <GoogleLiveMap
+              customerLoc={customerLiveLoc}
+              workerLoc={workerLiveLoc}
+              customerName={booking.customerName}
+              workerName={booking.workerName}
+              destinationAddress={destinationAddress}
+              language={language}
+              mapTheme={mapTheme}
+              isWorkerMode={isWorkerMode}
+              heightClass={isFullscreen ? 'h-[55vh] min-h-[320px]' : 'h-60 sm:h-64'}
+            />
 
-        {/* Center Honest Telemetry Card */}
-        <div className="relative z-20 h-full flex flex-col items-center justify-center p-4 text-center space-y-2.5">
-          {booking.isLocationShared && (
-            <>
-              <div className="flex flex-wrap items-center justify-center gap-2">
-                <div className="px-3 py-1.5 rounded-2xl bg-slate-950/90 backdrop-blur-md border border-slate-800 shadow-lg flex items-center gap-2">
-                  <LocateFixed
-                    className={`w-4 h-4 ${
-                      useRealGps && realCoords ? 'text-emerald-400 animate-pulse' : 'text-slate-400'
-                    }`}
-                  />
-                  <div className="text-left">
-                    <div className="text-[11px] font-black text-white">
-                      {gpsLoading
-                        ? language === 'hi'
-                          ? 'GPS सिग्नल खोज रहे हैं...'
-                          : 'Acquiring GPS Signal...'
-                        : realCoords
-                        ? `${realCoords.lat.toFixed(5)}, ${realCoords.lng.toFixed(5)}`
-                        : language === 'hi'
-                        ? 'डिवाइस GPS बंद है'
-                        : 'Device GPS Off'}
-                    </div>
-                    <div className="text-[9px] text-slate-400">
-                      {realCoords
-                        ? `${language === 'hi' ? 'सटीकता' : 'Accuracy'}: ±${realCoords.accuracy}m${
-                            realCoords.speedKmh !== null ? ` • ${realCoords.speedKmh} km/h` : ''
-                          }`
-                        : language === 'hi'
-                        ? 'असली लोकेशन देखने के लिए नीचे GPS चालू करें'
-                        : 'Tap Enable GPS below for live device coordinates'}
-                    </div>
-                  </div>
-                </div>
+            {/* GPS Broadcast Bar */}
+            <div className="px-3 py-2 bg-slate-900/95 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={toggleRealGps}
+                className={`flex-1 min-w-[175px] py-2 px-3 rounded-xl font-bold text-[11px] flex items-center justify-center gap-1.5 border transition-all shadow-md ${
+                  useRealGps
+                    ? 'bg-cyan-500 text-slate-950 border-cyan-400'
+                    : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400/50 animate-pulse'
+                }`}
+              >
+                <LocateFixed className="w-3.5 h-3.5 shrink-0" />
+                <span>
+                  {gpsLoading
+                    ? language === 'hi'
+                      ? 'GPS लोकेशन मिल रही है...'
+                      : 'Acquiring GPS...'
+                    : useRealGps
+                    ? language === 'hi'
+                      ? '✓ मेरी लाइव GPS चालू है (बंद करें)'
+                      : '✓ My Live GPS On (Tap to Stop)'
+                    : language === 'hi'
+                    ? '📍 मेरी असली लाइव GPS चालू करें'
+                    : '📍 Share My Real Live GPS'}
+                </span>
+              </button>
+
+              <a
+                href={googleMapsDirUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => soundManager.playTap()}
+                className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[11px] border border-slate-700 flex items-center gap-1.5 shrink-0"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-emerald-400" />
+                <span>{language === 'hi' ? 'रास्ता' : 'Directions'}</span>
+              </a>
+            </div>
+
+            {gpsErrorMsg && (
+              <div className="px-3 py-2 bg-amber-950/70 border-t border-amber-500/30 text-[11px] text-amber-200">
+                ⚠️ {gpsErrorMsg}
               </div>
-
-              <div className="max-w-xs px-3.5 py-2.5 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-1 shadow-xl">
-                <div className="flex items-center justify-center gap-1.5 text-[11px] font-bold text-blue-300">
-                  <MapPin className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                  <span className="truncate">{destinationAddress}</span>
-                </div>
-                {gpsErrorMsg && (
-                  <p className="text-[10px] text-amber-300 leading-snug">{gpsErrorMsg}</p>
-                )}
-              </div>
-
-              <div className="flex flex-wrap items-center justify-center gap-2">
-                <button
-                  type="button"
-                  onClick={toggleRealGps}
-                  className={`px-3 py-1.5 rounded-xl font-bold text-[11px] flex items-center gap-1.5 border transition-all shadow-md ${
-                    useRealGps
-                      ? 'bg-cyan-500 text-slate-950 border-cyan-400'
-                      : 'bg-slate-900 hover:bg-slate-800 text-cyan-300 border-cyan-500/40'
-                  }`}
-                >
-                  <LocateFixed className="w-3.5 h-3.5" />
-                  <span>
-                    {useRealGps
-                      ? language === 'hi'
-                        ? 'डिवाइस GPS बंद करें'
-                        : 'Stop Device GPS'
-                      : language === 'hi'
-                      ? 'असली डिवाइस GPS चालू करें'
-                      : 'Enable Real Device GPS'}
-                  </span>
-                </button>
-
-                {isWorkerMode && (
-                  <a
-                    href={googleMapsDirUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={() => soundManager.playTap()}
-                    className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] flex items-center gap-1.5 shadow-md"
-                  >
-                    <ExternalLink className="w-3.5 h-3.5" />
-                    <span>{language === 'hi' ? 'Google Maps रास्ता खोलें' : 'Open Google Maps'}</span>
-                  </a>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* Floating Safety Modal Trigger */}
-        <div className="absolute bottom-3 right-3 z-30">
-          <button
-            type="button"
-            onClick={() => {
-              soundManager.playTap();
-              setIsShareModalOpen(true);
-            }}
-            className="p-2 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/40 backdrop-blur-md shadow-lg hover:bg-amber-500/30 transition-all"
-            title="Safety & Share Trip"
-          >
-            <ShieldCheck className="w-4 h-4" />
-          </button>
-        </div>
-
-        {/* Locked Location Privacy Overlay (If worker has not accepted yet) */}
-        {!booking.isLocationShared && (
-          <div className="absolute inset-0 z-40 bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-5 text-center space-y-3">
+            )}
+          </>
+        ) : (
+          <div className="h-60 bg-slate-950/95 flex flex-col items-center justify-center p-5 text-center space-y-3">
             <div className="w-12 h-12 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center justify-center shadow-lg shadow-amber-500/10">
               <Lock className="w-6 h-6" />
             </div>
             <div className="max-w-xs space-y-1">
               <h4 className="text-sm font-black text-white">
-                {language === 'hi' ? 'ग्राहक का पता व लोकेशन लॉक है' : 'Customer Location Locked'}
+                {language === 'hi' ? 'ग्राहक का पता व लाइव मैप लॉक है' : 'Customer Location Locked'}
               </h4>
               <p className="text-xs text-slate-300 leading-relaxed">
                 {language === 'hi'
-                  ? `जब कारीगर ${booking.workerName} काम स्वीकार करेंगे, तभी ग्राहक का पूरा पता और लोकेशन खुलेगी।`
-                  : `Exact doorstep address unlocks only after ${booking.workerName} accepts the job.`}
+                  ? `जब आप काम स्वीकार करेंगे, तभी ग्राहक का पूरा पता और लाइव Google Maps रास्ता खुलेगा।`
+                  : `Exact doorstep address and live Google Maps route unlock after you accept the job.`}
               </p>
             </div>
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-[11px] font-bold text-amber-300">
@@ -408,6 +383,28 @@ Status: ${isArrived ? 'Arrived at Doorstep' : booking.isLocationShared ? 'Accept
           </div>
         )}
       </div>
+
+      {!compactMapOnly && (
+        <>
+          {/* Safety Trigger Bar */}
+          <div className="px-3 py-1.5 bg-slate-950 border-t border-slate-800/80 flex items-center justify-between">
+            <span className="text-[10px] text-slate-400">
+              {realCoords?.accuracy
+                ? `${language === 'hi' ? 'GPS सटीकता' : 'GPS Accuracy'}: ±${realCoords.accuracy}m`
+                : `${booking.serviceCategory} • #${booking.id}`}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                soundManager.playTap();
+                setIsShareModalOpen(true);
+              }}
+              className="px-2 py-1 rounded-lg bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[10px] font-bold flex items-center gap-1"
+            >
+              <ShieldCheck className="w-3 h-3" />
+              <span>{language === 'hi' ? 'सुरक्षा शेयर' : 'Safety Share'}</span>
+            </button>
+          </div>
 
       {/* 3. Real Worker Arrival Control (Worker Driver Mode ONLY, when location unlocked & not yet arrived) */}
       {isWorkerMode && booking.isLocationShared && !isArrived && onWorkerArrived && (
@@ -582,6 +579,8 @@ Status: ${isArrived ? 'Arrived at Doorstep' : booking.isLocationShared ? 'Accept
           </div>
         </div>
       </div>
+        </>
+      )}
 
       {/* 6. Safety Shield & Share Booking Modal */}
       {isShareModalOpen && (
