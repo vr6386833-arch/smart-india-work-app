@@ -214,10 +214,12 @@ export const OlaLiveTrackingMap: React.FC<OlaLiveTrackingMapProps> = ({
     ? `https://www.google.com/maps/dir/?api=1&destination=${targetCoords.lat},${targetCoords.lng}`
     : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destinationAddress)}`;
 
+  const isSearchingBroadcast = booking.status === 'searching' || booking.workerId === 'OPEN_BROADCAST';
+
   const shareText = `Smart India Work Booking #${booking.id}
-Worker: ${booking.workerName} (${booking.serviceCategory})
+Worker: ${isSearchingBroadcast ? 'Waiting for Worker Acceptance' : `${booking.workerName} (${booking.serviceCategory})`}
 Area: ${booking.customerLocality}
-Status: ${isArrived ? 'Arrived at Doorstep' : booking.isLocationShared ? 'Accepted / Active' : 'Pending Acceptance'}`;
+Status: ${isArrived ? 'Arrived at Doorstep' : booking.isLocationShared ? 'Accepted / Active' : isSearchingBroadcast ? 'Broadcasted to All Workers' : 'Pending Acceptance'}`;
 
   const isMapUnlocked = !isWorkerMode || Boolean(booking.isLocationShared);
 
@@ -245,7 +247,11 @@ Status: ${isArrived ? 'Arrived at Doorstep' : booking.isLocationShared ? 'Accept
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
               <span className="text-[11px] font-black text-emerald-400 tracking-wide uppercase">
-                {!booking.isLocationShared
+                {isSearchingBroadcast
+                  ? language === 'hi'
+                    ? 'सभी कारीगरों को लीड भेजी — स्वीकृति प्रतीक्षारत'
+                    : 'Broadcasted to Workers — Waiting Accept'
+                  : !booking.isLocationShared
                   ? language === 'hi'
                     ? 'स्वीकृति प्रतीक्षारत'
                     : 'Waiting for Acceptance'

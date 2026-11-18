@@ -44,6 +44,8 @@ import {
   isValidRealUpiUtr,
   testFirestoreConnection, 
   syncBookingToFirestore, 
+  claimBroadcastBookingInFirestore,
+  claimJobPostInFirestore,
   updateBookingLiveLocation,
   syncJobToFirestore,
   syncWorkerToFirestore, 
@@ -144,6 +146,22 @@ function ensureCleanLaunchV5Migration() {
 }
 
 ensureCleanLaunchV5Migration();
+
+function getOrCreateDeviceGuestCustomer(): CustomerProfile {
+  let guestId = DEFAULT_GUEST_CUSTOMER.id;
+  try {
+    const stored = safeStorage.getItem('smart_india_device_guest_id_v1');
+    if (stored && stored.startsWith('c_new_guest_')) {
+      guestId = stored;
+    } else {
+      guestId = `c_new_guest_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      safeStorage.setItem('smart_india_device_guest_id_v1', guestId);
+    }
+  } catch {}
+  return { ...DEFAULT_GUEST_CUSTOMER, id: guestId };
+}
+
+const DEVICE_GUEST_CUSTOMER = getOrCreateDeviceGuestCustomer();
 
 export default function App() {
   const [activeView, setActiveView] = useState<'dual' | 'customer' | 'worker' | 'owner' | 'admin' | 'studio'>(() => {
@@ -416,9 +434,9 @@ export default function App() {
         return savedCustId;
       }
     } catch {}
-    return customers[0]?.id || DEFAULT_GUEST_CUSTOMER.id;
+    return customers[0]?.id || DEVICE_GUEST_CUSTOMER.id;
   });
-  const customer = customers.find((c) => c.id === activeCustomerId) || customers[0] || DEFAULT_GUEST_CUSTOMER;
+  const customer = customers.find((c) => c.id === activeCustomerId) || customers[0] || DEVICE_GUEST_CUSTOMER;
 
   const [jobs, setJobs] = useState<JobPost[]>(() => {
     try {
@@ -468,6 +486,8 @@ export default function App() {
     }
   });
   const [incomingBookingAlert, setIncomingBookingAlert] = useState<Booking | null>(null);
+  const [broadcastBookings, setBroadcastBookings] = useState<Booking[]>([]);
+  const [dismissedBroadcastIds, setDismissedBroadcastIds] = useState<string[]>([]);
 
   // Auto-save changes to persistent storage v3
   React.useEffect(() => {
@@ -521,6 +541,7 @@ export default function App() {
 
   const activeCustomerIdRef = React.useRef(activeCustomerId);
   const activeWorkerIdRef = React.useRef(activeWorkerId);
+  const activeWorkerRef = React.useRef(activeWorker);
   const activeViewRef = React.useRef(activeView);
   const alertedBookingIdsRef = React.useRef<Set<string>>(new Set());
 
@@ -530,7 +551,8 @@ export default function App() {
 
   React.useEffect(() => {
     activeWorkerIdRef.current = activeWorkerId;
-  }, [activeWorkerId]);
+    activeWorkerRef.current = activeWorker;
+  }, [activeWorkerId, activeWorker]);
 
   React.useEffect(() => {
     activeViewRef.current = activeView;
@@ -589,92 +611,138 @@ export default function App() {
     const unsubBookings = listenToBookings((cloudBookings) => {
       const freshBookings = (cloudBookings || []).filter((b: Booking & { updatedAtMs?: number }) => {
         if (isLegacyDemoBooking(b)) return false;
-        const tsMs = b.updatedAtMs || extractRecordTimeMs(b.id);
+        const tsMs = b.updatedAtMs || b.createdAtMs || extractRecordTimeMs(b.id);
         return passesCutoff(tsMs);
       });
       if (freshBookings.length === 0) {
+        setBroadcastBookings([]);
         setActiveBooking(null);
         setIncomingBookingAlert(null);
         return;
       }
       const sorted = [...freshBookings].sort(
         (a: Booking & { updatedAtMs?: number }, b: Booking & { updatedAtMs?: number }) =>
-          (b.updatedAtMs || 0) - (a.updatedAtMs || 0)
+          (b.updatedAtMs || b.createdAtMs || extractRecordTimeMs(b.id) || 0) -
+          (a.updatedAtMs || a.createdAtMs || extractRecordTimeMs(a.id) || 0)
       );
+
+      const activeFresh = sorted.filter((b) => b.status !== 'cancelled');
+
+      // Open Broadcast leads visible to ALL active workers (first-accept-wins)
+      const openBroadcasts = activeFresh.filter(
+        (b) =>
+          !b.isLocationShared &&
+          b.status !== 'completed' &&
+          (b.status === 'searching' || b.workerId === 'OPEN_BROADCAST')
+      );
+      setBroadcastBookings(openBroadcasts);
+
+      // Dismiss alert modal if the alerted broadcast booking was already claimed by someone else or cancelled
+      setIncomingBookingAlert((prevAlert) => {
+        if (!prevAlert) return null;
+        const latestCopy = sorted.find((b) => b.id === prevAlert.id);
+        if (!latestCopy || latestCopy.status === 'cancelled') return null;
+        if (
+          latestCopy.workerId !== 'OPEN_BROADCAST' &&
+          latestCopy.workerId !== activeWorkerIdRef.current
+        ) {
+          return null;
+        }
+        return latestCopy;
+      });
 
       const curWorkerId = activeWorkerIdRef.current;
       const curCustId = activeCustomerIdRef.current;
       const curView = activeViewRef.current;
 
-      const relevant = sorted.filter((b) =>
+      const latest =
         curView === 'dual'
-          ? true
-          : b.workerId === curWorkerId || b.customerId === curCustId
-      );
+          ? activeFresh[0] || null
+          : curView === 'worker'
+          ? activeFresh.find((b) => b.workerId === curWorkerId) || null
+          : activeFresh.find((b) => b.customerId === curCustId) || null;
 
-      if (relevant.length === 0) {
-        setActiveBooking(null);
-        setIncomingBookingAlert(null);
-        return;
-      }
-
-      const latest = relevant[0];
-      if ((latest as { status: string }).status === 'cancelled') {
-        setActiveBooking((prev) => (prev && prev.id === latest.id ? null : prev));
-        setIncomingBookingAlert((prev) => (prev && prev.id === latest.id ? null : prev));
-        return;
-      }
-
-      setActiveBooking((prev) => {
-        if (
-          prev &&
-          prev.id === latest.id &&
-          prev.status === latest.status &&
-          prev.workerLocationProgress === latest.workerLocationProgress &&
-          prev.isOtpVerified === latest.isOtpVerified &&
-          prev.isLocationShared === latest.isLocationShared &&
-          prev.paymentStatus === latest.paymentStatus &&
-          prev.customerRating === latest.customerRating &&
-          prev.customerLiveLocation?.updatedAtMs === latest.customerLiveLocation?.updatedAtMs &&
-          prev.workerLiveLocation?.updatedAtMs === latest.workerLiveLocation?.updatedAtMs
-        ) {
+      if (!latest) {
+        setActiveBooking((prev) => {
+          if (!prev) return null;
+          const prevInCloud = sorted.find((b) => b.id === prev.id);
+          // If customer's or worker's previous booking was cancelled or claimed by someone else, clear it
+          if (prevInCloud && prevInCloud.status === 'cancelled') return null;
+          if (curView === 'worker' && prevInCloud && prevInCloud.workerId !== curWorkerId) return null;
           return prev;
-        }
-        return latest;
-      });
-
-      if (
-        latest.status === 'requested' &&
-        !latest.isLocationShared &&
-        curWorkerId !== DEFAULT_STANDBY_WORKER.id &&
-        latest.workerId === curWorkerId &&
-        !alertedBookingIdsRef.current.has(latest.id)
-      ) {
-        alertedBookingIdsRef.current.add(latest.id);
-        setIncomingBookingAlert(latest);
-        setWorkerNotifications((prev) => {
-          if (prev.some((n) => n.bookingId === latest.id)) return prev;
-          const incomingNotif: WorkerNotification = {
-            id: `notif_cloud_${latest.id}`,
-            workerId: latest.workerId,
-            type: 'new_booking',
-            title: `🚨 [${latest.serviceCategory}] नया काम बुक हुआ - स्वीकार करें (${latest.customerName})`,
-            titleHi: `🚨 [${latest.serviceCategory}] नया काम बुक हुआ - स्वीकार करें (${latest.customerName})`,
-            message: `Customer ${latest.customerName} booked you in ${latest.customerLocality}. Accept job to unlock customer location.`,
-            messageHi: `ग्राहक ${latest.customerName} ने ${latest.customerLocality} में [${latest.serviceCategory}] काम के लिए आपको बुक किया है।`,
-            time: 'Live Now',
-            isRead: false,
-            bookingId: latest.id,
-            customerName: latest.customerName,
-            customerPhone: latest.customerPhone,
-            customerAddress: latest.customerAddress,
-            customerLocality: latest.customerLocality,
-            category: latest.serviceCategory,
-            amount: latest.estimatedAmount,
-          };
-          return [incomingNotif, ...prev];
         });
-        soundManager.playIncomingJobAlert();
+      } else {
+        setActiveBooking((prev) => {
+          if (
+            prev &&
+            prev.id === latest.id &&
+            prev.workerId === latest.workerId &&
+            prev.workerName === latest.workerName &&
+            prev.status === latest.status &&
+            prev.workerLocationProgress === latest.workerLocationProgress &&
+            prev.isOtpVerified === latest.isOtpVerified &&
+            prev.isLocationShared === latest.isLocationShared &&
+            prev.paymentStatus === latest.paymentStatus &&
+            prev.customerRating === latest.customerRating &&
+            prev.customerLiveLocation?.updatedAtMs === latest.customerLiveLocation?.updatedAtMs &&
+            prev.workerLiveLocation?.updatedAtMs === latest.workerLiveLocation?.updatedAtMs
+          ) {
+            return prev;
+          }
+          return latest;
+        });
+      }
+
+      // Alert eligible Worker about any newly arrived Open Broadcast OR Direct Booking
+      const curWorker = activeWorkerRef.current;
+      const workerEligibleForAlerts =
+        curWorkerId !== DEFAULT_STANDBY_WORKER.id &&
+        !curWorker?.isIdPaused &&
+        !curWorker?.isBlockedDueToUnpaidFee &&
+        curWorker?.isOnline !== false;
+
+      if (workerEligibleForAlerts) {
+        const directPending = activeFresh.find(
+          (b) =>
+            b.status === 'requested' &&
+            !b.isLocationShared &&
+            b.workerId === curWorkerId &&
+            !alertedBookingIdsRef.current.has(b.id)
+        );
+        const broadcastPending = openBroadcasts.find(
+          (b) =>
+            b.customerId !== curCustId &&
+            !alertedBookingIdsRef.current.has(b.id)
+        );
+        const leadToAlert = directPending || broadcastPending;
+
+        if (leadToAlert) {
+          alertedBookingIdsRef.current.add(leadToAlert.id);
+          setIncomingBookingAlert(leadToAlert);
+          setWorkerNotifications((prev) => {
+            if (prev.some((n) => n.bookingId === leadToAlert.id)) return prev;
+            const incomingNotif: WorkerNotification = {
+              id: `notif_cloud_${leadToAlert.id}`,
+              workerId: leadToAlert.workerId,
+              type: 'new_booking',
+              title: `🚨 [${leadToAlert.serviceCategory}] नया काम बुक हुआ - पहले स्वीकार करें (${leadToAlert.customerName})`,
+              titleHi: `🚨 [${leadToAlert.serviceCategory}] नया काम बुक हुआ - पहले स्वीकार करें (${leadToAlert.customerName})`,
+              message: `Customer ${leadToAlert.customerName} booked ${leadToAlert.serviceCategory} in ${leadToAlert.customerLocality}. First worker to accept claims the job!`,
+              messageHi: `ग्राहक ${leadToAlert.customerName} ने ${leadToAlert.customerLocality} में [${leadToAlert.serviceCategory}] बुक किया है। जो कारीगर पहले स्वीकार करेगा, काम उसका होगा!`,
+              time: 'Live Now',
+              isRead: false,
+              bookingId: leadToAlert.id,
+              customerName: leadToAlert.customerName,
+              customerPhone: leadToAlert.customerPhone,
+              customerAddress: leadToAlert.customerAddress,
+              customerLocality: leadToAlert.customerLocality,
+              category: leadToAlert.serviceCategory,
+              amount: leadToAlert.estimatedAmount,
+            };
+            return [incomingNotif, ...prev];
+          });
+          soundManager.playIncomingJobAlert();
+        }
       }
     });
 
@@ -905,19 +973,21 @@ export default function App() {
   // Real-time synced chat stream (starts fresh for active real bookings)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
-  // 1. Post a new Job Broadcast Requirement (Strict Trade-Targeted Routing)
+  // 1. Post a new Job Broadcast Requirement (All-Workers Broadcast: First-to-Accept Claims It)
   const handlePostJob = (newJobData: Partial<JobPost>) => {
     const targetCat = (newJobData.category || 'mistry').trim().toLowerCase();
     const catMeta = CATEGORIES.find((c) => c.id.toLowerCase() === targetCat);
     const catDisplayName = language === 'hi' ? (catMeta?.nameHi || newJobData.category || targetCat) : (catMeta?.name || newJobData.category || targetCat);
+    const nowMs = Date.now();
+    const safeCustName = (customer.name || '').trim() || 'Smart India Customer';
 
     const newJob: JobPost = {
-      id: `job_${Date.now()}`,
+      id: `job_${nowMs}`,
       customerId: customer.id,
-      customerName: customer.name,
-      customerPhone: customer.phone,
-      customerAddress: customer.address,
-      customerLocality: newJobData.customerLocality || customer.locality,
+      customerName: safeCustName,
+      customerPhone: customer.phone || 'Not provided',
+      customerAddress: customer.address || newJobData.customerLocality || 'Local Area',
+      customerLocality: newJobData.customerLocality || customer.locality || 'Local Area',
       category: newJobData.category || 'mistry',
       subCategory: newJobData.subCategory || 'General Work',
       title: newJobData.title || `${newJobData.category || 'Service'} Requirement`,
@@ -926,58 +996,63 @@ export default function App() {
       urgency: newJobData.urgency || 'urgent',
       photos: newJobData.photos || [],
       createdAt: 'Just now',
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
       status: 'open',
     };
 
     setJobs((prev) => [newJob, ...prev]);
 
-    // 🎯 STRICT TRADE-BASED DISPATCH:
-    // ONLY non-paused workers whose registered trade matches this exact job category receive notifications!
-    const recipientWorkers = workers.filter((w) => {
-      if (w.isIdPaused) return false; // ID is paused by worker - DO NOT send job notification!
-      return (w.category || '').trim().toLowerCase() === targetCat;
-    });
+    // 📢 OPEN BROADCAST TO ALL WORKERS:
+    // Send lead notification to ALL non-paused workers (matching-trade first) + OPEN_BROADCAST tag
+    const nonPausedWorkers = workers.filter(
+      (w) => w.id !== DEFAULT_STANDBY_WORKER.id && !w.isIdPaused
+    );
+    const matchingWorkers = nonPausedWorkers.filter(
+      (w) => (w.category || '').trim().toLowerCase() === targetCat
+    );
+    const sortedRecipients = [
+      ...matchingWorkers,
+      ...nonPausedWorkers.filter((w) => (w.category || '').trim().toLowerCase() !== targetCat),
+    ];
 
-    // Create notifications strictly for the matching trade specialists
-    if (recipientWorkers.length > 0) {
-      const leadNotifs: WorkerNotification[] = recipientWorkers.map((w) => ({
-        id: `notif_${Date.now()}_${w.id}`,
-        workerId: w.id,
-        type: 'new_lead',
-        title: `🎯 आपकी ट्रेड का नया काम पोस्ट हुआ (${catDisplayName})`,
-        titleHi: `🎯 आपकी ट्रेड का नया काम पोस्ट हुआ (${catDisplayName})`,
-        message: `${customer.name} posted a requirement for ${catDisplayName}: ${newJob.title}. Budget: ₹${newJob.budget}`,
-        messageHi: `ग्राहक ${customer.name} ने आपकी ट्रेड (${catDisplayName}) का नया काम पोस्ट किया: ${newJob.title}। बजट: ₹${newJob.budget}।`,
-        time: 'Just now',
-        isRead: false,
-        jobId: newJob.id,
-        customerName: customer.name,
-        customerLocality: newJob.customerLocality,
-        category: newJob.category,
-        amount: newJob.budget,
-      }));
+    const broadcastNotif: WorkerNotification = {
+      id: `notif_${nowMs}_broadcast`,
+      workerId: 'OPEN_BROADCAST',
+      type: 'new_lead',
+      title: `📢 नया काम लीड (${catDisplayName}) — जो पहले स्वीकार करे काम उसका!`,
+      titleHi: `📢 नया काम लीड (${catDisplayName}) — जो पहले स्वीकार करे काम उसका!`,
+      message: `${safeCustName} posted ${newJob.title} in ${newJob.customerLocality}. First worker to accept wins the job!`,
+      messageHi: `ग्राहक ${safeCustName} ने ${newJob.customerLocality} में ${catDisplayName} (${newJob.title}) का काम पोस्ट किया है। जो कारीगर पहले स्वीकार करेगा, काम उसका होगा!`,
+      time: 'Just now',
+      isRead: false,
+      jobId: newJob.id,
+      customerName: safeCustName,
+      customerLocality: newJob.customerLocality,
+      category: newJob.category,
+      amount: newJob.budget,
+    };
 
-      setWorkerNotifications((prev) => [...leadNotifs, ...prev]);
-    }
+    const perWorkerNotifs: WorkerNotification[] = sortedRecipients.map((w) => ({
+      ...broadcastNotif,
+      id: `notif_${nowMs}_${w.id}`,
+      workerId: w.id,
+    }));
 
-    // Sync job post to cloud Firestore so live workers of this trade see it immediately
+    setWorkerNotifications((prev) => [broadcastNotif, ...perWorkerNotifs, ...prev]);
+
+    // Sync job post to cloud Firestore so ALL workers across all phones see it immediately
     syncJobToFirestore(newJob);
 
-    // Notify customer cleanly about live trade-locked dispatch
     showToast(
-      recipientWorkers.length > 0
-        ? (language === 'hi'
-            ? `🎯 ${catDisplayName} का काम लाइव पोस्ट हो गया — ${recipientWorkers.length} कारीगरों को सूचना भेजी गई!`
-            : `🎯 ${catDisplayName} job posted live — notified ${recipientWorkers.length} specialist(s)!`)
-        : (language === 'hi'
-            ? `📢 ${catDisplayName} का काम लाइव पोस्ट हो गया! जैसे ही कोई ${catDisplayName} कारीगर ऑनलाइन होगा, काम सिर्फ उसी को दिखेगा।`
-            : `📢 ${catDisplayName} job posted live! Any ${catDisplayName} worker coming online will see it immediately.`),
+      language === 'hi'
+        ? `📢 ${catDisplayName} काम की लीड सभी कारीगरों को भेज दी गई! जो पहले स्वीकार करेगा, काम उसका होगा।`
+        : `📢 ${catDisplayName} job lead sent to ALL workers! First worker to accept gets the job.`,
       'success'
     );
 
-    // Only auto-switch worker in Dual Simulator mode
-    if (activeView === 'dual' && recipientWorkers.length > 0 && recipientWorkers[0].id !== activeWorkerId) {
-      setActiveWorkerId(recipientWorkers[0].id);
+    if (activeView === 'dual' && sortedRecipients.length > 0 && sortedRecipients[0].id !== activeWorkerId) {
+      setActiveWorkerId(sortedRecipients[0].id);
     }
 
     soundManager.playLeadPing();
@@ -1100,71 +1175,184 @@ export default function App() {
     return true;
   };
 
-  // 2c. Instant Book Specialist strictly by Requested Trade Category (requires ONLINE & unblocked worker!)
+  // 2c. Instant Open-Broadcast Booking: sends lead to ALL workers via Firestore; first worker to accept wins it!
   const handleBookCategory = (categoryId: string): boolean => {
     soundManager.playTap();
     const cleanCat = categoryId.trim().toLowerCase();
     const catMeta = CATEGORIES.find((c) => c.id.toLowerCase() === cleanCat);
     const catLabel = language === 'hi' ? (catMeta?.nameHi || categoryId) : (catMeta?.name || categoryId);
+    const nowMs = Date.now();
+    const parsedRate = Number((catMeta?.basePriceEstimate || '').replace(/[^\d]/g, ' ').trim().split(/\s+/)[0]) || 650;
+    const safeCustName = (customer.name || '').trim() || 'Smart India Customer';
 
-    const exactTradeWorkers = workers.filter(
-      (w) =>
-        w.id !== DEFAULT_STANDBY_WORKER.id &&
-        (w.category || '').trim().toLowerCase() === cleanCat
-    );
-    const availableTradeWorkers = exactTradeWorkers.filter(
-      (w) => w.isOnline && !w.isIdPaused && !w.isBlockedDueToUnpaidFee
-    );
+    const newBooking: Booking = {
+      id: `BK_${nowMs.toString().slice(-6)}_${Math.floor(10 + Math.random() * 89)}`,
+      customerId: customer.id,
+      customerName: safeCustName,
+      customerPhone: customer.phone || '',
+      customerAddress: customer.address || customer.locality || 'Local Area',
+      customerLocality: customer.locality || 'Local Area',
+      workerId: 'OPEN_BROADCAST',
+      workerName: language === 'hi' ? 'सभी कारीगरों को लीड भेजी गई' : 'Broadcasted to All Workers',
+      workerPhone: '',
+      workerAvatar: '',
+      workerRating: 5,
+      serviceCategory: categoryId,
+      serviceSubCategory: catLabel,
+      arrivalOtp: String(Math.floor(1000 + Math.random() * 9000)),
+      isOtpVerified: false,
+      microFeeDeducted: 10,
+      estimatedAmount: parsedRate,
+      status: 'searching',
+      isLocationShared: false,
+      createdAt: 'Just now',
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
+      scheduledTime: language === 'hi' ? 'तत्काल सेवा अनुरोध' : 'Immediate Request',
+      workerLocationProgress: 0,
+    };
 
-    if (availableTradeWorkers.length === 0) {
-      soundManager.playWarning();
-      if (exactTradeWorkers.length > 0) {
-        showToast(
-          language === 'hi'
-            ? `अभी "${catLabel}" के कोई कारीगर ऑनलाइन नहीं हैं। कृपया काम पोस्ट करें ताकि ऑनलाइन आते ही सिर्फ ${catLabel} कारीगरों को सूचना मिले।`
-            : `No "${catLabel}" worker is Online right now. Please post your job so only ${catLabel} specialists get notified when online.`,
-          'warning'
-        );
-      } else {
-        showToast(
-          language === 'hi'
-            ? `अभी "${catLabel}" का कोई कारीगर पंजीकृत नहीं है। दूसरा ट्रेड नहीं जोड़ा जाएगा — कृपया ${catLabel} काम पोस्ट करें!`
-            : `No "${catLabel}" specialist is registered yet. Post this job so it goes live strictly to ${catLabel} workers!`,
-          'warning'
-        );
+    alertedBookingIdsRef.current.add(newBooking.id);
+    setActiveBooking(newBooking);
+    setBroadcastBookings((prev) => [newBooking, ...prev.filter((b) => b.id !== newBooking.id)]);
+
+    const broadcastNotif: WorkerNotification = {
+      id: `notif_${nowMs}_bc`,
+      workerId: 'OPEN_BROADCAST',
+      type: 'new_booking',
+      title: `🚨 [${catLabel}] नई काम लीड — जो पहले स्वीकार करे काम उसका!`,
+      titleHi: `🚨 [${catLabel}] नई काम लीड — जो पहले स्वीकार करे काम उसका!`,
+      message: `${safeCustName} needs ${catLabel} in ${newBooking.customerLocality}. Accept first to claim!`,
+      messageHi: `ग्राहक ${safeCustName} को ${newBooking.customerLocality} में [${catLabel}] चाहिए। जो कारीगर पहले स्वीकार करेगा, काम उसका होगा!`,
+      time: 'Live Now',
+      isRead: false,
+      bookingId: newBooking.id,
+      customerName: safeCustName,
+      customerPhone: newBooking.customerPhone,
+      customerAddress: newBooking.customerAddress,
+      customerLocality: newBooking.customerLocality,
+      category: categoryId,
+      amount: parsedRate,
+    } as WorkerNotification;
+    setWorkerNotifications((prev) => [broadcastNotif, ...prev]);
+
+    if (activeView === 'dual') {
+      const targetDualWorker =
+        workers.find((w) => w.id !== DEFAULT_STANDBY_WORKER.id && !w.isIdPaused && !w.isBlockedDueToUnpaidFee && (w.category || '').trim().toLowerCase() === cleanCat) ||
+        workers.find((w) => w.id !== DEFAULT_STANDBY_WORKER.id && !w.isIdPaused && !w.isBlockedDueToUnpaidFee);
+      if (targetDualWorker) {
+        setActiveWorkerId(targetDualWorker.id);
+        setIncomingBookingAlert(newBooking);
       }
-      return false;
     }
 
-    const chosenWorker = [...availableTradeWorkers].sort((a, b) => b.rating - a.rating)[0];
-    return handleBookWorker(chosenWorker);
-  };
-
-  // 2b. Worker Accepts Incoming Booking (Unlocking Customer Location)
-  const handleAcceptIncomingBooking = (bookingId?: string) => {
-    setActiveBooking((prev) => {
-      if (!prev) return null;
-      const updated: Booking = {
-        ...prev,
-        status: 'accepted',
-        isLocationShared: true,
-        acceptedAt: 'Just now',
-        workerLocationProgress: 0,
-      };
-      syncBookingToFirestore(updated);
-      AwsCloudService.syncBookingToAws(updated);
-      return updated;
+    soundManager.playIncomingJobAlert();
+    PushNotificationService.triggerJobPushAlert({
+      customerName: safeCustName,
+      category: categoryId,
+      locality: newBooking.customerLocality,
+      amount: parsedRate,
+      bookingId: newBooking.id,
     });
 
-    // Update notifications in worker panel
+    IndexedDbSyncService.saveBookingLocally(newBooking);
+    syncBookingToFirestore(newBooking);
+    AwsCloudService.syncBookingToAws(newBooking);
+
+    showToast(
+      language === 'hi'
+        ? `📡 "${catLabel}" की लीड सभी कारीगरों को भेज दी गई — जो पहले स्वीकार करेगा, काम उसका होगा!`
+        : `📡 "${catLabel}" lead broadcast to ALL workers — first to accept wins the job!`,
+      'success'
+    );
+    return true;
+  };
+
+  // 2b. Worker Accepts Incoming Booking (Atomic First-to-Accept Claim + Unlock Customer Location)
+  const handleAcceptIncomingBooking = async (bookingId?: string) => {
+    if (activeWorker.id === DEFAULT_STANDBY_WORKER.id) {
+      soundManager.playWarning();
+      showToast(
+        language === 'hi'
+          ? 'काम स्वीकार करने से पहले अपनी कारीगर (Worker) ID बनाएं।'
+          : 'Please create your Worker ID first before accepting a lead.',
+        'warning'
+      );
+      setIsGlobalAddWorkerOpen(true);
+      return;
+    }
+
+    const targetBooking =
+      (bookingId ? broadcastBookings.find((b) => b.id === bookingId) : broadcastBookings[0]) ||
+      (incomingBookingAlert && (!bookingId || incomingBookingAlert.id === bookingId) ? incomingBookingAlert : null) ||
+      (activeBooking && (!bookingId || activeBooking.id === bookingId) ? activeBooking : null);
+
+    if (!targetBooking) return;
+
+    const claimResult = await claimBroadcastBookingInFirestore(targetBooking.id, activeWorker);
+
+    if (claimResult.outcome === 'ALREADY_CLAIMED') {
+      soundManager.playWarning();
+      setIncomingBookingAlert(null);
+      setBroadcastBookings((prev) => prev.filter((b) => b.id !== targetBooking.id));
+      showToast(
+        language === 'hi'
+          ? `⚠️ यह काम दूसरे कारीगर (${claimResult.claimedByName || 'Other Worker'}) ने पहले ही स्वीकार कर लिया है।`
+          : `⚠️ This job was already claimed by another worker (${claimResult.claimedByName || 'Worker'}).`,
+        'warning'
+      );
+      return;
+    }
+
+    if (claimResult.outcome === 'CANCELLED' || claimResult.outcome === 'NOT_FOUND') {
+      soundManager.playWarning();
+      setIncomingBookingAlert(null);
+      setBroadcastBookings((prev) => prev.filter((b) => b.id !== targetBooking.id));
+      showToast(
+        language === 'hi'
+          ? '⚠️ यह बुकिंग ग्राहक द्वारा रद्द कर दी गई है।'
+          : '⚠️ This booking is no longer available.',
+        'warning'
+      );
+      return;
+    }
+
+    const nowMs = Date.now();
+    const claimedBooking: Booking =
+      claimResult.outcome === 'CLAIMED'
+        ? claimResult.booking
+        : {
+            ...targetBooking,
+            workerId: activeWorker.id,
+            workerName: activeWorker.name,
+            workerPhone: activeWorker.phone,
+            workerAvatar: activeWorker.avatar,
+            workerRating: activeWorker.rating || 5,
+            status: 'accepted',
+            isLocationShared: true,
+            acceptedAt: 'Just now',
+            workerLocationProgress: 0,
+            updatedAtMs: nowMs,
+          };
+
+    if (claimResult.outcome !== 'CLAIMED') {
+      syncBookingToFirestore(claimedBooking);
+    }
+    AwsCloudService.syncBookingToAws(claimedBooking);
+    IndexedDbSyncService.saveBookingLocally(claimedBooking);
+
+    setActiveBooking(claimedBooking);
+    setBroadcastBookings((prev) => prev.filter((b) => b.id !== claimedBooking.id));
+    setIncomingBookingAlert(null);
+
     setWorkerNotifications((prev) =>
       prev.map((n) =>
-        (!bookingId || n.bookingId === bookingId)
+        n.bookingId === claimedBooking.id || (!bookingId && n.bookingId === targetBooking.id)
           ? {
               ...n,
               isRead: true,
-              title: `✓ काम स्वीकृत - लोकेशन अनलॉक (${n.customerName || 'Customer'})`,
-              titleHi: `✓ काम स्वीकृत - लोकेशन अनलॉक (${n.customerName || 'ग्राहक'})`,
+              title: `✓ काम आपका हो गया - लोकेशन अनलॉक (${claimedBooking.customerName || 'Customer'})`,
+              titleHi: `✓ काम आपका हो गया - लोकेशन अनलॉक (${claimedBooking.customerName || 'ग्राहक'})`,
               message: `काम स्वीकार हो गया है! ग्राहक का सटीक पता और लाइव नेविगेशन मैप अनलॉक हो गया है।`,
               messageHi: `काम स्वीकार हो गया है! ग्राहक का सटीक पता और लाइव नेविगेशन मैप अनलॉक हो गया है।`,
             }
@@ -1172,65 +1360,126 @@ export default function App() {
       )
     );
 
-    // Close alert modal if open
-    setIncomingBookingAlert(null);
-
-    // Audio fanfare & celebratory announcement
     soundManager.playSuccessCoin();
-    if (activeBooking) {
-      soundManager.speakJobAcceptedAndLocationUnlocked(activeBooking.customerName, language);
-    }
+    soundManager.speakJobAcceptedAndLocationUnlocked(claimedBooking.customerName, language);
+    showToast(
+      language === 'hi'
+        ? `✅ काम स्वीकार हो गया! यह काम अब आपका है — ग्राहक की लाइव लोकेशन अनलॉक हो गई।`
+        : `✅ Lead claimed! This job is yours — customer location unlocked.`,
+      'success'
+    );
   };
 
-  // 2c. Worker Declines Incoming Booking
+  // 2c. Worker Declines Incoming Booking (Never cancel Open Broadcast for other workers!)
   const handleDeclineIncomingBooking = (bookingId?: string) => {
-    if (activeBooking) {
-      syncBookingToFirestore({
-        ...activeBooking,
-        status: 'cancelled' as Booking['status'],
-      });
+    const target =
+      (bookingId ? broadcastBookings.find((b) => b.id === bookingId) : null) ||
+      (incomingBookingAlert && (!bookingId || incomingBookingAlert.id === bookingId) ? incomingBookingAlert : null) ||
+      (activeBooking && (!bookingId || activeBooking.id === bookingId) ? activeBooking : null);
+
+    if (target && (target.workerId === 'OPEN_BROADCAST' || target.status === 'searching')) {
+      setDismissedBroadcastIds((prev) => (prev.includes(target.id) ? prev : [...prev, target.id]));
+      setIncomingBookingAlert(null);
+      soundManager.playTap();
+      return;
     }
-    setActiveBooking(null);
+
+    if (target && target.workerId === activeWorker.id) {
+      syncBookingToFirestore({
+        ...target,
+        status: 'cancelled' as Booking['status'],
+        updatedAtMs: Date.now(),
+      });
+      setActiveBooking(null);
+    }
     setIncomingBookingAlert(null);
     soundManager.playWarning();
   };
 
-  // 3. Worker Accepts a Broadcast Job
-  const handleAcceptJob = (job: JobPost) => {
+  // 3. Worker Accepts a Broadcast Job Post (First-to-Accept Transaction)
+  const handleAcceptJob = async (job: JobPost) => {
+    if (activeWorker.id === DEFAULT_STANDBY_WORKER.id) {
+      soundManager.playWarning();
+      showToast(
+        language === 'hi'
+          ? 'काम स्वीकार करने से पहले अपनी कारीगर (Worker) ID बनाएं।'
+          : 'Please create your Worker ID first before accepting a job.',
+        'warning'
+      );
+      setIsGlobalAddWorkerOpen(true);
+      return;
+    }
+
+    const claimJobRes = await claimJobPostInFirestore(job.id, activeWorker);
+    if (claimJobRes.outcome === 'ALREADY_CLAIMED') {
+      soundManager.playWarning();
+      showToast(
+        language === 'hi'
+          ? `⚠️ यह काम दूसरे कारीगर (${claimJobRes.claimedByName || 'Other Worker'}) ने पहले ही स्वीकार कर लिया है।`
+          : `⚠️ This job was already claimed by ${claimJobRes.claimedByName || 'another worker'}.`,
+        'warning'
+      );
+      return;
+    }
+
+    const nowMs = Date.now();
     const newBooking: Booking = {
-      id: `BK_${Math.floor(1000 + Math.random() * 9000)}`,
+      id: `BK_${nowMs.toString().slice(-6)}_${Math.floor(10 + Math.random() * 89)}`,
       jobId: job.id,
       customerId: job.customerId || customer.id,
-      customerName: job.customerName,
-      customerPhone: job.customerPhone,
-      customerAddress: job.customerAddress,
+      customerName: (job.customerName || '').trim() || 'Smart India Customer',
+      customerPhone: job.customerPhone || '',
+      customerAddress: job.customerAddress || job.customerLocality,
       customerLocality: job.customerLocality,
       workerId: activeWorker.id,
       workerName: activeWorker.name,
       workerPhone: activeWorker.phone,
       workerAvatar: activeWorker.avatar,
-      workerRating: activeWorker.rating,
+      workerRating: activeWorker.rating || 5,
       serviceCategory: job.category,
       serviceSubCategory: job.subCategory,
       arrivalOtp: String(Math.floor(1000 + Math.random() * 9000)),
       isOtpVerified: false,
       microFeeDeducted: 10,
       estimatedAmount: job.budget,
-      status: 'worker_en_route',
-      isLocationShared: true, // Lead explicitly accepted by worker, location shared!
+      status: 'accepted',
+      isLocationShared: true,
       acceptedAt: 'Just now',
       createdAt: 'Just now',
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
       workerLocationProgress: 0,
+      ...(activeWorker.currentLocation
+        ? {
+            workerLiveLocation: {
+              lat: Number(activeWorker.currentLocation.lat.toFixed(6)),
+              lng: Number(activeWorker.currentLocation.lng.toFixed(6)),
+              updatedAtMs: nowMs,
+            },
+          }
+        : {}),
     };
 
     alertedBookingIdsRef.current.add(newBooking.id);
-    const updatedJob: JobPost = { ...job, status: 'assigned', assignedWorkerId: activeWorker.id };
-    setJobs((prev) =>
-      prev.map((j) => (j.id === job.id ? updatedJob : j))
-    );
+    const updatedJob: JobPost = {
+      ...job,
+      status: 'assigned',
+      assignedWorkerId: activeWorker.id,
+      assignedWorkerName: activeWorker.name,
+      updatedAtMs: nowMs,
+    };
+    setJobs((prev) => prev.map((j) => (j.id === job.id ? updatedJob : j)));
     syncJobToFirestore(updatedJob);
     setActiveBooking(newBooking);
     syncBookingToFirestore(newBooking);
+    AwsCloudService.syncBookingToAws(newBooking);
+    soundManager.playSuccessCoin();
+    showToast(
+      language === 'hi'
+        ? '✅ काम स्वीकार हो गया! ग्राहक की लाइव लोकेशन अनलॉक हो गई है।'
+        : '✅ Job accepted! Customer location unlocked.',
+      'success'
+    );
   };
 
   // 4. Worker Toggles Duty Online/Offline
@@ -2332,7 +2581,7 @@ export default function App() {
     setWorkers(INITIAL_WORKERS);
     setActiveWorkerId(DEFAULT_STANDBY_WORKER.id);
     setCustomers(INITIAL_CUSTOMERS);
-    setActiveCustomerId(DEFAULT_GUEST_CUSTOMER.id);
+    setActiveCustomerId(DEVICE_GUEST_CUSTOMER.id);
     setJobs(INITIAL_JOBS);
     setWalletTransactions(INITIAL_WALLET_TRANSACTIONS);
     setSupportTickets(INITIAL_TICKETS);
@@ -2355,9 +2604,9 @@ export default function App() {
 
   // Update Customer Profile
   const handleUpdateCustomerProfile = (updated: Partial<CustomerProfile>) => {
-    if (customer.id === DEFAULT_GUEST_CUSTOMER.id) {
+    if (customer.id.startsWith('c_new_guest')) {
       handleAddCustomer({
-        ...DEFAULT_GUEST_CUSTOMER,
+        ...DEVICE_GUEST_CUSTOMER,
         ...updated,
         name: updated.name || 'New Customer ID',
       });
@@ -2711,6 +2960,7 @@ export default function App() {
                   onSelectWorker={handleSelectWorker}
                   onAddWorker={handleAddWorker}
                   jobs={jobs}
+                  broadcastBookings={broadcastBookings.filter((b) => !dismissedBroadcastIds.includes(b.id))}
                   activeBooking={activeBooking}
                   walletTransactions={walletTransactions}
                   language={language}
@@ -2743,16 +2993,20 @@ export default function App() {
                   onDeleteRecord={handleDeleteWorkerJobRecord}
                   onUpdateBookingProgress={handleUpdateBookingProgress}
                   notifications={workerNotifications.filter(
-                    (n) => (n.workerId === activeWorker.id || (!n.workerId && n.category?.trim().toLowerCase() === activeWorker.category.trim().toLowerCase())) &&
-                           (!n.category || n.category.trim().toLowerCase() === activeWorker.category.trim().toLowerCase() || n.category === 'all')
+                    (n) => n.workerId === 'OPEN_BROADCAST' || n.workerId === activeWorker.id || !n.workerId
                   )}
                   onMarkNotificationAsRead={handleMarkNotificationAsRead}
                   onMarkAllNotificationsAsRead={handleMarkAllNotificationsAsRead}
                   onClearAllNotifications={handleClearAllNotifications}
                   incomingBookingAlert={
                     incomingBookingAlert &&
-                    incomingBookingAlert.workerId === activeWorker.id &&
-                    incomingBookingAlert.serviceCategory.trim().toLowerCase() === activeWorker.category.trim().toLowerCase()
+                    !activeWorker.isIdPaused &&
+                    !activeWorker.isBlockedDueToUnpaidFee &&
+                    activeWorker.id !== DEFAULT_STANDBY_WORKER.id &&
+                    !dismissedBroadcastIds.includes(incomingBookingAlert.id) &&
+                    (incomingBookingAlert.workerId === activeWorker.id ||
+                      incomingBookingAlert.workerId === 'OPEN_BROADCAST' ||
+                      incomingBookingAlert.status === 'searching')
                       ? incomingBookingAlert
                       : null
                   }
@@ -2845,7 +3099,7 @@ export default function App() {
                   SecurityShieldService.setMasterPin(newPin);
                 } catch {}
               }}
-              onOpenOnboarding={(isOwnerSession || customer.id === DEFAULT_GUEST_CUSTOMER.id) ? () => {
+              onOpenOnboarding={(isOwnerSession || customer.id.startsWith('c_new_guest')) ? () => {
                 soundManager.playTap();
                 setShowOnboarding(true);
               } : undefined}
@@ -2862,6 +3116,7 @@ export default function App() {
               onSelectWorker={handleSelectWorker}
               onAddWorker={handleAddWorker}
               jobs={jobs}
+              broadcastBookings={broadcastBookings.filter((b) => !dismissedBroadcastIds.includes(b.id))}
               activeBooking={activeBooking}
               walletTransactions={walletTransactions}
               language={language}
@@ -2894,16 +3149,20 @@ export default function App() {
               onDeleteRecord={handleDeleteWorkerJobRecord}
               onUpdateBookingProgress={handleUpdateBookingProgress}
               notifications={workerNotifications.filter(
-                (n) => (n.workerId === activeWorker.id || (!n.workerId && n.category?.trim().toLowerCase() === activeWorker.category.trim().toLowerCase())) &&
-                       (!n.category || n.category.trim().toLowerCase() === activeWorker.category.trim().toLowerCase() || n.category === 'all')
+                (n) => n.workerId === 'OPEN_BROADCAST' || n.workerId === activeWorker.id || !n.workerId
               )}
               onMarkNotificationAsRead={handleMarkNotificationAsRead}
               onMarkAllNotificationsAsRead={handleMarkAllNotificationsAsRead}
               onClearAllNotifications={handleClearAllNotifications}
               incomingBookingAlert={
                 incomingBookingAlert &&
-                incomingBookingAlert.workerId === activeWorker.id &&
-                incomingBookingAlert.serviceCategory.trim().toLowerCase() === activeWorker.category.trim().toLowerCase()
+                !activeWorker.isIdPaused &&
+                !activeWorker.isBlockedDueToUnpaidFee &&
+                activeWorker.id !== DEFAULT_STANDBY_WORKER.id &&
+                !dismissedBroadcastIds.includes(incomingBookingAlert.id) &&
+                (incomingBookingAlert.workerId === activeWorker.id ||
+                  incomingBookingAlert.workerId === 'OPEN_BROADCAST' ||
+                  incomingBookingAlert.status === 'searching')
                   ? incomingBookingAlert
                   : null
               }

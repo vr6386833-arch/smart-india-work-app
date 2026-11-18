@@ -72,6 +72,7 @@ interface WorkerAppProps {
   onSelectWorker?: (workerId: string) => void;
   onAddWorker?: (newWorker: Omit<WorkerProfile, 'id'>) => void;
   jobs: JobPost[];
+  broadcastBookings?: Booking[];
   activeBooking: Booking | null;
   walletTransactions: WalletTransaction[];
   language: Language;
@@ -129,6 +130,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
   onSelectWorker,
   onAddWorker,
   jobs,
+  broadcastBookings = [],
   activeBooking,
   walletTransactions,
   language,
@@ -192,25 +194,27 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
   const [isNotificationsModalOpen, setIsNotificationsModalOpen] = useState(false);
   const [localIncomingAlert, setLocalIncomingAlert] = useState<Booking | null>(null);
 
+  const [leadScopeFilter, setLeadScopeFilter] = useState<'all' | 'trade'>('all');
+
   const unreadNotifCount = notifications.filter((n) => !n.isRead).length;
   const isStandbyWorker = worker.id === 'wrk_standby_live';
   const workerCat = (worker.category || '').trim().toLowerCase();
   const myActiveBooking = !isStandbyWorker && activeBooking && activeBooking.workerId === worker.id ? activeBooking : null;
 
-  // React to incomingBookingAlert prop from parent: ONLY alert if explicitly booked for THIS worker & trade
+  // React to incomingBookingAlert prop from parent: support Direct Bookings AND All-Worker Open Broadcast Leads
   useEffect(() => {
-    // 🔕 If worker voluntarily paused their ID or is standby placeholder, DO NOT trigger any alert!
-    if (worker.isIdPaused || isStandbyWorker) return;
+    if (worker.isIdPaused || isStandbyWorker || isAccountBlocked) return;
 
     if (incomingBookingAlert) {
-      const isDirectWorkerAndTradeMatch =
-        incomingBookingAlert.workerId === worker.id &&
-        incomingBookingAlert.serviceCategory.trim().toLowerCase() === workerCat;
-      if (isDirectWorkerAndTradeMatch) {
+      const isDirectMatch = incomingBookingAlert.workerId === worker.id;
+      const isOpenBroadcast =
+        incomingBookingAlert.workerId === 'OPEN_BROADCAST' ||
+        incomingBookingAlert.status === 'searching';
+      if (isDirectMatch || isOpenBroadcast) {
         setLocalIncomingAlert(incomingBookingAlert);
       }
     }
-  }, [incomingBookingAlert, worker.id, workerCat, worker.isIdPaused, isStandbyWorker]);
+  }, [incomingBookingAlert, worker.id, worker.isIdPaused, isStandbyWorker, isAccountBlocked]);
 
   // Real-time observer: when myActiveBooking updates to a newly booked job for this worker, trigger alert & voice!
   const prevBookingIdRef = useRef<string | null>(myActiveBooking?.id || null);
@@ -306,10 +310,42 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
     'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?auto=format&fit=crop&w=800&q=80'
   ]);
 
-  // Available open jobs STRICTLY matching this worker's registered trade category
-  const openJobs = (!isStandbyWorker && !worker.isIdPaused)
-    ? jobs.filter((j) => j.status === 'open' && (j.category || '').trim().toLowerCase() === workerCat)
+  // Open Broadcast Bookings (sent to ALL workers; first to accept claims it)
+  const visibleBroadcastBookings = !worker.isIdPaused
+    ? [...broadcastBookings]
+        .filter((b) => {
+          if (leadScopeFilter === 'trade' && workerCat) {
+            return (b.serviceCategory || '').trim().toLowerCase() === workerCat;
+          }
+          return true;
+        })
+        .sort((a, b) => {
+          const aMatch = (a.serviceCategory || '').trim().toLowerCase() === workerCat ? 1 : 0;
+          const bMatch = (b.serviceCategory || '').trim().toLowerCase() === workerCat ? 1 : 0;
+          if (aMatch !== bMatch) return bMatch - aMatch;
+          return (b.updatedAtMs || b.createdAtMs || 0) - (a.updatedAtMs || a.createdAtMs || 0);
+        })
     : [];
+
+  // Open Job Posts (visible to ALL workers; matching trade sorted first)
+  const openJobs = !worker.isIdPaused
+    ? [...jobs]
+        .filter((j) => {
+          if (j.status !== 'open') return false;
+          if (leadScopeFilter === 'trade' && workerCat) {
+            return (j.category || '').trim().toLowerCase() === workerCat;
+          }
+          return true;
+        })
+        .sort((a, b) => {
+          const aMatch = (a.category || '').trim().toLowerCase() === workerCat ? 1 : 0;
+          const bMatch = (b.category || '').trim().toLowerCase() === workerCat ? 1 : 0;
+          if (aMatch !== bMatch) return bMatch - aMatch;
+          return (b.updatedAtMs || b.createdAtMs || 0) - (a.updatedAtMs || a.createdAtMs || 0);
+        })
+    : [];
+
+  const totalLiveLeadsCount = visibleBroadcastBookings.length + openJobs.length;
 
   const isOtpVerified = myActiveBooking?.isOtpVerified || myActiveBooking?.status === 'in_progress' || myActiveBooking?.status === 'completed';
 
@@ -664,27 +700,57 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
               </div>
             )}
 
-            {/* Worker Registered Trade Specialization Badge */}
-            <div className="px-3.5 py-2.5 rounded-2xl bg-gradient-to-r from-blue-950/60 via-slate-900 to-indigo-950/60 border border-blue-500/30 flex items-center justify-between shadow-sm">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-xl bg-blue-500/20 text-blue-400">
-                  <Briefcase className="w-4 h-4" />
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-400 block font-semibold">
-                    {language === 'hi' ? 'आपकी पंजीकृत ट्रेड (Skill Filter):' : 'Your Registered Trade:'}
-                  </span>
-                  <span className="text-xs font-bold text-white capitalize flex items-center gap-1.5">
-                    <span>🎯 {worker.category.replace(/_/g, ' ')}</span>
-                    <span className="text-[10px] text-slate-400 font-normal">
-                      ({worker.subSkills.slice(0, 2).join(', ')})
+            {/* Worker Registered Trade & All-Workers Broadcast Mode Badge */}
+            <div className="px-3.5 py-2.5 rounded-2xl bg-gradient-to-r from-blue-950/60 via-slate-900 to-indigo-950/60 border border-blue-500/30 space-y-2 shadow-sm">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="p-2 rounded-xl bg-blue-500/20 text-blue-400 shrink-0">
+                    <Briefcase className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[10px] text-slate-400 block font-semibold">
+                      {language === 'hi' ? 'आपकी पंजीकृत ट्रेड:' : 'Your Registered Trade:'}
                     </span>
-                  </span>
+                    <span className="text-xs font-bold text-white capitalize flex items-center gap-1.5 truncate">
+                      <span>🎯 {worker.category.replace(/_/g, ' ')}</span>
+                    </span>
+                  </div>
                 </div>
+                <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
+                  {language === 'hi' ? '⚡ सभी लीड लाइव' : '⚡ All Leads Live'}
+                </span>
               </div>
-              <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
-                {language === 'hi' ? 'केवल यही काम मिलेगा' : 'Filtered Leads'}
-              </span>
+
+              <div className="flex items-center gap-1.5 pt-1 border-t border-slate-800/70">
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundManager.playTap();
+                    setLeadScopeFilter('all');
+                  }}
+                  className={`flex-1 py-1.5 px-2 rounded-xl text-[10px] font-bold transition-all ${
+                    leadScopeFilter === 'all'
+                      ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                      : 'bg-slate-950/80 text-slate-300 border border-slate-800'
+                  }`}
+                >
+                  {language === 'hi' ? '📢 सभी काम लीड (All)' : '📢 All Worker Leads'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundManager.playTap();
+                    setLeadScopeFilter('trade');
+                  }}
+                  className={`flex-1 py-1.5 px-2 rounded-xl text-[10px] font-bold capitalize transition-all ${
+                    leadScopeFilter === 'trade'
+                      ? 'bg-blue-500 text-slate-950 shadow-sm'
+                      : 'bg-slate-950/80 text-slate-300 border border-slate-800'
+                  }`}
+                >
+                  {language === 'hi' ? `🎯 केवल ${worker.category.replace(/_/g, ' ')}` : `🎯 ${worker.category.replace(/_/g, ' ')} Only`}
+                </button>
+              </div>
             </div>
 
             {/* LIVE CUSTOMER BOOKED WORK NOTIFICATION BANNER (Prominent Alert for Worker) */}
@@ -843,7 +909,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                   </div>
                   <h4 className="text-xs font-bold text-white">Live GPS Lead Radar Active</h4>
                   <p className="text-[11px] text-slate-400 mt-0.5">
-                    Scanning {worker.locality} ({openJobs.length} live broadcast requirements)
+                    Scanning {worker.locality} ({totalLiveLeadsCount} live leads available)
                   </p>
                 </div>
               ) : (
@@ -1002,11 +1068,114 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
               )
             )}
 
+            {/* LIVE INSTANT-BOOKING BROADCAST LEADS (ALL WORKERS RECEIVE; FIRST TO ACCEPT WINS!) */}
+            {visibleBroadcastBookings.length > 0 && (
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-black text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                    <span>
+                      {language === 'hi'
+                        ? `🚨 लाइव ग्राहक बुकिंग लीड (${visibleBroadcastBookings.length})`
+                        : `🚨 Live Booking Leads (${visibleBroadcastBookings.length})`}
+                    </span>
+                  </h4>
+                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    {language === 'hi' ? 'पहले स्वीकार करें!' : 'First Accept Wins!'}
+                  </span>
+                </div>
+
+                {visibleBroadcastBookings.map((lead) => {
+                  const isTradeMatch = (lead.serviceCategory || '').trim().toLowerCase() === workerCat;
+                  return (
+                    <div
+                      key={lead.id}
+                      className="p-3.5 rounded-2xl bg-gradient-to-br from-amber-950/60 via-slate-900 to-emerald-950/40 border-2 border-amber-500/70 shadow-xl space-y-2.5"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-amber-500 text-slate-950 uppercase">
+                              ⚡ {lead.serviceCategory.replace(/_/g, ' ')}
+                            </span>
+                            {isTradeMatch && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                                {language === 'hi' ? '🎯 आपकी ट्रेड मैच' : '🎯 Trade Match'}
+                              </span>
+                            )}
+                            <span className="text-[10px] text-slate-400 font-mono">#{lead.id}</span>
+                          </div>
+                          <h5 className="text-sm font-bold text-white mt-1 truncate">
+                            {lead.customerName} — {lead.serviceSubCategory}
+                          </h5>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <span className="text-base font-black text-emerald-400 font-mono block">
+                            ₹{lead.estimatedAmount}
+                          </span>
+                          <span className="text-[9px] text-slate-400">
+                            {language === 'hi' ? 'अनुमानित' : 'Est. Pay'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="p-2 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center justify-between text-[10px] text-slate-300">
+                        <span className="flex items-center gap-1 truncate">
+                          <MapPin className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+                          <span className="truncate">{lead.customerLocality}</span>
+                        </span>
+                        <span className="text-amber-300 font-semibold shrink-0">
+                          🔒 {language === 'hi' ? 'स्वीकारने पर पूरा पता खुलेगा' : 'Full address unlocks on accept'}
+                        </span>
+                      </div>
+
+                      {isAccountBlocked ? (
+                        <button
+                          type="button"
+                          onClick={handleOneTouchPayLeadFee}
+                          className="w-full py-2.5 rounded-xl bg-rose-950/80 border border-rose-500/60 hover:bg-rose-900 text-rose-200 font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2"
+                        >
+                          <Zap className="w-4 h-4 text-rose-400" />
+                          <span>
+                            {language === 'hi'
+                              ? `काम लॉक: ⚡ ₹${unpaidFeeAmount} भरकर अनलॉक करें`
+                              : `Locked: Pay ₹${unpaidFeeAmount} to Accept Leads`}
+                          </span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isStandbyWorker) {
+                              soundManager.playWarning();
+                              setIsAddWorkerOpen(true);
+                              return;
+                            }
+                            soundManager.playSuccessCoin();
+                            onAcceptBooking?.(lead.id);
+                            setActiveTab('active');
+                          }}
+                          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-500 hover:from-emerald-400 text-slate-950 font-black text-xs shadow-lg transition-all flex items-center justify-center gap-2 active:scale-95"
+                        >
+                          <Unlock className="w-4 h-4" />
+                          <span>
+                            {language === 'hi'
+                              ? '✓ काम स्वीकार करें (पहले आओ - काम पाओ)'
+                              : '✓ Accept Lead Now (Claim Job)'}
+                          </span>
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             {/* Nearby Available Leads */}
             <div>
               <div className="flex items-center justify-between mb-2.5">
                 <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-                  Available Job Leads ({openJobs.length})
+                  Available Job Leads ({totalLiveLeadsCount})
                 </h4>
                 <span className="text-[10px] text-emerald-400 font-semibold">● Real-time feed</span>
               </div>
@@ -1123,7 +1292,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                     </div>
                   ))}
                 </div>
-              ) : (
+              ) : visibleBroadcastBookings.length === 0 ? (
                 <div className="p-6 rounded-3xl bg-slate-900/90 border border-slate-800 text-center space-y-3.5 shadow-xl">
                   <div className="relative w-14 h-14 mx-auto flex items-center justify-center">
                     <span className="w-14 h-14 rounded-full bg-emerald-500/10 border border-emerald-500/20 absolute animate-ping" />
@@ -1137,17 +1306,21 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                       <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
                     </h5>
                     <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto leading-relaxed">
-                      {language === 'hi' 
-                        ? `आपकी ID सिर्फ आपके काम (${worker.category.replace(/_/g, ' ')}) के लिए सक्रिय है। जैसे ही कोई ग्राहक यही काम पोस्ट करेगा, आपको तुरंत सूचना व सायरन मिलेगा!`
-                        : `Scanning exclusively for ${worker.category.replace(/_/g, ' ')} job leads in your local area in real time.`}
+                      {language === 'hi'
+                        ? 'सभी नई ग्राहक बुकिंग व काम की लीड यहाँ रीयल-टाइम में सभी कारीगरों को दिखेंगी — जो कारीगर पहले स्वीकार करेगा, काम उसका होगा!'
+                        : 'All live customer bookings & job leads broadcast here in real time — first worker to accept wins the job!'}
                     </p>
                   </div>
                   <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 text-[11px] font-semibold">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span>{language === 'hi' ? `ट्रेड लॉक: ${worker.category.replace(/_/g, ' ')}` : `Trade Lock: ${worker.category.replace(/_/g, ' ')}`}</span>
+                    <span>
+                      {leadScopeFilter === 'all'
+                        ? (language === 'hi' ? 'सभी लीड मोड चालू (All Leads)' : 'All-Leads Broadcast Active')
+                        : (language === 'hi' ? `ट्रेड फ़िल्टर: ${worker.category.replace(/_/g, ' ')}` : `Trade Filter: ${worker.category.replace(/_/g, ' ')}`)}
+                    </span>
                   </div>
                 </div>
-              )}
+              ) : null}
             </div>
           </div>
         )}

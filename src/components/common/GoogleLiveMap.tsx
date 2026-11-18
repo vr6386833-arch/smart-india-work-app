@@ -393,8 +393,8 @@ export const GoogleLiveMap: React.FC<GoogleLiveMapProps> = ({
                   ? 'Google Maps दैनिक कोटा सीमा पूरी हो गई है'
                   : 'Google Maps daily quota limit reached'
                 : language === 'hi'
-                ? 'Google Maps Key लोड हो रही है — नीचे से नेविगेशन खोलें'
-                : 'Google Maps key pending — use external Maps navigation'}
+                ? 'APK में इन-ऐप Google Map के लिए API Key सेट नहीं है — नीचे से सीधे Google Maps खोलें'
+                : 'Embedded Map API Key not set in APK build — open live route in Google Maps'}
             </p>
             <a
               href={externalGoogleMapsUrl}

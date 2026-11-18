@@ -113,12 +113,16 @@ export interface JobPost {
   urgency: JobUrgency;
   photos: string[];
   createdAt: string;
+  createdAtMs?: number;
+  updatedAtMs?: number;
   status: 'open' | 'assigned' | 'in_progress' | 'completed' | 'cancelled';
   assignedWorkerId?: string;
+  assignedWorkerName?: string;
 }
 
 export type BookingStatus = 
   | 'requested'
+  | 'searching'
   | 'accepted'
   | 'worker_en_route'
   | 'arrived_at_door'
@@ -171,6 +175,8 @@ export interface Booking {
   isLocationShared?: boolean; // Unlocked only after worker clicks "Accept Job"
   acceptedAt?: string;
   createdAt: string;
+  createdAtMs?: number;
+  updatedAtMs?: number;
   scheduledTime?: string;
   workerLocationProgress: number; // 0% to 100% towards customer
   customerLiveLocation?: LiveGeoLocation;

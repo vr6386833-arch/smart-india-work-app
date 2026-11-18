@@ -195,32 +195,37 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
   const [ticketCat, setTicketCat] = useState<'wallet_payment' | 'worker_conduct' | 'job_quality' | 'technical_app'>('job_quality');
   const [lightboxData, setLightboxData] = useState<{ url: string; title: string; subtitle?: string; tag?: string } | null>(null);
 
-  // Strictly match ONLY the single worker booked by this customer (never expose unbooked workers)
-  const bookedWorkerObj: WorkerProfile | null = safeActiveBooking
-    ? workers.find((w) => w.id === safeActiveBooking.workerId) || {
-        id: safeActiveBooking.workerId,
-        name: safeActiveBooking.workerName,
-        phone: safeActiveBooking.workerPhone,
-        avatar: safeActiveBooking.workerAvatar,
-        category: safeActiveBooking.serviceCategory,
-        subSkills: [safeActiveBooking.serviceSubCategory],
-        experienceYears: 5,
-        rating: safeActiveBooking.workerRating || 5,
-        reviewsCount: 1,
-        dailyRate: safeActiveBooking.estimatedAmount,
-        hourlyRate: Math.round(safeActiveBooking.estimatedAmount / 6),
-        isAadhaarVerified: true,
-        isPanVerified: false,
-        city: customer.city || 'India',
-        locality: customer.locality || 'Local Area',
-        isOnline: true,
-        distanceKm: 1.5,
-        walletBalance: 0,
-        completedJobsCount: 1,
-        portfolio: [],
-        currentLocation: { lat: 28.5355, lng: 77.391 },
-      }
-    : null;
+  const isBroadcastSearching =
+    Boolean(safeActiveBooking) &&
+    (safeActiveBooking!.status === 'searching' || safeActiveBooking!.workerId === 'OPEN_BROADCAST');
+
+  // Strictly match ONLY the single worker booked by this customer (never expose placeholder when OPEN_BROADCAST)
+  const bookedWorkerObj: WorkerProfile | null =
+    safeActiveBooking && !isBroadcastSearching
+      ? workers.find((w) => w.id === safeActiveBooking.workerId) || {
+          id: safeActiveBooking.workerId,
+          name: safeActiveBooking.workerName,
+          phone: safeActiveBooking.workerPhone,
+          avatar: safeActiveBooking.workerAvatar,
+          category: safeActiveBooking.serviceCategory,
+          subSkills: [safeActiveBooking.serviceSubCategory],
+          experienceYears: 5,
+          rating: safeActiveBooking.workerRating || 5,
+          reviewsCount: 1,
+          dailyRate: safeActiveBooking.estimatedAmount,
+          hourlyRate: Math.round(safeActiveBooking.estimatedAmount / 6),
+          isAadhaarVerified: true,
+          isPanVerified: false,
+          city: customer.city || 'India',
+          locality: customer.locality || 'Local Area',
+          isOnline: true,
+          distanceKm: 1.5,
+          walletBalance: 0,
+          completedJobsCount: 1,
+          portfolio: [],
+          currentLocation: { lat: 28.5355, lng: 77.391 },
+        }
+      : null;
 
   const matchesCategorySearch = (cat: (typeof CATEGORIES)[number], rawQuery: string) => {
     const q = rawQuery.trim().toLowerCase();
@@ -276,7 +281,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
     setIsAddAddressOpen(false);
   };
 
-  const isGuestCustomer = customer.id === 'c_new_guest';
+  const isGuestCustomer = customer.id.startsWith('c_new_guest');
 
   return (
     <div className="flex-1 flex flex-col h-full min-h-0 bg-slate-950 text-slate-100 overflow-hidden select-none">
@@ -440,7 +445,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
 
             {/* Scrollable Service Cards Feed */}
             <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3.5 space-y-4">
-            {/* Active Booking Live Mini-Banner (if in progress or pending acceptance) */}
+            {/* Active Booking Live Mini-Banner (Open Broadcast Searching vs Assigned Worker) */}
             {safeActiveBooking && (
               <div 
                 className={`p-3 rounded-2xl border shadow-lg transition-all flex items-center justify-between ${
@@ -457,20 +462,30 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                   className="flex items-center gap-3 cursor-pointer flex-1 min-w-0"
                 >
                   <div className="relative shrink-0">
-                    <img 
-                      src={safeActiveBooking.workerAvatar} 
-                      alt="Worker" 
-                      className={`w-10 h-10 rounded-xl object-cover ring-2 ${
-                        safeActiveBooking.isLocationShared ? 'ring-emerald-400' : 'ring-amber-400'
-                      }`}
-                    />
+                    {isBroadcastSearching || !safeActiveBooking.workerAvatar ? (
+                      <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-400/50 text-amber-300 flex items-center justify-center">
+                        <Navigation className="w-5 h-5 animate-pulse" />
+                      </div>
+                    ) : (
+                      <img 
+                        src={safeActiveBooking.workerAvatar} 
+                        alt="Worker" 
+                        className={`w-10 h-10 rounded-xl object-cover ring-2 ${
+                          safeActiveBooking.isLocationShared ? 'ring-emerald-400' : 'ring-amber-400'
+                        }`}
+                      />
+                    )}
                     <span className={`w-2.5 h-2.5 rounded-full absolute -bottom-0.5 -right-0.5 ring-1 ring-slate-950 ${
                       safeActiveBooking.isLocationShared ? 'bg-emerald-400' : 'bg-amber-400 animate-ping'
                     }`} />
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-bold text-white truncate">{safeActiveBooking.workerName}</span>
+                      <span className="text-xs font-bold text-white truncate">
+                        {isBroadcastSearching
+                          ? (language === 'hi' ? '📡 सभी कारीगरों को लीड भेजी गई' : '📡 Sent to All Workers')
+                          : safeActiveBooking.workerName}
+                      </span>
                       <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 flex items-center gap-1 ${
                         safeActiveBooking.isLocationShared 
                           ? 'bg-emerald-500/20 text-emerald-300' 
@@ -489,6 +504,10 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                     <p className="text-[11px] text-slate-300 truncate">
                       {safeActiveBooking.isLocationShared ? (
                         <>OTP: <strong className="text-amber-300 font-mono tracking-wider">{safeActiveBooking.arrivalOtp}</strong> • {language === 'hi' ? 'विवरण देखें' : 'View Details'}</>
+                      ) : isBroadcastSearching ? (
+                        language === 'hi'
+                          ? 'जो कारीगर पहले स्वीकार करेगा काम उसका • देखने के लिए टैप करें'
+                          : 'First worker to accept claims job • Tap to view'
                       ) : (
                         language === 'hi'
                           ? 'कारीगर के स्वीकार करने पर विवरण अनलॉक होगा'
@@ -499,32 +518,36 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                 </div>
 
                 <div className="flex items-center gap-1.5 pl-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      soundManager.playTap();
-                      setIsCallOpen(true);
-                      setIsChatOpen(false);
-                    }}
-                    className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 border border-emerald-500/40 transition-colors"
-                    title="Call Worker (कारीगर को कॉल करें)"
-                  >
-                    <Phone className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      soundManager.playTap();
-                      setIsChatOpen(true);
-                      setIsCallOpen(false);
-                    }}
-                    className="p-2 rounded-xl bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 border border-blue-500/40 transition-colors"
-                    title="Chat with Worker (चैट करें)"
-                  >
-                    <MessageSquare className="w-3.5 h-3.5" />
-                  </button>
+                  {!isBroadcastSearching && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          soundManager.playTap();
+                          setIsCallOpen(true);
+                          setIsChatOpen(false);
+                        }}
+                        className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 border border-emerald-500/40 transition-colors"
+                        title="Call Worker (कारीगर को कॉल करें)"
+                      >
+                        <Phone className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          soundManager.playTap();
+                          setIsChatOpen(true);
+                          setIsCallOpen(false);
+                        }}
+                        className="p-2 rounded-xl bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 border border-blue-500/40 transition-colors"
+                        title="Chat with Worker (चैट करें)"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5" />
+                      </button>
+                    </>
+                  )}
                   {onCancelBooking && (
                     <button
                       type="button"

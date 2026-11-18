@@ -12,6 +12,7 @@ import {
   onSnapshot, 
   serverTimestamp,
   getDocFromServer,
+  runTransaction,
   query,
   limit
 } from 'firebase/firestore';
@@ -190,18 +191,159 @@ function stripUndefined<T extends object>(data: T): Record<string, unknown> {
   );
 }
 
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+function logFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    operationType,
+    path,
+    authInfo: {
+      userId: auth?.currentUser?.uid ?? null,
+      email: auth?.currentUser?.email ?? null,
+      emailVerified: auth?.currentUser?.emailVerified ?? null,
+      isAnonymous: auth?.currentUser?.isAnonymous ?? null,
+    },
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+}
+
 // Sync booking to cloud Firestore
 export async function syncBookingToFirestore(booking: Booking): Promise<void> {
   if (!db) return;
+  const nowMs = Date.now();
   try {
     const bookingRef = doc(db, 'bookings', booking.id);
     await setDoc(bookingRef, {
       ...stripUndefined(booking),
-      updatedAtMs: Date.now(),
+      createdAtMs: booking.createdAtMs || nowMs,
+      updatedAtMs: nowMs,
       updatedAt: serverTimestamp(),
     }, { merge: true });
   } catch (err) {
-    console.error('Error syncing booking to cloud:', err);
+    logFirestoreError(err, OperationType.WRITE, `bookings/${booking.id}`);
+  }
+}
+
+export type ClaimBookingResult =
+  | { outcome: 'CLAIMED'; booking: Booking }
+  | { outcome: 'ALREADY_CLAIMED'; claimedByName?: string }
+  | { outcome: 'CANCELLED' | 'NOT_FOUND' | 'ERROR'; error?: string };
+
+// First-to-accept atomic Firestore transaction so any open-broadcast lead goes strictly to the first worker who accepts
+export async function claimBroadcastBookingInFirestore(
+  bookingId: string,
+  worker: WorkerProfile
+): Promise<ClaimBookingResult> {
+  if (!db || !bookingId) {
+    return { outcome: 'ERROR', error: 'Firestore unavailable' };
+  }
+  try {
+    const bookingRef = doc(db, 'bookings', bookingId);
+    const result = await runTransaction(db, async (tx) => {
+      const snap = await tx.get(bookingRef);
+      if (!snap.exists()) {
+        return { outcome: 'NOT_FOUND' } as ClaimBookingResult;
+      }
+      const data = snap.data() as Booking;
+      if (data.status === 'cancelled' || data.status === 'completed') {
+        return { outcome: 'CANCELLED' } as ClaimBookingResult;
+      }
+      const isOpenBroadcast =
+        data.status === 'searching' || data.workerId === 'OPEN_BROADCAST';
+      const isDirectForThisWorker =
+        data.status === 'requested' && data.workerId === worker.id;
+
+      if (!isOpenBroadcast && !isDirectForThisWorker) {
+        return {
+          outcome: 'ALREADY_CLAIMED',
+          claimedByName: data.workerName || undefined,
+        } as ClaimBookingResult;
+      }
+
+      const nowMs = Date.now();
+      const claimedBooking: Booking = {
+        ...data,
+        workerId: worker.id,
+        workerName: worker.name,
+        workerPhone: worker.phone,
+        workerAvatar: worker.avatar,
+        workerRating: worker.rating || 5,
+        status: 'accepted',
+        isLocationShared: true,
+        acceptedAt: 'Just now',
+        workerLocationProgress: 0,
+        updatedAtMs: nowMs,
+        ...(worker.currentLocation
+          ? {
+              workerLiveLocation: {
+                lat: Number(worker.currentLocation.lat.toFixed(6)),
+                lng: Number(worker.currentLocation.lng.toFixed(6)),
+                updatedAtMs: nowMs,
+              },
+            }
+          : {}),
+      };
+
+      tx.set(
+        bookingRef,
+        {
+          ...stripUndefined(claimedBooking),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      return { outcome: 'CLAIMED', booking: claimedBooking } as ClaimBookingResult;
+    });
+    return result;
+  } catch (err) {
+    logFirestoreError(err, OperationType.WRITE, `bookings/${bookingId}`);
+    return { outcome: 'ERROR', error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export type ClaimJobResult =
+  | { outcome: 'CLAIMED'; job: JobPost }
+  | { outcome: 'ALREADY_CLAIMED'; claimedByName?: string }
+  | { outcome: 'NOT_FOUND' | 'ERROR' };
+
+// Atomic transaction for Claiming an Open Broadcast JobPost
+export async function claimJobPostInFirestore(
+  jobId: string,
+  worker: WorkerProfile
+): Promise<ClaimJobResult> {
+  if (!db || !jobId) return { outcome: 'ERROR' };
+  try {
+    const jobRef = doc(db, 'jobs', jobId);
+    return await runTransaction(db, async (tx) => {
+      const snap = await tx.get(jobRef);
+      if (!snap.exists()) return { outcome: 'NOT_FOUND' } as ClaimJobResult;
+      const data = snap.data() as JobPost;
+      if (data.status !== 'open' && data.assignedWorkerId && data.assignedWorkerId !== worker.id) {
+        return { outcome: 'ALREADY_CLAIMED', claimedByName: data.assignedWorkerName } as ClaimJobResult;
+      }
+      const nowMs = Date.now();
+      const updatedJob: JobPost = {
+        ...data,
+        status: 'assigned',
+        assignedWorkerId: worker.id,
+        assignedWorkerName: worker.name,
+        updatedAtMs: nowMs,
+      };
+      tx.set(jobRef, { ...stripUndefined(updatedJob), updatedAt: serverTimestamp() }, { merge: true });
+      return { outcome: 'CLAIMED', job: updatedJob } as ClaimJobResult;
+    });
+  } catch (err) {
+    logFirestoreError(err, OperationType.WRITE, `jobs/${jobId}`);
+    return { outcome: 'ERROR' };
   }
 }
 

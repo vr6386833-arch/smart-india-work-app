@@ -64,11 +64,12 @@ export const LiveTrackingView: React.FC<LiveTrackingViewProps> = ({
   const [isCopied, setIsCopied] = useState(false);
   const [isBookingIdCopied, setIsBookingIdCopied] = useState(false);
 
+  const isSearchingBroadcast = booking.status === 'searching' || booking.workerId === 'OPEN_BROADCAST';
   const isCompleted = booking.status === 'completed';
   const isOtpVerified = booking.isOtpVerified || booking.status === 'in_progress' || booking.status === 'completed';
   const isWorkInProgress = booking.status === 'in_progress';
   const isArrived = booking.status === 'arrived_at_door' || isOtpVerified;
-  const isEnRoute = booking.isLocationShared || booking.status === 'worker_en_route' || isArrived;
+  const isEnRoute = !isSearchingBroadcast && (booking.isLocationShared || booking.status === 'worker_en_route' || isArrived);
 
   const finalPayAmount = booking.paidAmount || booking.finalAmount || booking.estimatedAmount;
   const workerUpi = `${booking.workerPhone}@ybl`;
@@ -116,6 +117,11 @@ export const LiveTrackingView: React.FC<LiveTrackingViewProps> = ({
                 <UserCheck className="w-3 h-3" />
                 <span>{language === 'hi' ? 'कारीगर पहुंचे' : 'Worker Arrived'}</span>
               </span>
+            ) : isSearchingBroadcast ? (
+              <span className="px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-bold flex items-center gap-1 animate-pulse">
+                <Sparkles className="w-3 h-3" />
+                <span>{language === 'hi' ? '📡 सभी कारीगरों को लीड भेजी गई' : '📡 Broadcasting to Workers'}</span>
+              </span>
             ) : isEnRoute ? (
               <span className="px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold flex items-center gap-1">
                 <Clock className="w-3 h-3" />
@@ -124,7 +130,7 @@ export const LiveTrackingView: React.FC<LiveTrackingViewProps> = ({
             ) : (
               <span className="px-2.5 py-1 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-[10px] font-bold flex items-center gap-1">
                 <Sparkles className="w-3 h-3" />
-                <span>{language === 'hi' ? 'बुकिंग स्वीकृत' : 'Booking Confirmed'}</span>
+                <span>{language === 'hi' ? 'स्वीकृति प्रतीक्षारत' : 'Waiting Acceptance'}</span>
               </span>
             )}
           </div>
@@ -198,65 +204,89 @@ export const LiveTrackingView: React.FC<LiveTrackingViewProps> = ({
           </div>
         </div>
 
-        {/* 3. Assigned Worker Card */}
-        <div className="bg-slate-900 rounded-2xl p-4 border border-slate-800 shadow-md">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="relative">
-                <img
-                  src={booking.workerAvatar}
-                  alt={booking.workerName}
-                  className="w-13 h-13 rounded-2xl object-cover ring-2 ring-emerald-500/40"
-                />
-                <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-slate-900" />
-              </div>
-
-              <div>
-                <div className="flex items-center gap-1.5">
-                  <h4 className="text-sm font-bold text-white">{booking.workerName}</h4>
-                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                </div>
-                <p className="text-[11px] text-slate-400">{booking.serviceSubCategory}</p>
-                <div className="flex items-center gap-2 mt-1 text-[10px] font-semibold">
-                  <span className="flex items-center gap-1 text-amber-400">
-                    <Star className="w-3 h-3 fill-amber-400" />
-                    <span>{booking.workerRating}</span>
-                  </span>
-                  <span className="text-slate-600">•</span>
-                  <span className="text-emerald-400">
-                    {language === 'hi' ? 'सत्यापित कारीगर' : 'Verified Worker'}
-                  </span>
-                </div>
-              </div>
+        {/* 3. Assigned Worker Card (or Broadcasting Status Card) */}
+        {isSearchingBroadcast ? (
+          <div className="bg-gradient-to-r from-amber-950/60 via-slate-900 to-orange-950/60 rounded-2xl p-4 border border-amber-500/40 shadow-md flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center shrink-0 animate-pulse">
+              <Navigation className="w-6 h-6" />
             </div>
-
-            {/* Direct Call & Chat Buttons */}
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  soundManager.playTap();
-                  onOpenCall();
-                }}
-                className="p-3 rounded-xl bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 border border-emerald-500/30 transition-colors"
-                title="Call Worker"
-              >
-                <Phone className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  soundManager.playTap();
-                  onOpenChat();
-                }}
-                className="p-3 rounded-xl bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 border border-blue-500/30 transition-colors"
-                title="Chat with Worker"
-              >
-                <MessageSquare className="w-4 h-4" />
-              </button>
+            <div className="min-w-0 flex-1">
+              <h4 className="text-sm font-bold text-white">
+                {language === 'hi' ? '⏳ सभी कारीगरों को काम की लीड भेजी गई' : '⏳ Lead Sent to All Workers'}
+              </h4>
+              <p className="text-[11px] text-amber-200/90 mt-0.5 leading-snug">
+                {language === 'hi'
+                  ? 'जो कारीगर पहले इस काम को स्वीकार करेगा वो तुरंत यहाँ जुड़ेगा और कॉल/चैट व लाइव GPS चालू हो जाएगा।'
+                  : 'Whichever worker accepts first will connect here immediately with Call, Chat & Live GPS.'}
+              </p>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="bg-slate-900 rounded-2xl p-4 border border-slate-800 shadow-md">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  {booking.workerAvatar ? (
+                    <img
+                      src={booking.workerAvatar}
+                      alt={booking.workerName}
+                      className="w-13 h-13 rounded-2xl object-cover ring-2 ring-emerald-500/40"
+                    />
+                  ) : (
+                    <div className="w-13 h-13 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-black text-lg flex items-center justify-center">
+                      {(booking.workerName || 'W').charAt(0)}
+                    </div>
+                  )}
+                  <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-slate-900" />
+                </div>
+
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <h4 className="text-sm font-bold text-white">{booking.workerName}</h4>
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                  </div>
+                  <p className="text-[11px] text-slate-400">{booking.serviceSubCategory}</p>
+                  <div className="flex items-center gap-2 mt-1 text-[10px] font-semibold">
+                    <span className="flex items-center gap-1 text-amber-400">
+                      <Star className="w-3 h-3 fill-amber-400" />
+                      <span>{booking.workerRating}</span>
+                    </span>
+                    <span className="text-slate-600">•</span>
+                    <span className="text-emerald-400">
+                      {language === 'hi' ? 'सत्यापित कारीगर' : 'Verified Worker'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Direct Call & Chat Buttons */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundManager.playTap();
+                    onOpenCall();
+                  }}
+                  className="p-3 rounded-xl bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 border border-emerald-500/30 transition-colors"
+                  title="Call Worker"
+                >
+                  <Phone className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundManager.playTap();
+                    onOpenChat();
+                  }}
+                  className="p-3 rounded-xl bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 border border-blue-500/30 transition-colors"
+                  title="Chat with Worker"
+                >
+                  <MessageSquare className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 4. Service Address & Details Card */}
         <div className="bg-slate-900/80 rounded-2xl p-4 border border-slate-800 space-y-3">

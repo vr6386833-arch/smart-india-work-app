@@ -28,6 +28,8 @@ jobs:
           npm install --legacy-peer-deps --no-audit --no-fund || npm install --force --no-audit --no-fund
 
       - name: Build Web Application
+        env:
+          VITE_GOOGLE_MAPS_API_KEY: ${{ secrets.VITE_GOOGLE_MAPS_API_KEY }}
         run: npm run build
 
       - name: Sync Web Assets to Android

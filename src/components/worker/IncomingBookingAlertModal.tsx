@@ -46,7 +46,10 @@ export const IncomingBookingAlertModal: React.FC<IncomingBookingAlertModalProps>
 
   if (!isOpen || !booking) return null;
 
-  const isAccepted = booking.status !== 'requested' || booking.isLocationShared;
+  const isOpenBroadcast = booking.workerId === 'OPEN_BROADCAST' || booking.status === 'searching';
+  const isAccepted =
+    (booking.status !== 'requested' && booking.status !== 'searching') ||
+    Boolean(booking.isLocationShared);
 
   const handleAcceptClick = () => {
     setIsAccepting(true);
@@ -81,7 +84,7 @@ export const IncomingBookingAlertModal: React.FC<IncomingBookingAlertModalProps>
 
         {/* Main Content */}
         <div className="p-4 space-y-3.5">
-          {/* Skill-Matched Routing Banner */}
+          {/* Open-Broadcast / Skill-Matched Routing Banner */}
           <div className="px-3 py-2 rounded-2xl bg-gradient-to-r from-blue-950/70 via-indigo-950/60 to-purple-950/70 border border-blue-500/40 flex items-center justify-between gap-2 shadow-inner">
             <div className="flex items-center gap-2">
               <div className="p-1 rounded-lg bg-blue-500/20 text-blue-300">
@@ -89,17 +92,23 @@ export const IncomingBookingAlertModal: React.FC<IncomingBookingAlertModalProps>
               </div>
               <div>
                 <span className="text-[10px] font-bold text-blue-200 block">
-                  {language === 'hi' ? '🎯 ट्रेड मिलान (Skill-Match Routing):' : '🎯 Skill-Match Routing:'}
+                  {isOpenBroadcast
+                    ? (language === 'hi' ? '⚡ पहले स्वीकार करें — काम आपका!' : '⚡ Open Lead — First to Accept Wins!')
+                    : (language === 'hi' ? '🎯 सीधी बुकिंग अनुरोध:' : '🎯 Direct Booking Request:')}
                 </span>
                 <span className="text-[9px] text-slate-300">
-                  {language === 'hi' 
-                    ? `ग्राहक ने [${booking.serviceCategory}] काम चुना • अलर्ट केवल इस काम के कारीगरों को पहुँचा` 
-                    : `Customer requested [${booking.serviceCategory}] • Sent only to verified trade experts`}
+                  {isOpenBroadcast
+                    ? (language === 'hi'
+                        ? `ग्राहक ने [${booking.serviceCategory}] लीड सभी कारीगरों को भेजी है • जो पहले स्वीकार करे काम उसका`
+                        : `[${booking.serviceCategory}] broadcasted to all workers • First to accept gets the job`)
+                    : (language === 'hi'
+                        ? `ग्राहक ने [${booking.serviceCategory}] काम के लिए आपको चुना`
+                        : `Customer requested [${booking.serviceCategory}] directly`)}
                 </span>
               </div>
             </div>
-            <span className="px-1.5 py-0.5 rounded bg-blue-500/30 text-blue-200 text-[9px] font-bold uppercase shrink-0 border border-blue-400/40">
-              Matched
+            <span className="px-1.5 py-0.5 rounded bg-emerald-500/30 text-emerald-200 text-[9px] font-bold uppercase shrink-0 border border-emerald-400/40">
+              {isOpenBroadcast ? (language === 'hi' ? 'लाइव लीड' : 'Live Lead') : 'Direct'}
             </span>
           </div>
 
