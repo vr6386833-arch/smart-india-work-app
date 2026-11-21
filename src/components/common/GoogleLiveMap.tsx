@@ -8,7 +8,8 @@ import {
   useMap,
   useMapsLibrary,
 } from '@vis.gl/react-google-maps';
-import { Crosshair, Navigation, MapPin, AlertTriangle, ExternalLink, Clock } from 'lucide-react';
+import L from 'leaflet';
+import { Crosshair, Navigation, MapPin, ExternalLink, Clock } from 'lucide-react';
 import { Language, LiveGeoLocation } from '../../types';
 import { soundManager } from '../../services/soundEffects';
 
@@ -48,6 +49,198 @@ function formatAgo(updatedAtMs: number | undefined, language: Language): string 
   const mins = Math.round(diffSec / 60);
   return language === 'hi' ? `${mins} मिनट पहले` : `${mins}m ago`;
 }
+
+// Interactive Leaflet OpenStreetMap Live GPS View when Maps API key isn't embedded in APK or quota reached
+interface LeafletFallbackMapProps {
+  customerLoc: LiveGeoLocation | null;
+  workerLoc: LiveGeoLocation | null;
+  customerName: string;
+  workerName: string;
+  destinationAddress: string;
+  language: Language;
+  recenterSignal: number;
+  externalGoogleMapsUrl: string;
+}
+
+const LeafletFallbackMap: React.FC<LeafletFallbackMapProps> = ({
+  customerLoc,
+  workerLoc,
+  customerName,
+  workerName,
+  destinationAddress,
+  language,
+  recenterSignal,
+  externalGoogleMapsUrl,
+}) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const customerMarkerRef = useRef<L.Marker | null>(null);
+  const workerMarkerRef = useRef<L.Marker | null>(null);
+  const routeLineRef = useRef<L.Polyline | null>(null);
+
+  useEffect(() => {
+    if (!containerRef.current || mapRef.current) return;
+    const initCenter = workerLoc
+      ? ([workerLoc.lat, workerLoc.lng] as [number, number])
+      : customerLoc
+      ? ([customerLoc.lat, customerLoc.lng] as [number, number])
+      : ([DEFAULT_INDIA_CENTER.lat, DEFAULT_INDIA_CENTER.lng] as [number, number]);
+
+    const map = L.map(containerRef.current, {
+      center: initCenter,
+      zoom: customerLoc || workerLoc ? 15 : 5,
+      zoomControl: true,
+      attributionControl: false,
+    });
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+    }).addTo(map);
+
+    mapRef.current = map;
+
+    const resizeTimer = window.setTimeout(() => {
+      map.invalidateSize();
+    }, 200);
+
+    return () => {
+      window.clearTimeout(resizeTimer);
+      map.remove();
+      mapRef.current = null;
+      customerMarkerRef.current = null;
+      workerMarkerRef.current = null;
+      routeLineRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const esc = (s: string) =>
+      String(s || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+    if (customerLoc) {
+      const custHtml = `<div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-85%);">
+        <div style="background:#e11d48;color:#fff;font-size:10px;font-weight:800;padding:2px 7px;border-radius:999px;border:1.5px solid #fff;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.45);">
+          🏠 ${language === 'hi' ? 'ग्राहक' : 'Customer'}
+        </div>
+        <div style="width:14px;height:14px;border-radius:50%;background:#f43f5e;border:2px solid #fff;margin-top:2px;box-shadow:0 0 0 4px rgba(244,63,94,.3);"></div>
+      </div>`;
+      const custIcon = L.divIcon({
+        html: custHtml,
+        className: 'siw-leaflet-pin',
+        iconSize: [0, 0],
+      });
+      if (!customerMarkerRef.current) {
+        customerMarkerRef.current = L.marker([customerLoc.lat, customerLoc.lng], { icon: custIcon }).addTo(map);
+      } else {
+        customerMarkerRef.current.setLatLng([customerLoc.lat, customerLoc.lng]);
+        customerMarkerRef.current.setIcon(custIcon);
+      }
+      customerMarkerRef.current.bindPopup(
+        `<div style="font-size:11px;"><strong>🏠 ${esc(customerName)}</strong><br/>${esc(destinationAddress)}<br/><code>${customerLoc.lat.toFixed(5)}, ${customerLoc.lng.toFixed(5)}</code></div>`
+      );
+    } else if (customerMarkerRef.current) {
+      customerMarkerRef.current.remove();
+      customerMarkerRef.current = null;
+    }
+
+    if (workerLoc) {
+      const wrkHtml = `<div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-85%);">
+        <div style="background:#059669;color:#fff;font-size:10px;font-weight:800;padding:2px 7px;border-radius:999px;border:1.5px solid #fff;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,.45);">
+          👷 ${esc(workerName.split(' ')[0] || 'Worker')}
+        </div>
+        <div style="width:14px;height:14px;border-radius:50%;background:#10b981;border:2px solid #fff;margin-top:2px;box-shadow:0 0 0 4px rgba(16,185,129,.35);"></div>
+      </div>`;
+      const wrkIcon = L.divIcon({
+        html: wrkHtml,
+        className: 'siw-leaflet-pin',
+        iconSize: [0, 0],
+      });
+      if (!workerMarkerRef.current) {
+        workerMarkerRef.current = L.marker([workerLoc.lat, workerLoc.lng], { icon: wrkIcon }).addTo(map);
+      } else {
+        workerMarkerRef.current.setLatLng([workerLoc.lat, workerLoc.lng]);
+        workerMarkerRef.current.setIcon(wrkIcon);
+      }
+      workerMarkerRef.current.bindPopup(
+        `<div style="font-size:11px;"><strong>👷 ${esc(workerName)}</strong><br/><code>${workerLoc.lat.toFixed(5)}, ${workerLoc.lng.toFixed(5)}</code></div>`
+      );
+    } else if (workerMarkerRef.current) {
+      workerMarkerRef.current.remove();
+      workerMarkerRef.current = null;
+    }
+
+    if (customerLoc && workerLoc) {
+      const pts: [number, number][] = [
+        [workerLoc.lat, workerLoc.lng],
+        [customerLoc.lat, customerLoc.lng],
+      ];
+      if (!routeLineRef.current) {
+        routeLineRef.current = L.polyline(pts, {
+          color: '#10b981',
+          weight: 4,
+          dashArray: '8 6',
+        }).addTo(map);
+      } else {
+        routeLineRef.current.setLatLngs(pts);
+      }
+      map.fitBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 16 });
+    } else if (routeLineRef.current) {
+      routeLineRef.current.remove();
+      routeLineRef.current = null;
+      if (customerLoc) {
+        map.setView([customerLoc.lat, customerLoc.lng], Math.max(map.getZoom(), 15));
+      } else if (workerLoc) {
+        map.setView([workerLoc.lat, workerLoc.lng], Math.max(map.getZoom(), 15));
+      }
+    } else if (customerLoc) {
+      map.setView([customerLoc.lat, customerLoc.lng], Math.max(map.getZoom(), 15));
+    } else if (workerLoc) {
+      map.setView([workerLoc.lat, workerLoc.lng], Math.max(map.getZoom(), 15));
+    }
+  }, [
+    customerLoc?.lat,
+    customerLoc?.lng,
+    workerLoc?.lat,
+    workerLoc?.lng,
+    customerName,
+    workerName,
+    destinationAddress,
+    language,
+    recenterSignal,
+  ]);
+
+  return (
+    <div className="relative w-full h-full bg-slate-900">
+      <div ref={containerRef} className="w-full h-full z-10" />
+      {!customerLoc && !workerLoc && (
+        <div className="absolute inset-0 z-20 pointer-events-none flex items-center justify-center p-4">
+          <div className="bg-slate-950/85 border border-slate-700 rounded-2xl px-4 py-3 text-center max-w-xs shadow-xl backdrop-blur-sm pointer-events-auto space-y-2">
+            <p className="text-xs font-bold text-white">
+              {language === 'hi'
+                ? '📍 लाइव GPS लोकेशन प्रतीक्षारत है — नीचे "मेरी लाइव GPS चालू करें" दबाएं'
+                : '📍 Waiting for Live GPS signal — tap "Share My Real Live GPS" below'}
+            </p>
+            <a
+              href={externalGoogleMapsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white font-bold text-[11px] inline-flex items-center gap-1"
+            >
+              <ExternalLink className="w-3 h-3" />
+              <span>{language === 'hi' ? 'Google Maps ऐप खोलें' : 'Open Google Maps'}</span>
+            </a>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 interface ViewportAndRouteProps {
   customerLoc: LiveGeoLocation | null;
@@ -266,9 +459,13 @@ export const GoogleLiveMap: React.FC<GoogleLiveMapProps> = ({
               <MapPin className="w-3 h-3 text-rose-400" />
               <span>
                 {customerLoc || workerLoc
-                  ? language === 'hi'
-                    ? 'दूसरे फोन के GPS की प्रतीक्षा...'
-                    : 'Waiting for other phone GPS...'
+                  ? customerLoc && !workerLoc
+                    ? language === 'hi'
+                      ? '✓ ग्राहक GPS लाइव है • कारीगर GPS की प्रतीक्षा...'
+                      : '✓ Customer GPS Live • Waiting for Worker GPS...'
+                    : language === 'hi'
+                    ? '✓ कारीगर GPS लाइव है • ग्राहक GPS की प्रतीक्षा...'
+                    : '✓ Worker GPS Live • Waiting for Customer GPS...'
                   : language === 'hi'
                   ? 'दोनों फोन पर GPS चालू करें'
                   : 'Enable GPS on both phones'}
@@ -289,7 +486,7 @@ export const GoogleLiveMap: React.FC<GoogleLiveMapProps> = ({
         </a>
       </div>
 
-      {/* Real Interactive Google Map Canvas */}
+      {/* Real Interactive Map Canvas (Google Maps when key available, interactive Leaflet OSM fallback in APK) */}
       <div className={`relative w-full ${heightClass}`}>
         {canRenderInteractiveMap ? (
           <APIProvider
@@ -385,31 +582,20 @@ export const GoogleLiveMap: React.FC<GoogleLiveMapProps> = ({
             </GoogleMap>
           </APIProvider>
         ) : (
-          <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center bg-slate-900/90 space-y-2">
-            <AlertTriangle className="w-7 h-7 text-amber-400" />
-            <p className="text-xs font-bold text-white">
-              {quotaReached
-                ? language === 'hi'
-                  ? 'Google Maps दैनिक कोटा सीमा पूरी हो गई है'
-                  : 'Google Maps daily quota limit reached'
-                : language === 'hi'
-                ? 'APK में इन-ऐप Google Map के लिए API Key सेट नहीं है — नीचे से सीधे Google Maps खोलें'
-                : 'Embedded Map API Key not set in APK build — open live route in Google Maps'}
-            </p>
-            <a
-              href={externalGoogleMapsUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white font-bold text-xs inline-flex items-center gap-1.5"
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-              <span>{language === 'hi' ? 'Google Maps ऐप में रास्ता खोलें' : 'Open Route in Google Maps App'}</span>
-            </a>
-          </div>
+          <LeafletFallbackMap
+            customerLoc={customerLoc}
+            workerLoc={workerLoc}
+            customerName={customerName}
+            workerName={workerName}
+            destinationAddress={destinationAddress}
+            language={language}
+            recenterSignal={recenterSignal}
+            externalGoogleMapsUrl={externalGoogleMapsUrl}
+          />
         )}
 
         {/* Re-center Camera Button */}
-        {canRenderInteractiveMap && (customerLoc || workerLoc) && (
+        {(customerLoc || workerLoc) && (
           <button
             type="button"
             onClick={() => {

@@ -93,7 +93,7 @@ export const OlaLiveTrackingMap: React.FC<OlaLiveTrackingMapProps> = ({
     }
   };
 
-  const startRealGps = () => {
+  const startRealGps = (preferLowAccuracy: boolean = false) => {
     if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
       setGpsErrorMsg(
         language === 'hi'
@@ -109,73 +109,90 @@ export const OlaLiveTrackingMap: React.FC<OlaLiveTrackingMapProps> = ({
 
     if (watchIdRef.current !== null) {
       navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
     }
 
+    const handlePos = (pos: GeolocationPosition) => {
+      setGpsLoading(false);
+      setGpsErrorMsg(null);
+      const rawSpeed = pos.coords.speed;
+      const speedKmh =
+        typeof rawSpeed === 'number' && !Number.isNaN(rawSpeed) && rawSpeed >= 0
+          ? Math.round(rawSpeed * 3.6)
+          : null;
+      const loc: LiveGeoLocation = {
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        accuracy: Math.round(pos.coords.accuracy),
+        speedKmh,
+        heading:
+          typeof pos.coords.heading === 'number' && !Number.isNaN(pos.coords.heading)
+            ? pos.coords.heading
+            : null,
+        updatedAtMs: Date.now(),
+      };
+      setRealCoords(loc);
+      pushCoordsToCloud(loc);
+    };
+
+    // Quick initial fix so Customer location appears immediately instead of waiting for first movement
+    navigator.geolocation.getCurrentPosition(
+      handlePos,
+      () => {},
+      {
+        enableHighAccuracy: !preferLowAccuracy,
+        timeout: preferLowAccuracy ? 15000 : 8000,
+        maximumAge: 25000,
+      }
+    );
+
     watchIdRef.current = navigator.geolocation.watchPosition(
-      (pos) => {
-        setGpsLoading(false);
-        setGpsErrorMsg(null);
-        const rawSpeed = pos.coords.speed;
-        const speedKmh =
-          typeof rawSpeed === 'number' && !Number.isNaN(rawSpeed) && rawSpeed >= 0
-            ? Math.round(rawSpeed * 3.6)
-            : null;
-        const loc: LiveGeoLocation = {
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          accuracy: Math.round(pos.coords.accuracy),
-          speedKmh,
-          heading: typeof pos.coords.heading === 'number' && !Number.isNaN(pos.coords.heading) ? pos.coords.heading : null,
-          updatedAtMs: Date.now(),
-        };
-        setRealCoords(loc);
-        pushCoordsToCloud(loc);
-      },
+      handlePos,
       (err) => {
-        setGpsLoading(false);
-        setUseRealGps(false);
         if (err.code === 1) {
+          setGpsLoading(false);
+          setUseRealGps(false);
           setGpsErrorMsg(
             language === 'hi'
               ? 'लोकेशन अनुमति बंद है। असली GPS देखने के लिए फोन की Location अनुमति चालू करें।'
               : 'Location permission denied. Please allow Location access in device settings.'
           );
-        } else {
-          setGpsErrorMsg(
-            language === 'hi'
-              ? 'GPS सिग्नल नहीं मिला। कृपया खुले स्थान या फोन GPS को चालू रखें।'
-              : 'Unable to fetch GPS signal right now. Please enable phone GPS.'
-          );
+          return;
         }
+        // Indoor GPS satellite timeout (code 3) or unavailable (code 2): automatically retry using Wi-Fi/Mobile Network location
+        if (!preferLowAccuracy) {
+          startRealGps(true);
+          return;
+        }
+        setGpsLoading(false);
+        setUseRealGps(false);
+        setGpsErrorMsg(
+          language === 'hi'
+            ? 'GPS सिग्नल नहीं मिला। कृपया फोन की Location (GPS) चालू करके दोबारा टैप करें।'
+            : 'Unable to fetch GPS signal right now. Please enable phone GPS and retry.'
+        );
       },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 4000 }
+      {
+        enableHighAccuracy: !preferLowAccuracy,
+        timeout: preferLowAccuracy ? 20000 : 12000,
+        maximumAge: preferLowAccuracy ? 20000 : 5000,
+      }
     );
   };
 
-  // Auto-start genuine GPS watch if geolocation permission was already granted by the device
+  // Auto-start genuine GPS watch automatically when booking is active (without blocking on permissions.query in Android WebView)
   useEffect(() => {
-    let active = true;
-    const canShare = isWorkerMode ? Boolean(booking.isLocationShared) : booking.status !== 'completed' && booking.status !== 'cancelled';
+    const canShare = isWorkerMode
+      ? Boolean(booking.isLocationShared)
+      : booking.status !== 'completed' && booking.status !== 'cancelled';
     if (!canShare) {
       stopGpsWatch();
       return;
     }
-    if (
-      typeof navigator !== 'undefined' &&
-      'permissions' in navigator &&
-      typeof navigator.permissions.query === 'function'
-    ) {
-      navigator.permissions
-        .query({ name: 'geolocation' as PermissionName })
-        .then((res) => {
-          if (active && res.state === 'granted') {
-            startRealGps();
-          }
-        })
-        .catch(() => {});
-    }
+
+    startRealGps(false);
+
     return () => {
-      active = false;
       if (watchIdRef.current !== null && typeof navigator !== 'undefined' && 'geolocation' in navigator) {
         navigator.geolocation.clearWatch(watchIdRef.current);
         watchIdRef.current = null;
@@ -189,7 +206,7 @@ export const OlaLiveTrackingMap: React.FC<OlaLiveTrackingMapProps> = ({
     if (useRealGps) {
       stopGpsWatch();
     } else {
-      startRealGps();
+      startRealGps(false);
     }
   };
 

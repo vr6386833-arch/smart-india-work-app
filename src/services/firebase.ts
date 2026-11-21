@@ -484,6 +484,26 @@ export async function syncCustomerToFirestore(customer: CustomerProfile): Promis
   }
 }
 
+// Permanently delete a worker profile from Firestore (Owner control)
+export async function deleteWorkerFromFirestore(workerId: string): Promise<void> {
+  if (!db || !workerId) return;
+  try {
+    await deleteDoc(doc(db, 'workers', workerId));
+  } catch (err) {
+    logFirestoreError(err, OperationType.DELETE, `workers/${workerId}`);
+  }
+}
+
+// Permanently delete a customer profile from Firestore (Owner control)
+export async function deleteCustomerFromFirestore(customerId: string): Promise<void> {
+  if (!db || !customerId) return;
+  try {
+    await deleteDoc(doc(db, 'customers', customerId));
+  } catch (err) {
+    logFirestoreError(err, OperationType.DELETE, `customers/${customerId}`);
+  }
+}
+
 // Sync platform fee commission record (₹10 fee) to cloud
 export async function syncCommissionToFirestore(record: CommissionRecord): Promise<void> {
   if (!db) return;
@@ -813,6 +833,8 @@ export async function syncAppConfigToFirestore(config: AppOwnerPaymentConfig): P
       autoDeductFromWallet: config.autoDeductFromWallet,
       totalWithdrawnToBank: config.totalWithdrawnToBank || 0,
       cleanResetAtMs: config.cleanResetAtMs || 0,
+      removedWorkerIds: Array.isArray(config.removedWorkerIds) ? config.removedWorkerIds : [],
+      removedCustomerIds: Array.isArray(config.removedCustomerIds) ? config.removedCustomerIds : [],
       updatedAt: serverTimestamp(),
     }, { merge: true });
   } catch (err) {

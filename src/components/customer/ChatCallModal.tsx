@@ -99,7 +99,7 @@ export const ChatCallModal: React.FC<ChatCallModalProps> = ({
   isOpen,
   onClose,
   mode: initialMode,
-  bookingId = 'live_booking_chat',
+  bookingId = '',
   otherPartyName,
   otherPartyPhone,
   otherPartyRole,
@@ -206,7 +206,14 @@ export const ChatCallModal: React.FC<ChatCallModalProps> = ({
     }
   }, [isSpeaker]);
 
+  const hasValidBookingId = Boolean(bookingId) && bookingId !== 'live_booking_chat';
+
   const startOutgoingVoipCall = async () => {
+    if (!hasValidBookingId) {
+      setCallStatus('failed');
+      setCallError('यह कॉल केवल कन्फ़र्म बुकिंग के बाद चुने गए कारीगर से की जा सकती है।');
+      return;
+    }
     cleanupWebrtc();
     const sessionId = `call_${Date.now()}_${Math.floor(Math.random() * 9999)}`;
     setLocalSessionId(sessionId);
@@ -446,7 +453,7 @@ export const ChatCallModal: React.FC<ChatCallModalProps> = ({
 
   const handleSendText = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim()) return;
+    if (!inputText.trim() || !hasValidBookingId) return;
     onSendMessage(inputText.trim(), { senderRole: currentRole, bookingId });
     setInputText('');
   };
@@ -491,6 +498,10 @@ export const ChatCallModal: React.FC<ChatCallModalProps> = ({
   };
 
   const handleSendVoiceNote = () => {
+    if (!hasValidBookingId) {
+      cancelVoiceRecording();
+      return;
+    }
     const duration = Math.max(2, voiceRecordTime);
     setIsRecordingVoice(false);
     const recorder = mediaRecorderRef.current;
@@ -570,7 +581,7 @@ export const ChatCallModal: React.FC<ChatCallModalProps> = ({
 
   const handleSendPhotoAttachment = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (files && files.length > 0) {
+    if (files && files.length > 0 && hasValidBookingId) {
       try {
         const compressedUrl = await compressChatImage(files[0]);
         onSendMessage('📷 Site Photo (कार्य स्थल की फोटो)', {
@@ -966,8 +977,9 @@ export const ChatCallModal: React.FC<ChatCallModalProps> = ({
                 <button
                   type="button"
                   key={idx}
-                  onClick={() => onSendMessage(qr, { senderRole: currentRole, bookingId })}
-                  className="px-2.5 py-1 rounded-full bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 whitespace-nowrap transition-colors border border-slate-700/60 active:scale-95"
+                  disabled={!hasValidBookingId}
+                  onClick={() => hasValidBookingId && onSendMessage(qr, { senderRole: currentRole, bookingId })}
+                  className="px-2.5 py-1 rounded-full bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-[10px] text-slate-300 whitespace-nowrap transition-colors border border-slate-700/60 active:scale-95"
                 >
                   {qr}
                 </button>

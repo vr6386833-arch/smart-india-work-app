@@ -12,17 +12,24 @@ import {
 import { WorkerProfile, Language } from '../../types';
 import { soundManager } from '../../services/soundEffects';
 import { compressDocumentImageFile } from '../../utils/qrImageHelper';
+import {
+  validateAadhaarVerhoeff,
+  computeAadhaarHash,
+  verifyAadhaarCardWithServer,
+} from '../../utils/aadhaarValidator';
 
 interface KycVerificationModalProps {
   isOpen: boolean;
   onClose: () => void;
   worker: WorkerProfile;
+  workers?: WorkerProfile[];
   language: Language;
   onKycUpdated: (
     aadharNum: string,
     panNum: string,
     aadhaarFrontPhoto?: string,
-    aadhaarBackPhoto?: string
+    aadhaarBackPhoto?: string,
+    extra?: { aadhaarHash?: string; aadhaarExtractedName?: string; aadhaarDocVerified?: boolean }
   ) => void;
 }
 
@@ -30,6 +37,7 @@ export const KycVerificationModal: React.FC<KycVerificationModalProps> = ({
   isOpen,
   onClose,
   worker,
+  workers = [],
   language,
   onKycUpdated,
 }) => {
@@ -80,19 +88,21 @@ export const KycVerificationModal: React.FC<KycVerificationModalProps> = ({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     const cleanedAadhaar = aadharNumber.replace(/\D/g, '');
     const isExistingMasked = /^XXXX-XXXX-\d{4}$/.test(aadharNumber.trim());
-    if (cleanedAadhaar.length !== 12 && !isExistingMasked) {
-      soundManager.playWarning();
-      setErrorMsg(
-        language === 'hi'
-          ? 'कृपया पूरे 12 अंकों का सही आधार कार्ड नंबर डालें।'
-          : 'Please enter a valid 12-digit Aadhaar card number.'
-      );
-      return;
+
+    if (!isExistingMasked) {
+      const verhoeff = validateAadhaarVerhoeff(cleanedAadhaar);
+      if (!verhoeff.valid) {
+        soundManager.playWarning();
+        setErrorMsg(language === 'hi' ? verhoeff.reasonHi : verhoeff.reasonEn);
+        return;
+      }
     }
+
     if (!frontPhoto) {
       soundManager.playWarning();
       setErrorMsg(
@@ -106,21 +116,56 @@ export const KycVerificationModal: React.FC<KycVerificationModalProps> = ({
     setErrorMsg(null);
     soundManager.playTap();
     setIsSubmitting(true);
-    const formattedAadhaar =
-      cleanedAadhaar.length === 12
-        ? `XXXX-XXXX-${cleanedAadhaar.slice(8)}`
-        : aadharNumber;
 
-    setTimeout(() => {
+    try {
+      let aadhaarHash: string | undefined;
+      if (cleanedAadhaar.length === 12) {
+        aadhaarHash = await computeAadhaarHash(cleanedAadhaar);
+        const dup = workers.find(
+          (w) => w.id !== worker.id && w.id !== 'wrk_standby_live' && w.aadhaarHash && w.aadhaarHash === aadhaarHash
+        );
+        if (dup) {
+          soundManager.playWarning();
+          setErrorMsg(
+            language === 'hi'
+              ? `यह आधार नंबर पहले से दूसरी कारीगर ID (${dup.name}) से जुड़ा है।`
+              : `This Aadhaar number is already registered with ${dup.name}.`
+          );
+          return;
+        }
+      }
+
+      const aiRes = await verifyAadhaarCardWithServer({
+        imageDataUrl: frontPhoto,
+        expectedName: worker.name,
+        expectedAadhaar: cleanedAadhaar.length === 12 ? cleanedAadhaar : aadharNumber,
+      });
+
+      if (!aiRes.serverUnavailable && !aiRes.verified) {
+        soundManager.playWarning();
+        setErrorMsg(language === 'hi' ? aiRes.reasonHi : aiRes.reasonEn);
+        return;
+      }
+
+      const formattedAadhaar =
+        cleanedAadhaar.length === 12
+          ? `XXXX-XXXX-${cleanedAadhaar.slice(8)}`
+          : aadharNumber;
+
       soundManager.playSuccessCoin();
-      onKycUpdated(formattedAadhaar, panNumber, frontPhoto, backPhoto || undefined);
-      setIsSubmitting(false);
+      onKycUpdated(formattedAadhaar, panNumber, frontPhoto, backPhoto || undefined, {
+        ...(aadhaarHash ? { aadhaarHash } : {}),
+        aadhaarExtractedName: aiRes.extractedName || worker.name,
+        aadhaarDocVerified: Boolean(aiRes.verified && !aiRes.serverUnavailable),
+      });
       setSuccess(true);
       setTimeout(() => {
         setSuccess(false);
         onClose();
-      }, 1100);
-    }, 500);
+      }, 900);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (

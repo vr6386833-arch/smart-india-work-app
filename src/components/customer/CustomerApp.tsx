@@ -169,20 +169,44 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isCallOpen, setIsCallOpen] = useState(false);
 
-  const activeBookingMessages = safeActiveBooking
-    ? chatMessages.filter((m) => !m.bookingId || m.bookingId === safeActiveBooking.id)
-    : [];
+  const isBroadcastSearching =
+    Boolean(safeActiveBooking) &&
+    (safeActiveBooking!.status === 'searching' || safeActiveBooking!.workerId === 'OPEN_BROADCAST');
+
+  const getCategoryWorkerCount = (categoryId: string) => {
+    const cleanCat = categoryId.trim().toLowerCase();
+    return workers.filter(
+      (w) =>
+        w.id !== 'wrk_standby_live' &&
+        !w.isIdPaused &&
+        !w.isBlockedDueToUnpaidFee &&
+        w.isAadhaarVerified !== false &&
+        (w.category || '').trim().toLowerCase() === cleanCat
+    ).length;
+  };
+
+  const activeBookingMessages =
+    safeActiveBooking && !isBroadcastSearching
+      ? chatMessages.filter(
+          (m) =>
+            Boolean(m.bookingId) &&
+            m.bookingId !== 'live_booking_chat' &&
+            m.bookingId === safeActiveBooking.id &&
+            (!m.recipientWorkerId || m.recipientWorkerId === safeActiveBooking.workerId)
+        )
+      : [];
 
   useEffect(() => {
     if (
       answeredCallSession &&
       safeActiveBooking &&
+      !isBroadcastSearching &&
       answeredCallSession.bookingId === safeActiveBooking.id
     ) {
       setIsCallOpen(true);
       setIsChatOpen(false);
     }
-  }, [answeredCallSession, safeActiveBooking]);
+  }, [answeredCallSession, safeActiveBooking, isBroadcastSearching]);
   const [isRatingOpen, setIsRatingOpen] = useState(false);
   const [isNewTicketOpen, setIsNewTicketOpen] = useState(false);
   const [isAddCustomerOpen, setIsAddCustomerOpen] = useState(false);
@@ -194,10 +218,6 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
   const [ticketSubject, setTicketSubject] = useState('');
   const [ticketCat, setTicketCat] = useState<'wallet_payment' | 'worker_conduct' | 'job_quality' | 'technical_app'>('job_quality');
   const [lightboxData, setLightboxData] = useState<{ url: string; title: string; subtitle?: string; tag?: string } | null>(null);
-
-  const isBroadcastSearching =
-    Boolean(safeActiveBooking) &&
-    (safeActiveBooking!.status === 'searching' || safeActiveBooking!.workerId === 'OPEN_BROADCAST');
 
   // Strictly match ONLY the single worker booked by this customer (never expose placeholder when OPEN_BROADCAST)
   const bookedWorkerObj: WorkerProfile | null =
@@ -445,6 +465,24 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
 
             {/* Scrollable Service Cards Feed */}
             <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3.5 space-y-4">
+            {/* OWNER HOLD BANNER FOR SUSPENDED CUSTOMERS */}
+            {customer.isSuspendedByOwner && (
+              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-rose-950/90 via-slate-900 to-red-950/80 border-2 border-rose-500/70 shadow-lg space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <Lock className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span className="text-xs font-black text-rose-300">
+                    {language === 'hi'
+                      ? 'ओनर द्वारा आपकी ID अभी रोकी (Hold) गई है'
+                      : 'Your Customer ID is currently on Hold by Owner'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-rose-200/85 leading-relaxed">
+                  {language === 'hi'
+                    ? 'जब तक ऐप ओनर आपकी ID को दोबारा सक्रिय नहीं करते, तब तक नई बुकिंग व काम पोस्ट सेवा रुकी रहेगी।'
+                    : 'New bookings and job posts are disabled until reactivated by the App Owner.'}
+                </p>
+              </div>
+            )}
             {/* Active Booking Live Mini-Banner (Open Broadcast Searching vs Assigned Worker) */}
             {safeActiveBooking && (
               <div 
@@ -584,7 +622,9 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
               </div>
 
               <div className="grid grid-cols-2 gap-2.5">
-                {filteredCategories.map((cat) => (
+                {filteredCategories.map((cat) => {
+                  const availableCount = getCategoryWorkerCount(cat.id);
+                  return (
                   <div
                     key={cat.id}
                     onClick={() => {
@@ -608,7 +648,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
                       
-                      <div className="absolute top-2 left-2 right-2 flex items-center justify-between">
+                      <div className="absolute top-2 left-2 right-2 flex items-center justify-between gap-1">
                         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md backdrop-blur-md ${
                           cat.group === 'construction'
                             ? 'bg-amber-950/80 text-amber-300 border border-amber-500/30'
@@ -620,11 +660,15 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                         }`}>
                           {cat.groupName.split(' ')[0]}
                         </span>
-                        {cat.popular && (
-                          <span className="text-[9px] text-emerald-300 font-bold bg-emerald-950/80 px-1.5 py-0.5 rounded-md border border-emerald-500/30 backdrop-blur-md">
-                            ★ Top
-                          </span>
-                        )}
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md backdrop-blur-md border ${
+                          availableCount > 0
+                            ? 'bg-emerald-950/85 text-emerald-300 border-emerald-500/40'
+                            : 'bg-slate-950/85 text-slate-400 border-slate-700'
+                        }`}>
+                          {availableCount > 0
+                            ? (language === 'hi' ? `✓ ${availableCount} कारीगर` : `✓ ${availableCount} Live`)
+                            : (language === 'hi' ? '0 कारीगर ID' : '0 Workers')}
+                        </span>
                       </div>
 
                       <div className="absolute bottom-1.5 left-2 right-2">
@@ -646,7 +690,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                         <ChevronRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-blue-400 group-hover:translate-x-0.5 transition-all" />
                       </div>
 
-                      {/* 1-Click Instant Book Specialist of this specific trade */}
+                      {/* 1-Click Instant Book Specialist (enabled only when real verified Worker ID exists) */}
                       <button
                         type="button"
                         onClick={(e) => {
@@ -654,28 +698,36 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                           soundManager.playTap();
                           if (onBookCategory) {
                             const booked = onBookCategory(cat.id);
-                            if (booked !== false) {
+                            if (booked) {
                               setActiveTab('bookings');
-                            } else {
-                              setSelectedCategoryFilter(cat.id);
-                              setPreselectedPostCategory(cat.id);
-                              setActiveTab('search');
-                              setIsPostJobOpen(true);
                             }
                           } else {
                             setSelectedCategoryFilter(cat.id);
                             setActiveTab('search');
                           }
                         }}
-                        className="mt-2 w-full py-1.5 px-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white font-bold text-[10px] flex items-center justify-center gap-1 shadow-sm active:scale-95 transition-all"
-                        title={language === 'hi' ? 'इस ट्रेड के कारीगर को तुरंत बुक करें' : 'Instantly book specialist for this work'}
+                        className={`mt-2 w-full py-1.5 px-2 rounded-xl font-bold text-[10px] flex items-center justify-center gap-1 shadow-sm transition-all ${
+                          availableCount > 0
+                            ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white active:scale-95'
+                            : 'bg-slate-800/90 text-slate-400 border border-slate-700/80 hover:bg-slate-800'
+                        }`}
+                        title={
+                          availableCount > 0
+                            ? (language === 'hi' ? 'इस ट्रेड के कारीगर को तुरंत बुक करें' : 'Instantly book specialist for this work')
+                            : (language === 'hi' ? 'अभी इस काम के लिए कोई कारीगर ID नहीं बनी है' : 'No registered worker ID available yet')
+                        }
                       >
-                        <Sparkles className="w-3 h-3 text-amber-300" />
-                        <span>{language === 'hi' ? '⚡ सीधे बुक करें' : '⚡ 1-Click Book'}</span>
+                        <Sparkles className={`w-3 h-3 ${availableCount > 0 ? 'text-amber-300' : 'text-slate-500'}`} />
+                        <span>
+                          {availableCount > 0
+                            ? (language === 'hi' ? '⚡ सीधे बुक करें' : '⚡ 1-Click Book')
+                            : (language === 'hi' ? 'कारीगर ID उपलब्ध नहीं' : 'No Worker ID')}
+                        </span>
                       </button>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
@@ -877,7 +929,9 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
 
               {/* Service Categories List (Zero Worker IDs exposed before booking) */}
               <div className="space-y-3">
-                {searchFilteredCategories.map((cat) => (
+                {searchFilteredCategories.map((cat) => {
+                  const availableCount = getCategoryWorkerCount(cat.id);
+                  return (
                   <div
                     key={cat.id}
                     className="bg-slate-900 rounded-2xl border border-slate-800 overflow-hidden shadow-md"
@@ -897,6 +951,15 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                           <h4 className="text-xs font-bold text-white leading-snug">
                             {language === 'hi' ? cat.nameHi : cat.name}
                           </h4>
+                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md shrink-0 border ${
+                            availableCount > 0
+                              ? 'bg-emerald-950/70 text-emerald-300 border-emerald-500/40'
+                              : 'bg-slate-950 text-slate-400 border-slate-700'
+                          }`}>
+                            {availableCount > 0
+                              ? (language === 'hi' ? `✓ ${availableCount} कारीगर` : `✓ ${availableCount} Workers`)
+                              : (language === 'hi' ? '0 कारीगर ID' : '0 Workers')}
+                          </span>
                         </div>
                         <p className="text-[10px] text-slate-400 mt-1 line-clamp-2">
                           {(language === 'hi' && cat.subcategoriesHi ? cat.subcategoriesHi : cat.subcategories).join(' • ')}
@@ -911,26 +974,35 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                           soundManager.playTap();
                           if (onBookCategory) {
                             const booked = onBookCategory(cat.id);
-                            if (booked !== false) {
+                            if (booked) {
                               setActiveTab('bookings');
-                            } else {
-                              setPreselectedPostCategory(cat.id);
-                              setIsPostJobOpen(true);
                             }
                           } else {
                             setPreselectedPostCategory(cat.id);
                             setIsPostJobOpen(true);
                           }
                         }}
-                        className="flex-1 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white font-bold text-[11px] shadow-md transition-all active:scale-95 flex items-center justify-center gap-1"
+                        className={`flex-1 py-2 rounded-xl font-bold text-[11px] shadow-md transition-all flex items-center justify-center gap-1 ${
+                          availableCount > 0
+                            ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white active:scale-95'
+                            : 'bg-slate-800 text-slate-400 border border-slate-700 hover:bg-slate-750'
+                        }`}
                       >
-                        <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                        <span>{language === 'hi' ? '⚡ सीधे बुक करें' : '⚡ Instant Book'}</span>
+                        <Sparkles className={`w-3.5 h-3.5 ${availableCount > 0 ? 'text-amber-300' : 'text-slate-500'}`} />
+                        <span>
+                          {availableCount > 0
+                            ? (language === 'hi' ? '⚡ सीधे बुक करें' : '⚡ Instant Book')
+                            : (language === 'hi' ? 'कारीगर ID नहीं है' : 'No Worker ID')}
+                        </span>
                       </button>
                       <button
                         type="button"
                         onClick={() => {
                           soundManager.playTap();
+                          if (availableCount === 0) {
+                            onBookCategory?.(cat.id);
+                            return;
+                          }
                           setPreselectedPostCategory(cat.id);
                           setIsPostJobOpen(true);
                         }}
@@ -940,7 +1012,8 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                       </button>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
 
                 {searchFilteredCategories.length === 0 && (
                   <div className="p-6 rounded-3xl bg-slate-900/90 border border-slate-800 text-center space-y-3 shadow-xl">
@@ -1615,7 +1688,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
 
       {/* Universal Customer Call & Chat System (Active Booked Worker Only) */}
       <ChatCallModal
-        isOpen={Boolean(safeActiveBooking) && (isChatOpen || isCallOpen)}
+        isOpen={Boolean(safeActiveBooking) && !isBroadcastSearching && (isChatOpen || isCallOpen)}
         onClose={() => {
           setIsChatOpen(false);
           setIsCallOpen(false);

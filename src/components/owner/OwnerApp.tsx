@@ -82,6 +82,10 @@ interface OwnerAppProps {
     note?: string
   ) => void;
   onUnlockWorker?: (workerId: string) => void;
+  onToggleWorkerOwnerStatus?: (workerId: string, suspend: boolean) => void;
+  onRemoveWorker?: (workerId: string) => void;
+  onToggleCustomerOwnerStatus?: (customerId: string, suspend: boolean) => void;
+  onRemoveCustomer?: (customerId: string) => void;
   onNavigateToView?: (view: 'dual' | 'customer' | 'worker') => void;
   payoutHistory?: OwnerPayoutRecord[];
   upiPaymentClaims?: UpiPaymentRequest[];
@@ -101,6 +105,10 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
   onUpdateConfig,
   onPayoutToBank,
   onUnlockWorker,
+  onToggleWorkerOwnerStatus,
+  onRemoveWorker,
+  onToggleCustomerOwnerStatus,
+  onRemoveCustomer,
   onNavigateToView,
   payoutHistory = [],
   upiPaymentClaims = [],
@@ -114,7 +122,7 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
 
   // Active Tab:
   // 'overview' = डैशबोर्ड व मुख्य मेट्रिक्स
-  // 'users' = ऐप कितने लोगों ने इस्तेमाल किया (Customers + Workers Analytics)
+  // 'users' = ऐप कितने लोगों ने इस्तेमाल किया + ओनर सदस्य नियंत्रण (रखें / हटाएं)
   // 'bank_transfer' = वर्कर द्वारा दिए गए पैसे बैंक खाते में ट्रांसफर
   // 'worker_fees' = वर्कर फीस लेजर (₹10 per job details)
   // 'settings' = बैंक खाता व ऐप सेटिंग्स
@@ -122,7 +130,13 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
 
   // User tab filter: 'all' | 'customers' | 'workers' | 'logs'
   const [userRoleFilter, setUserRoleFilter] = useState<'all' | 'customers' | 'workers' | 'logs'>('all');
+  const [memberStatusFilter, setMemberStatusFilter] = useState<'all' | 'kept' | 'held'>('all');
   const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [confirmRemoveTarget, setConfirmRemoveTarget] = useState<{
+    role: 'worker' | 'customer';
+    id: string;
+    name: string;
+  } | null>(null);
 
   // Bank Withdrawal form states
   const [withdrawAmount, setWithdrawAmount] = useState<string>('0');
@@ -194,25 +208,47 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
 
   // Active and locked workers
   const lockedWorkers = workers.filter((w) => Boolean(w.isBlockedDueToUnpaidFee));
-  const activeWorkers = workers.filter((w) => !w.isBlockedDueToUnpaidFee);
-  const onlineWorkers = workers.filter((w) => w.isOnline);
+  const heldByOwnerWorkers = workers.filter((w) => Boolean(w.isSuspendedByOwner));
+  const heldByOwnerCustomers = customers.filter((c) => Boolean(c.isSuspendedByOwner));
+  const totalHeldCount = heldByOwnerWorkers.length + heldByOwnerCustomers.length;
+  const totalKeptCount = Math.max(0, totalAppUsersCount - totalHeldCount);
+  const activeWorkers = workers.filter((w) => !w.isBlockedDueToUnpaidFee && !w.isSuspendedByOwner);
+  const onlineWorkers = workers.filter((w) => w.isOnline && !w.isSuspendedByOwner);
 
   // Filtered users
-  const filteredCustomers = customers.filter(
-    (c) =>
-      c.name.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
+  const filteredCustomers = customers.filter((c) => {
+    const matchesStatus =
+      memberStatusFilter === 'all'
+        ? true
+        : memberStatusFilter === 'kept'
+        ? !c.isSuspendedByOwner
+        : Boolean(c.isSuspendedByOwner);
+    if (!matchesStatus) return false;
+    const q = userSearchQuery.toLowerCase();
+    return (
+      c.name.toLowerCase().includes(q) ||
       c.phone.includes(userSearchQuery) ||
-      c.locality.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
-      c.city.toLowerCase().includes(userSearchQuery.toLowerCase())
-  );
+      c.locality.toLowerCase().includes(q) ||
+      c.city.toLowerCase().includes(q)
+    );
+  });
 
-  const filteredWorkers = workers.filter(
-    (w) =>
-      w.name.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
+  const filteredWorkers = workers.filter((w) => {
+    const matchesStatus =
+      memberStatusFilter === 'all'
+        ? true
+        : memberStatusFilter === 'kept'
+        ? !w.isSuspendedByOwner
+        : Boolean(w.isSuspendedByOwner);
+    if (!matchesStatus) return false;
+    const q = userSearchQuery.toLowerCase();
+    return (
+      w.name.toLowerCase().includes(q) ||
       w.phone.includes(userSearchQuery) ||
-      (w.subSkills && w.subSkills.some(s => s.toLowerCase().includes(userSearchQuery.toLowerCase()))) ||
-      w.category.toLowerCase().includes(userSearchQuery.toLowerCase())
-  );
+      (w.subSkills && w.subSkills.some((s) => s.toLowerCase().includes(q))) ||
+      w.category.toLowerCase().includes(q)
+    );
+  });
 
   // Handle Instant Bank Withdrawal
   const handleInitiateBankTransfer = (e?: React.FormEvent) => {
@@ -431,7 +467,7 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
         }`}
       >
         <Users className="w-3.5 h-3.5 text-blue-400" />
-        <span>{language === 'hi' ? 'ऐप यूजर्स (कितने लोग इस्तेमाल कर रहे हैं)' : 'App Users & Usage'}</span>
+        <span>{language === 'hi' ? 'सदस्य नियंत्रण (रखें / हटाएं)' : 'Manage Users (Keep / Remove)'}</span>
         <span className="px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-mono">
           {totalAppUsersCount}
         </span>
@@ -851,7 +887,7 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
               }}
               className="text-xs text-blue-400 hover:underline font-bold"
             >
-              {language === 'hi' ? 'पूरा देखें' : 'View Full'} →
+              {language === 'hi' ? 'रखें / हटाएं' : 'Manage'} →
             </button>
           </div>
 
@@ -958,9 +994,9 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
       <div className="bg-gradient-to-r from-blue-900/30 via-slate-900 to-slate-900 border border-blue-500/30 rounded-2xl p-5 shadow-lg">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 font-bold text-xs border border-blue-500/30">
-                {language === 'hi' ? 'ऐप यूसेज एनालिटिक्स' : 'App Usage Analytics'}
+                {language === 'hi' ? 'ओनर सदस्य नियंत्रण (रखें / हटाएं)' : 'Owner Member Control'}
               </span>
               <span className="text-xs text-emerald-400 font-semibold">
                 ● {onlineWorkers.length} {language === 'hi' ? 'कारीगर अभी लाइव हैं' : 'workers online now'}
@@ -968,106 +1004,156 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
             </div>
             <h3 className="text-lg font-black text-white mt-1">
               {language === 'hi'
-                ? `इस ऐप को अब तक कुल ${totalAppUsersCount} लोगों ने इस्तेमाल किया है`
-                : `Total ${totalAppUsersCount} People Have Used This Application`}
+                ? `इस ऐप में कुल ${totalAppUsersCount} सदस्य जुड़े हैं — जिसे चाहें रखें, जिसे चाहें हटाएं`
+                : `Total ${totalAppUsersCount} App Members — Keep, Hold, or Remove Anytime`}
             </h3>
             <p className="text-xs text-slate-400 mt-1">
               {language === 'hi'
-                ? `इसमें ${customers.length} पंजीकृत ग्राहक, ${workers.length} कारीगर पार्टनर, और ${jobs.length + paidCommissionRecords.length} कुल कार्य रिकॉर्ड शामिल हैं।`
-                : `Includes ${customers.length} registered customers, ${workers.length} verified artisans, and ${jobs.length + paidCommissionRecords.length} service requests.`}
+                ? `आपकी मर्जी के अनुसार ${totalKeptCount} सक्रिय रखे गए हैं और ${totalHeldCount} रोके (Hold) गए हैं। "हटाएं" दबाते ही वह ID सभी फोन और डेटाबेस से हट जाएगी।`
+                : `${totalKeptCount} active/kept and ${totalHeldCount} on Hold. Removing a user deletes their ID across devices in real time.`}
             </p>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 text-center min-w-[100px]">
-              <span className="text-[10px] text-slate-400 block uppercase font-bold">
-                {language === 'hi' ? 'कुल यूजर बेस' : 'Total Base'}
+            <div className="p-3 bg-slate-950/80 rounded-xl border border-emerald-500/30 text-center min-w-[92px]">
+              <span className="text-[10px] text-emerald-400 block uppercase font-bold">
+                {language === 'hi' ? 'रखे गए' : 'Kept'}
               </span>
-              <span className="text-2xl font-black text-white font-mono">{totalAppUsersCount}</span>
+              <span className="text-2xl font-black text-emerald-300 font-mono">{totalKeptCount}</span>
             </div>
-            <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 text-center min-w-[100px]">
-              <span className="text-[10px] text-slate-400 block uppercase font-bold">
-                {language === 'hi' ? 'कुल बुकिंग्स' : 'Total Jobs'}
+            <div className="p-3 bg-slate-950/80 rounded-xl border border-rose-500/30 text-center min-w-[92px]">
+              <span className="text-[10px] text-rose-400 block uppercase font-bold">
+                {language === 'hi' ? 'रोके गए' : 'On Hold'}
               </span>
-              <span className="text-2xl font-black text-amber-400 font-mono">
-                {jobs.length + paidCommissionRecords.length}
-              </span>
+              <span className="text-2xl font-black text-rose-300 font-mono">{totalHeldCount}</span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Sub-Tabs & Search Controls */}
-      <div className="flex flex-col md:flex-row items-center justify-between gap-3 bg-slate-900/90 p-3 rounded-2xl border border-slate-800">
-        <div className="flex items-center gap-1.5 w-full md:w-auto overflow-x-auto">
-          <button
-            onClick={() => {
-              soundManager.playTap();
-              setUserRoleFilter('all');
-            }}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-              userRoleFilter === 'all'
-                ? 'bg-blue-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            {language === 'hi' ? 'सभी यूजर्स' : 'All Users'} ({totalAppUsersCount})
-          </button>
-          <button
-            onClick={() => {
-              soundManager.playTap();
-              setUserRoleFilter('customers');
-            }}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-              userRoleFilter === 'customers'
-                ? 'bg-blue-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            👤 {language === 'hi' ? 'ग्राहक (Customers)' : 'Customers'} ({customers.length})
-          </button>
-          <button
-            onClick={() => {
-              soundManager.playTap();
-              setUserRoleFilter('workers');
-            }}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-              userRoleFilter === 'workers'
-                ? 'bg-emerald-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            👷 {language === 'hi' ? 'कारीगर (Workers)' : 'Workers'} ({workers.length})
-          </button>
-          <button
-            onClick={() => {
-              soundManager.playTap();
-              setUserRoleFilter('logs');
-            }}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-              userRoleFilter === 'logs'
-                ? 'bg-purple-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            ⚡ {language === 'hi' ? 'लाइव यूसेज लॉग' : 'Live Usage Log'}
-          </button>
+      {/* Sub-Tabs, Keep/Hold Filter & Search Controls */}
+      <div className="flex flex-col gap-3 bg-slate-900/90 p-3 rounded-2xl border border-slate-800">
+        <div className="flex flex-col md:flex-row items-center justify-between gap-3">
+          <div className="flex items-center gap-1.5 w-full md:w-auto overflow-x-auto">
+            <button
+              onClick={() => {
+                soundManager.playTap();
+                setUserRoleFilter('all');
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+                userRoleFilter === 'all'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {language === 'hi' ? 'सभी यूजर्स' : 'All Users'} ({totalAppUsersCount})
+            </button>
+            <button
+              onClick={() => {
+                soundManager.playTap();
+                setUserRoleFilter('customers');
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+                userRoleFilter === 'customers'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              👤 {language === 'hi' ? 'ग्राहक (Customers)' : 'Customers'} ({customers.length})
+            </button>
+            <button
+              onClick={() => {
+                soundManager.playTap();
+                setUserRoleFilter('workers');
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+                userRoleFilter === 'workers'
+                  ? 'bg-emerald-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              👷 {language === 'hi' ? 'कारीगर (Workers)' : 'Workers'} ({workers.length})
+            </button>
+            <button
+              onClick={() => {
+                soundManager.playTap();
+                setUserRoleFilter('logs');
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+                userRoleFilter === 'logs'
+                  ? 'bg-purple-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              ⚡ {language === 'hi' ? 'लाइव यूसेज लॉग' : 'Live Usage Log'}
+            </button>
+          </div>
+
+          <div className="relative w-full md:w-72">
+            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder={
+                language === 'hi'
+                  ? 'नाम, फोन, शहर, या स्किल खोजें...'
+                  : 'Search by name, phone, city, or skill...'
+              }
+              value={userSearchQuery}
+              onChange={(e) => setUserSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-3 py-1.5 bg-slate-950 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+            />
+          </div>
         </div>
 
-        <div className="relative w-full md:w-72">
-          <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder={
-              language === 'hi'
-                ? 'नाम, फोन, शहर, या स्किल खोजें...'
-                : 'Search by name, phone, city, or skill...'
-            }
-            value={userSearchQuery}
-            onChange={(e) => setUserSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-3 py-1.5 bg-slate-950 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-          />
-        </div>
+        {userRoleFilter !== 'logs' && (
+          <div className="flex items-center gap-2 pt-2 border-t border-slate-800/80 flex-wrap">
+            <span className="text-[11px] font-bold text-slate-400">
+              {language === 'hi' ? 'फिल्टर:' : 'Filter:'}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                soundManager.playTap();
+                setMemberStatusFilter('all');
+              }}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                memberStatusFilter === 'all'
+                  ? 'bg-amber-500 text-slate-950'
+                  : 'bg-slate-950 text-slate-400 border border-slate-800 hover:text-white'
+              }`}
+            >
+              {language === 'hi' ? `सभी (${totalAppUsersCount})` : `All (${totalAppUsersCount})`}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                soundManager.playTap();
+                setMemberStatusFilter('kept');
+              }}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                memberStatusFilter === 'kept'
+                  ? 'bg-emerald-500 text-slate-950'
+                  : 'bg-slate-950 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/10'
+              }`}
+            >
+              {language === 'hi' ? `✓ रखे गए / सक्रिय (${totalKeptCount})` : `✓ Kept / Active (${totalKeptCount})`}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                soundManager.playTap();
+                setMemberStatusFilter('held');
+              }}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                memberStatusFilter === 'held'
+                  ? 'bg-rose-500 text-white'
+                  : 'bg-slate-950 text-rose-400 border border-rose-500/30 hover:bg-rose-500/10'
+              }`}
+            >
+              {language === 'hi' ? `⏸ रोके गए / Hold (${totalHeldCount})` : `⏸ Held by Owner (${totalHeldCount})`}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Render based on userRoleFilter */}
@@ -1148,65 +1234,159 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {filteredCustomers.map((cust) => (
-                  <div
-                    key={cust.id}
-                    className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-md hover:border-blue-500/40 transition-all space-y-3"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <img
-                          src={cust.avatar}
-                          alt={cust.name}
-                          className="w-11 h-11 rounded-full object-cover border-2 border-blue-500/40 shrink-0"
-                        />
-                        <div>
-                          <h5 className="text-sm font-bold text-white flex items-center gap-1.5">
-                            <span>{cust.name}</span>
-                            <span className="px-1.5 py-0.2 rounded text-[9px] bg-blue-500/20 text-blue-300 font-semibold">
-                              ग्राहक
-                            </span>
-                          </h5>
-                          <div className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
-                            <Phone className="w-3 h-3 text-slate-500" />
-                            <span>{cust.phone}</span>
+                {filteredCustomers.length === 0 ? (
+                  <div className="col-span-full p-6 rounded-2xl bg-slate-900/60 border border-slate-800 text-center text-xs text-slate-400">
+                    {language === 'hi' ? 'इस सूची में अभी कोई ग्राहक नहीं है।' : 'No customers match this filter.'}
+                  </div>
+                ) : (
+                  filteredCustomers.map((cust) => {
+                    const isHeld = Boolean(cust.isSuspendedByOwner);
+                    const isConfirmingRemove =
+                      confirmRemoveTarget?.role === 'customer' && confirmRemoveTarget.id === cust.id;
+                    return (
+                      <div
+                        key={cust.id}
+                        className={`p-4 rounded-2xl border shadow-md transition-all space-y-3 ${
+                          isHeld
+                            ? 'bg-rose-950/15 border-rose-500/50'
+                            : 'bg-slate-900/90 border-slate-800 hover:border-blue-500/40'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <img
+                              src={cust.avatar}
+                              alt={cust.name}
+                              className="w-11 h-11 rounded-full object-cover border-2 border-blue-500/40 shrink-0"
+                            />
+                            <div>
+                              <h5 className="text-sm font-bold text-white flex items-center gap-1.5 flex-wrap">
+                                <span>{cust.name}</span>
+                                <span className="px-1.5 py-0.2 rounded text-[9px] bg-blue-500/20 text-blue-300 font-semibold">
+                                  ग्राहक
+                                </span>
+                              </h5>
+                              <div className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
+                                <Phone className="w-3 h-3 text-slate-500" />
+                                <span>{cust.phone}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 border ${
+                              isHeld
+                                ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                                : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                            }`}
+                          >
+                            {isHeld
+                              ? (language === 'hi' ? '⏸ रोका गया' : 'Held')
+                              : (language === 'hi' ? '✓ सक्रिय' : 'Active')}
+                          </span>
+                        </div>
+
+                        <div className="text-xs text-slate-300 bg-slate-950/60 p-2 rounded-xl border border-slate-800/80 flex items-center gap-1.5">
+                          <MapPin className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                          <span className="truncate">{cust.locality}</span>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t border-slate-800/80">
+                          <div>
+                            <span className="text-[10px] text-slate-500 block">{language === 'hi' ? 'कुल बुकिंग्स' : 'Bookings'}</span>
+                            <strong className="text-white font-mono">{cust.totalBookingsCount || 0} काम</strong>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-500 block">{language === 'hi' ? 'कुल खर्च' : 'Money Spent'}</span>
+                            <strong className="text-emerald-400 font-mono">₹{(cust.totalSpent || 0).toLocaleString('en-IN')}</strong>
                           </div>
                         </div>
-                      </div>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                        Active
-                      </span>
-                    </div>
 
-                    <div className="text-xs text-slate-300 bg-slate-950/60 p-2 rounded-xl border border-slate-800/80 flex items-center gap-1.5">
-                      <MapPin className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                      <span className="truncate">{cust.locality}</span>
-                    </div>
+                        <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
+                          <span>{language === 'hi' ? 'अंतिम सक्रिय: ' : 'Last active: '} {cust.lastActive || 'Today'}</span>
+                          <a
+                            href={`tel:${cust.phone.replace(/[^0-9+]/g, '')}`}
+                            onClick={() => soundManager.playTap()}
+                            className="px-2 py-1 rounded bg-blue-600/20 text-blue-300 hover:bg-blue-600/30 font-bold flex items-center gap-1"
+                          >
+                            <Phone className="w-2.5 h-2.5" />
+                            <span>{language === 'hi' ? 'कॉल' : 'Call'}</span>
+                          </a>
+                        </div>
 
-                    <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t border-slate-800/80">
-                      <div>
-                        <span className="text-[10px] text-slate-500 block">{language === 'hi' ? 'कुल बुकिंग्स' : 'Bookings'}</span>
-                        <strong className="text-white font-mono">{cust.totalBookingsCount || 0} काम</strong>
+                        {/* Owner Member Control Strip: Keep/Activate, Hold, or Remove Permanently */}
+                        <div className="pt-2 border-t border-slate-800/80 space-y-2">
+                          {isConfirmingRemove ? (
+                            <div className="p-2 rounded-xl bg-rose-950/50 border border-rose-500/50 space-y-1.5">
+                              <p className="text-[11px] font-bold text-rose-200 text-center">
+                                {language === 'hi'
+                                  ? `क्या "${cust.name}" को हमेशा के लिए हटाएं?`
+                                  : `Permanently remove "${cust.name}"?`}
+                              </p>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    soundManager.playWarning();
+                                    onRemoveCustomer?.(cust.id);
+                                    setConfirmRemoveTarget(null);
+                                  }}
+                                  className="flex-1 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-black"
+                                >
+                                  {language === 'hi' ? '✓ हाँ, हटाएं' : 'Yes, Remove'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmRemoveTarget(null)}
+                                  className="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 text-[11px] font-bold"
+                                >
+                                  {language === 'hi' ? 'नहीं' : 'Cancel'}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  soundManager.playTap();
+                                  onToggleCustomerOwnerStatus?.(cust.id, !isHeld);
+                                }}
+                                className={`flex-1 py-1.5 px-2.5 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 border transition-all ${
+                                  isHeld
+                                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-500'
+                                    : 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border-amber-500/35'
+                                }`}
+                              >
+                                {isHeld ? (
+                                  <>
+                                    <Check className="w-3 h-3" />
+                                    <span>{language === 'hi' ? '✓ रखें / चालू करें' : 'Keep / Activate'}</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Lock className="w-3 h-3" />
+                                    <span>{language === 'hi' ? '⏸ रोकें (Hold)' : 'Hold'}</span>
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  soundManager.playTap();
+                                  setConfirmRemoveTarget({ role: 'customer', id: cust.id, name: cust.name });
+                                }}
+                                className="py-1.5 px-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 border border-rose-500/35 text-[11px] font-bold flex items-center gap-1 transition-all"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>{language === 'hi' ? 'हटाएं' : 'Remove'}</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <div>
-                        <span className="text-[10px] text-slate-500 block">{language === 'hi' ? 'कुल खर्च' : 'Money Spent'}</span>
-                        <strong className="text-emerald-400 font-mono">₹{(cust.totalSpent || 0).toLocaleString('en-IN')}</strong>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
-                      <span>{language === 'hi' ? 'अंतिम सक्रिय: ' : 'Last active: '} {cust.lastActive || 'Today'}</span>
-                      <a
-                        href={`tel:${cust.phone.replace(/[^0-9+]/g, '')}`}
-                        onClick={(e) => soundManager.playTap()}
-                        className="px-2 py-1 rounded bg-blue-600/20 text-blue-300 hover:bg-blue-600/30 font-bold flex items-center gap-1"
-                      >
-                        <Phone className="w-2.5 h-2.5" />
-                        <span>{language === 'hi' ? 'कॉल' : 'Call'}</span>
-                      </a>
-                    </div>
-                  </div>
-                ))}
+                    );
+                  })
+                )}
               </div>
             </div>
           )}
@@ -1237,132 +1417,220 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {filteredWorkers.map((worker) => (
-                  <div
-                    key={worker.id}
-                    className={`p-4 rounded-2xl bg-slate-900/90 border shadow-md transition-all space-y-3 ${
-                      worker.isBlockedDueToUnpaidFee
-                        ? 'border-red-500/40 bg-red-950/10'
-                        : worker.isIdPaused
-                        ? 'border-amber-500/40 bg-amber-950/10'
-                        : 'border-slate-800 hover:border-emerald-500/40'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <img
-                          src={worker.avatar}
-                          alt={worker.name}
-                          className="w-11 h-11 rounded-full object-cover border-2 border-emerald-500/40 shrink-0"
-                        />
-                        <div>
-                          <h5 className="text-sm font-bold text-white flex items-center gap-1.5">
-                            <span>{worker.name}</span>
-                          </h5>
-                          <div className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
-                            <span className="px-1.5 py-0.2 rounded text-[10px] bg-emerald-500/20 text-emerald-300 font-semibold">
-                              {worker.category}
-                            </span>
-                            <span className="text-amber-400 text-[10px] font-bold">
-                              ★ {worker.rating}
-                            </span>
+                {filteredWorkers.length === 0 ? (
+                  <div className="col-span-full p-6 rounded-2xl bg-slate-900/60 border border-slate-800 text-center text-xs text-slate-400">
+                    {language === 'hi' ? 'इस सूची में अभी कोई कारीगर नहीं है।' : 'No workers match this filter.'}
+                  </div>
+                ) : (
+                  filteredWorkers.map((worker) => {
+                    const isHeldByOwner = Boolean(worker.isSuspendedByOwner);
+                    const isConfirmingRemove =
+                      confirmRemoveTarget?.role === 'worker' && confirmRemoveTarget.id === worker.id;
+                    return (
+                      <div
+                        key={worker.id}
+                        className={`p-4 rounded-2xl bg-slate-900/90 border shadow-md transition-all space-y-3 ${
+                          isHeldByOwner
+                            ? 'border-rose-500/60 bg-rose-950/15'
+                            : worker.isBlockedDueToUnpaidFee
+                            ? 'border-red-500/40 bg-red-950/10'
+                            : worker.isIdPaused
+                            ? 'border-amber-500/40 bg-amber-950/10'
+                            : 'border-slate-800 hover:border-emerald-500/40'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <img
+                              src={worker.avatar}
+                              alt={worker.name}
+                              className="w-11 h-11 rounded-full object-cover border-2 border-emerald-500/40 shrink-0"
+                            />
+                            <div>
+                              <h5 className="text-sm font-bold text-white flex items-center gap-1.5">
+                                <span>{worker.name}</span>
+                              </h5>
+                              <div className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
+                                <span className="px-1.5 py-0.2 rounded text-[10px] bg-emerald-500/20 text-emerald-300 font-semibold">
+                                  {worker.category}
+                                </span>
+                                <span className="text-amber-400 text-[10px] font-bold">
+                                  ★ {worker.rating}
+                                </span>
+                              </div>
+                              {worker.isIdPaused && !isHeldByOwner && (
+                                <p className="text-[10px] text-amber-300/90 mt-0.5 italic">
+                                  ब्रेक: "{worker.idPausedReason || 'काम का मन नहीं है'}"
+                                </p>
+                              )}
+                            </div>
                           </div>
-                          {worker.isIdPaused && (
-                            <p className="text-[10px] text-amber-300/90 mt-0.5 italic">
-                              ब्रेक: "{worker.idPausedReason || 'काम का मन नहीं है'}"
-                            </p>
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                              isHeldByOwner
+                                ? 'bg-rose-500/25 text-rose-300 border border-rose-500/40'
+                                : worker.isIdPaused
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                : worker.isOnline
+                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                : 'bg-slate-800 text-slate-400'
+                            }`}
+                          >
+                            {isHeldByOwner
+                              ? (language === 'hi' ? '🚫 ओनर Hold' : 'Owner Hold')
+                              : worker.isIdPaused
+                              ? '⏸️ आईडी बंद (छुट्टी)'
+                              : worker.isOnline
+                              ? 'Online'
+                              : 'Offline'}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 text-xs bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80">
+                          <div>
+                            <span className="text-[10px] text-slate-500 block">
+                              {language === 'hi' ? 'ओनर को दी फीस (₹10/काम)' : 'Fees Paid to Owner'}
+                            </span>
+                            <strong className="text-emerald-400 font-mono">
+                              ₹{paidCommissionRecords
+                                .filter((c) => c.workerId === worker.id)
+                                .reduce((sum, c) => sum + c.commissionAmount, 0)
+                                .toLocaleString('en-IN')}
+                            </strong>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-500 block">
+                              {language === 'hi' ? 'वॉलेट बैलेंस' : 'Wallet Balance'}
+                            </span>
+                            <strong className="text-amber-300 font-mono">
+                              ₹{worker.walletBalance}
+                            </strong>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between text-[11px] bg-slate-950/60 px-2.5 py-2 rounded-xl border border-slate-800/80">
+                          <span className="text-slate-400 font-mono">
+                            🪪 {worker.aadhaarNumber || 'N/A'}
+                          </span>
+                          {worker.aadhaarFrontPhoto ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                soundManager.playTap();
+                                setInspectAadhaarWorker(worker);
+                              }}
+                              className="px-2 py-0.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 font-bold text-[10px]"
+                            >
+                              {language === 'hi' ? '✓ आधार फोटो देखें' : '✓ View Aadhaar Photo'}
+                            </button>
+                          ) : (
+                            <span className="text-[10px] text-amber-400 font-semibold">
+                              {language === 'hi' ? '⚠️ फोटो पेंडिंग' : '⚠️ No Photo'}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-between text-xs pt-1">
+                          <span className="text-[11px] text-slate-400">
+                            {worker.completedJobsCount || 0} {language === 'hi' ? 'सफल काम' : 'jobs completed'}
+                          </span>
+                          {worker.isBlockedDueToUnpaidFee ? (
+                            <button
+                              onClick={() => {
+                                soundManager.playTap();
+                                if (onUnlockWorker) onUnlockWorker(worker.id);
+                              }}
+                              className="px-2.5 py-1 rounded bg-red-600 hover:bg-red-500 text-white font-bold text-[10px] flex items-center gap-1 shadow-sm"
+                            >
+                              <Unlock className="w-3 h-3" />
+                              <span>{language === 'hi' ? 'फीस अनलॉक' : 'Unlock Fee'}</span>
+                            </button>
+                          ) : (
+                            <a
+                              href={`tel:${worker.phone.replace(/[^0-9+]/g, '')}`}
+                              onClick={() => soundManager.playTap()}
+                              className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-[10px] flex items-center gap-1"
+                            >
+                              <Phone className="w-2.5 h-2.5" />
+                              <span>{worker.phone}</span>
+                            </a>
+                          )}
+                        </div>
+
+                        {/* Owner Member Control Strip: Keep/Activate, Hold, or Remove Permanently */}
+                        <div className="pt-2 border-t border-slate-800/80 space-y-2">
+                          {isConfirmingRemove ? (
+                            <div className="p-2 rounded-xl bg-rose-950/50 border border-rose-500/50 space-y-1.5">
+                              <p className="text-[11px] font-bold text-rose-200 text-center">
+                                {language === 'hi'
+                                  ? `क्या कारीगर "${worker.name}" को हमेशा के लिए हटाएं?`
+                                  : `Permanently remove worker "${worker.name}"?`}
+                              </p>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    soundManager.playWarning();
+                                    onRemoveWorker?.(worker.id);
+                                    setConfirmRemoveTarget(null);
+                                  }}
+                                  className="flex-1 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-black"
+                                >
+                                  {language === 'hi' ? '✓ हाँ, हटाएं' : 'Yes, Remove'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmRemoveTarget(null)}
+                                  className="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 text-[11px] font-bold"
+                                >
+                                  {language === 'hi' ? 'नहीं' : 'Cancel'}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  soundManager.playTap();
+                                  onToggleWorkerOwnerStatus?.(worker.id, !isHeldByOwner);
+                                }}
+                                className={`flex-1 py-1.5 px-2.5 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 border transition-all ${
+                                  isHeldByOwner
+                                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-500'
+                                    : 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border-amber-500/35'
+                                }`}
+                              >
+                                {isHeldByOwner ? (
+                                  <>
+                                    <Check className="w-3 h-3" />
+                                    <span>{language === 'hi' ? '✓ रखें / चालू करें' : 'Keep / Activate'}</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Lock className="w-3 h-3" />
+                                    <span>{language === 'hi' ? '⏸ रोकें (Hold)' : 'Hold'}</span>
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  soundManager.playTap();
+                                  setConfirmRemoveTarget({ role: 'worker', id: worker.id, name: worker.name });
+                                }}
+                                className="py-1.5 px-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 border border-rose-500/35 text-[11px] font-bold flex items-center gap-1 transition-all"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>{language === 'hi' ? 'हटाएं' : 'Remove'}</span>
+                              </button>
+                            </div>
                           )}
                         </div>
                       </div>
-                      <span
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                          worker.isIdPaused
-                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                            : worker.isOnline
-                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                            : 'bg-slate-800 text-slate-400'
-                        }`}
-                      >
-                        {worker.isIdPaused
-                          ? '⏸️ आईडी बंद (छुट्टी)'
-                          : worker.isOnline
-                          ? 'Online'
-                          : 'Offline'}
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2 text-xs bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80">
-                      <div>
-                        <span className="text-[10px] text-slate-500 block">
-                          {language === 'hi' ? 'ओनर को दी फीस (₹10/काम)' : 'Fees Paid to Owner'}
-                        </span>
-                        <strong className="text-emerald-400 font-mono">
-                          ₹{paidCommissionRecords
-                            .filter((c) => c.workerId === worker.id)
-                            .reduce((sum, c) => sum + c.commissionAmount, 0)
-                            .toLocaleString('en-IN')}
-                        </strong>
-                      </div>
-                      <div>
-                        <span className="text-[10px] text-slate-500 block">
-                          {language === 'hi' ? 'वॉलेट बैलेंस' : 'Wallet Balance'}
-                        </span>
-                        <strong className="text-amber-300 font-mono">
-                          ₹{worker.walletBalance}
-                        </strong>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between text-[11px] bg-slate-950/60 px-2.5 py-2 rounded-xl border border-slate-800/80">
-                      <span className="text-slate-400 font-mono">
-                        🪪 {worker.aadhaarNumber || 'N/A'}
-                      </span>
-                      {worker.aadhaarFrontPhoto ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            soundManager.playTap();
-                            setInspectAadhaarWorker(worker);
-                          }}
-                          className="px-2 py-0.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 font-bold text-[10px]"
-                        >
-                          {language === 'hi' ? '✓ आधार फोटो देखें' : '✓ View Aadhaar Photo'}
-                        </button>
-                      ) : (
-                        <span className="text-[10px] text-amber-400 font-semibold">
-                          {language === 'hi' ? '⚠️ फोटो पेंडिंग' : '⚠️ No Photo'}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex items-center justify-between text-xs pt-1">
-                      <span className="text-[11px] text-slate-400">
-                        {worker.completedJobsCount || 0} {language === 'hi' ? 'सफल काम' : 'jobs completed'}
-                      </span>
-                      {worker.isBlockedDueToUnpaidFee ? (
-                        <button
-                          onClick={() => {
-                            soundManager.playTap();
-                            if (onUnlockWorker) onUnlockWorker(worker.id);
-                          }}
-                          className="px-2.5 py-1 rounded bg-red-600 hover:bg-red-500 text-white font-bold text-[10px] flex items-center gap-1 shadow-sm"
-                        >
-                          <Unlock className="w-3 h-3" />
-                          <span>{language === 'hi' ? 'अनब्लॉक करें' : 'Unlock'}</span>
-                        </button>
-                      ) : (
-                        <a
-                          href={`tel:${worker.phone.replace(/[^0-9+]/g, '')}`}
-                          onClick={() => soundManager.playTap()}
-                          className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-[10px] flex items-center gap-1"
-                        >
-                          <Phone className="w-2.5 h-2.5" />
-                          <span>{worker.phone}</span>
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                    );
+                  })
+                )}
               </div>
             </div>
           )}

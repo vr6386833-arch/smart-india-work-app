@@ -29,6 +29,11 @@ import {
   findExistingCustomerByPhone,
   findExistingWorkerByPhone,
 } from '../../services/firebase';
+import {
+  validateAadhaarVerhoeff,
+  computeAadhaarHash,
+  verifyAadhaarCardWithServer,
+} from '../../utils/aadhaarValidator';
 import { FirebasePhoneOtpBox } from './FirebasePhoneOtpBox';
 
 interface OnboardingAuthScreenProps {
@@ -114,6 +119,11 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
   const [wrkAadhaarFrontPhoto, setWrkAadhaarFrontPhoto] = useState('');
   const [wrkAadhaarBackPhoto, setWrkAadhaarBackPhoto] = useState('');
   const [isCompressingAadhaar, setIsCompressingAadhaar] = useState(false);
+  const [isVerifyingAadhaar, setIsVerifyingAadhaar] = useState(false);
+
+  const wrkAadhaarDigits = wrkAadhaar.replace(/\D/g, '');
+  const wrkVerhoeffCheck =
+    wrkAadhaarDigits.length === 12 ? validateAadhaarVerhoeff(wrkAadhaarDigits) : null;
 
   const handleOnboardingAadhaarUpload = async (
     side: 'front' | 'back',
@@ -193,8 +203,9 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
     });
   };
 
-  const handleWorkerSubmit = (e: React.FormEvent) => {
+  const handleWorkerSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isVerifyingAadhaar) return;
     const cleanPhone = wrkPhone.replace(/\D/g, '').slice(0, 10);
     const parsedAge = parseInt(wrkAge, 10);
     const parsedRate = parseInt(wrkDailyRate, 10) || 800;
@@ -225,13 +236,9 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
       return;
     }
 
-    const cleanAadhaar = wrkAadhaar.replace(/\D/g, '');
-    if (cleanAadhaar.length !== 12) {
-      setErrorMsg(
-        language === 'hi'
-          ? 'कृपया पूरे 12 अंकों का सही आधार कार्ड नंबर दर्ज करें'
-          : 'Please enter a valid 12-digit Aadhaar card number'
-      );
+    const verhoeff = validateAadhaarVerhoeff(wrkAadhaar);
+    if (!verhoeff.valid) {
+      setErrorMsg(language === 'hi' ? verhoeff.reasonHi : verhoeff.reasonEn);
       soundManager.playWarning();
       return;
     }
@@ -246,46 +253,81 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
     }
 
     setErrorMsg(null);
-    soundManager.playPaymentSuccess();
+    setIsVerifyingAadhaar(true);
+
     try {
-      confetti({ particleCount: 55, spread: 65 });
-    } catch {}
+      const aadhaarHash = await computeAadhaarHash(verhoeff.digits);
+      const duplicateAadhaar = workers.find(
+        (w) => w.id !== 'wrk_standby_live' && w.aadhaarHash && w.aadhaarHash === aadhaarHash
+      );
+      if (duplicateAadhaar) {
+        setErrorMsg(
+          language === 'hi'
+            ? `यह आधार कार्ड नंबर पहले से दूसरी कारीगर ID (${duplicateAadhaar.name}) में पंजीकृत है।`
+            : `This Aadhaar number is already registered with another Worker ID (${duplicateAadhaar.name}).`
+        );
+        soundManager.playWarning();
+        return;
+      }
 
-    const selectedCat = CATEGORIES.find((c) => c.id === wrkCategory);
-    const formattedPhone = `+91 ${cleanPhone.slice(0, 5)} ${cleanPhone.slice(5)}`;
-    const maskedAadhaar = `XXXX-XXXX-${cleanAadhaar.slice(-4)}`;
-    const randomCode = Math.floor(10000 + Math.random() * 90000);
+      const aiRes = await verifyAadhaarCardWithServer({
+        imageDataUrl: wrkAadhaarFrontPhoto,
+        expectedName: wrkName.trim(),
+        expectedAadhaar: verhoeff.digits,
+      });
 
-    onCreateWorker({
-      name: wrkName.trim(),
-      nameHi: wrkName.trim(),
-      age: parsedAge,
-      phone: formattedPhone,
-      avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80',
-      rating: 5.0,
-      reviewsCount: 0,
-      experienceYears: 3,
-      category: wrkCategory,
-      subSkills: selectedCat ? selectedCat.subcategories.slice(0, 3) : ['General Work'],
-      city: wrkCity.trim() || 'India',
-      locality: wrkLocality.trim(),
-      distanceKm: 0.8,
-      hourlyRate: Math.round(parsedRate / 6),
-      dailyRate: parsedRate,
-      isAadhaarVerified: true,
-      isPanVerified: false,
-      isOnline: true,
-      walletBalance: 0,
-      completedJobsCount: 0,
-      workerIdCode: `SI-WRK-${randomCode}`,
-      aadhaarNumber: maskedAadhaar,
-      aadhaarFrontPhoto: wrkAadhaarFrontPhoto,
-      aadhaarBackPhoto: wrkAadhaarBackPhoto || undefined,
-      registeredDate: 'आज (Live)',
-      isPhoneVerified: true,
-      loginMethod: 'otp',
-      portfolio: [],
-    });
+      if (!aiRes.serverUnavailable && !aiRes.verified) {
+        setErrorMsg(language === 'hi' ? aiRes.reasonHi : aiRes.reasonEn);
+        soundManager.playWarning();
+        return;
+      }
+
+      soundManager.playPaymentSuccess();
+      try {
+        confetti({ particleCount: 55, spread: 65 });
+      } catch {}
+
+      const selectedCat = CATEGORIES.find((c) => c.id === wrkCategory);
+      const formattedPhone = `+91 ${cleanPhone.slice(0, 5)} ${cleanPhone.slice(5)}`;
+      const maskedAadhaar = `XXXX-XXXX-${verhoeff.digits.slice(-4)}`;
+      const randomCode = Math.floor(10000 + Math.random() * 90000);
+
+      onCreateWorker({
+        name: wrkName.trim(),
+        nameHi: wrkName.trim(),
+        age: parsedAge,
+        phone: formattedPhone,
+        avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80',
+        rating: 5.0,
+        reviewsCount: 0,
+        experienceYears: 3,
+        category: wrkCategory,
+        subSkills: selectedCat ? selectedCat.subcategories.slice(0, 3) : ['General Work'],
+        city: wrkCity.trim() || 'India',
+        locality: wrkLocality.trim(),
+        distanceKm: 0.8,
+        hourlyRate: Math.round(parsedRate / 6),
+        dailyRate: parsedRate,
+        isAadhaarVerified: true,
+        isPanVerified: false,
+        isOnline: true,
+        walletBalance: 0,
+        completedJobsCount: 0,
+        workerIdCode: `SI-WRK-${randomCode}`,
+        aadhaarNumber: maskedAadhaar,
+        aadhaarFrontPhoto: wrkAadhaarFrontPhoto,
+        aadhaarBackPhoto: wrkAadhaarBackPhoto || undefined,
+        aadhaarHash,
+        aadhaarExtractedName: aiRes.extractedName || wrkName.trim(),
+        aadhaarDocVerified: Boolean(aiRes.verified && !aiRes.serverUnavailable),
+        registeredDate: 'आज (Live)',
+        isPhoneVerified: true,
+        loginMethod: 'otp',
+        portfolio: [],
+      });
+    } finally {
+      setIsVerifyingAadhaar(false);
+    }
   };
 
   const handleRecoverSearch = async (verifiedPhone10: string) => {
@@ -985,11 +1027,31 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
                   type="tel"
                   maxLength={12}
                   value={wrkAadhaar}
-                  onChange={(e) => setWrkAadhaar(e.target.value.replace(/\D/g, '').slice(0, 12))}
+                  onChange={(e) => {
+                    setErrorMsg(null);
+                    setWrkAadhaar(e.target.value.replace(/\D/g, '').slice(0, 12));
+                  }}
                   placeholder={language === 'hi' ? '12 अंकों का आधार नंबर डालें' : 'Enter 12-digit Aadhaar number'}
-                  className="w-full bg-slate-900 border border-slate-700 focus:border-emerald-500 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none"
+                  className={`w-full bg-slate-900 border rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none ${
+                    wrkVerhoeffCheck
+                      ? wrkVerhoeffCheck.valid
+                        ? 'border-emerald-500'
+                        : 'border-rose-500'
+                      : 'border-slate-700 focus:border-emerald-500'
+                  }`}
                   required
                 />
+                {wrkVerhoeffCheck ? (
+                  <p className={`text-[10px] font-semibold ${wrkVerhoeffCheck.valid ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {language === 'hi' ? wrkVerhoeffCheck.reasonHi : wrkVerhoeffCheck.reasonEn}
+                  </p>
+                ) : (
+                  <p className="text-[10px] text-slate-400">
+                    {language === 'hi'
+                      ? 'नाम व आधार नंबर आपके अपलोड किए गए असली आधार कार्ड फोटो से ऑटो-मैच होंगे।'
+                      : 'Entered name & Aadhaar digits will be matched against your uploaded Aadhaar card.'}
+                  </p>
+                )}
 
                 <div className="grid grid-cols-2 gap-2">
                   {/* Front Photo */}
@@ -1080,10 +1142,15 @@ export const OnboardingAuthScreen: React.FC<OnboardingAuthScreenProps> = ({
 
               <button
                 type="submit"
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/30 flex items-center justify-center gap-2 active:scale-95 transition-all"
+                disabled={isVerifyingAadhaar || isCompressingAadhaar}
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 disabled:opacity-60 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/30 flex items-center justify-center gap-2 active:scale-95 transition-all"
               >
                 <CheckCircle2 className="w-4 h-4" />
-                <span>{language === 'hi' ? 'कारीगर ID बनाएं और काम शुरू करें' : 'Create Worker ID & Start Work'}</span>
+                <span>
+                  {isVerifyingAadhaar
+                    ? (language === 'hi' ? 'आधार कार्ड व नाम की जांच हो रही है...' : 'Verifying Aadhaar & Name...')
+                    : (language === 'hi' ? 'कारीगर ID बनाएं और काम शुरू करें' : 'Create Worker ID & Start Work')}
+                </span>
               </button>
             </div>
           </form>

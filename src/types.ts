@@ -54,6 +54,9 @@ export interface WorkerProfile {
   completedJobsCount: number;
   workerIdCode?: string;
   aadhaarNumber?: string;
+  aadhaarHash?: string;
+  aadhaarExtractedName?: string;
+  aadhaarDocVerified?: boolean;
   aadhaarFrontPhoto?: string;
   aadhaarBackPhoto?: string;
   bloodGroup?: string;
@@ -72,6 +75,9 @@ export interface WorkerProfile {
   };
   isPhoneVerified?: boolean;
   loginMethod?: 'otp' | 'manual';
+  isSuspendedByOwner?: boolean; // When true, Owner placed this worker on Hold (cannot go online or receive jobs)
+  ownerControlNote?: string;
+  ownerDecisionAtMs?: number;
 }
 
 export interface CustomerProfile {
@@ -93,7 +99,10 @@ export interface CustomerProfile {
   totalSpent?: number;
   joinedDate?: string;
   lastActive?: string;
-  status?: 'active' | 'new' | 'inactive';
+  status?: 'active' | 'new' | 'inactive' | 'suspended';
+  isSuspendedByOwner?: boolean; // When true, Owner placed this customer on Hold (cannot post/book)
+  ownerControlNote?: string;
+  ownerDecisionAtMs?: number;
 }
 
 export type JobUrgency = 'urgent' | 'today' | 'flexible';
@@ -202,6 +211,8 @@ export interface WalletTransaction {
 export interface ChatMessage {
   id: string;
   bookingId: string;
+  recipientWorkerId?: string;
+  customerId?: string;
   senderRole: 'customer' | 'worker';
   senderName: string;
   text: string;
@@ -313,6 +324,8 @@ export interface AppOwnerPaymentConfig {
   autoSettlementTime?: string;
   ownerSecurityPin?: string; // 6-digit secret PIN for Owner & Admin access
   cleanResetAtMs?: number; // Epoch ms baseline for filtering pre-launch test records
+  removedWorkerIds?: string[]; // IDs permanently removed by Owner so no device revives them from localStorage
+  removedCustomerIds?: string[]; // Customer IDs permanently removed by Owner
 }
 
 // Platform Commission & Fee Settlement Record

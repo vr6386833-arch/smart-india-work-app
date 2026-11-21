@@ -53,6 +53,8 @@ import {
   syncJobToFirestore,
   syncWorkerToFirestore, 
   syncCustomerToFirestore,
+  deleteWorkerFromFirestore,
+  deleteCustomerFromFirestore,
   syncCommissionToFirestore, 
   syncPayoutToFirestore,
   syncChatMessageToFirestore,
@@ -409,13 +411,13 @@ export default function App() {
   const [activeWorkerId, setActiveWorkerId] = useState<string>(() => {
     try {
       const savedWorkerId = safeStorage.getItem('smart_india_active_worker_id_v4');
-      if (savedWorkerId && workers.some((w) => w.id === savedWorkerId)) {
+      if (savedWorkerId && savedWorkerId !== DEFAULT_STANDBY_WORKER.id) {
         return savedWorkerId;
       }
     } catch {}
-    return workers[0]?.id || DEFAULT_STANDBY_WORKER.id;
+    return DEFAULT_STANDBY_WORKER.id;
   });
-  const activeWorker = workers.find((w) => w.id === activeWorkerId) || workers[0] || DEFAULT_STANDBY_WORKER;
+  const activeWorker = workers.find((w) => w.id === activeWorkerId) || DEFAULT_STANDBY_WORKER;
 
   const [customers, setCustomers] = useState<CustomerProfile[]>(() => {
     try {
@@ -433,13 +435,13 @@ export default function App() {
   const [activeCustomerId, setActiveCustomerId] = useState<string>(() => {
     try {
       const savedCustId = safeStorage.getItem('smart_india_active_customer_id_v4');
-      if (savedCustId && customers.some((c) => c.id === savedCustId)) {
+      if (savedCustId && !savedCustId.startsWith('c_new_guest')) {
         return savedCustId;
       }
     } catch {}
-    return customers[0]?.id || DEVICE_GUEST_CUSTOMER.id;
+    return DEVICE_GUEST_CUSTOMER.id;
   });
-  const customer = customers.find((c) => c.id === activeCustomerId) || customers[0] || DEVICE_GUEST_CUSTOMER;
+  const customer = customers.find((c) => c.id === activeCustomerId) || DEVICE_GUEST_CUSTOMER;
 
   const [jobs, setJobs] = useState<JobPost[]>(() => {
     try {
@@ -546,6 +548,7 @@ export default function App() {
   const activeWorkerIdRef = React.useRef(activeWorkerId);
   const activeWorkerRef = React.useRef(activeWorker);
   const activeViewRef = React.useRef(activeView);
+  const activeBookingRef = React.useRef<Booking | null>(activeBooking);
   const alertedBookingIdsRef = React.useRef<Set<string>>(new Set());
 
   React.useEffect(() => {
@@ -561,10 +564,55 @@ export default function App() {
     activeViewRef.current = activeView;
   }, [activeView]);
 
+  React.useEffect(() => {
+    activeBookingRef.current = activeBooking;
+  }, [activeBooking]);
+
   const rawResetMs = appOwnerConfig.cleanResetAtMs || 0;
   const effectiveCutoffMs = rawResetMs > 0 && rawResetMs <= Date.now() + 300000 ? rawResetMs : CLEAN_LAUNCH_CUTOFF_MS;
 
-  // Real-time App Owner Config listener (UPI ID, QR Photo, Reset Timestamp)
+  const removedWorkerIdsRef = React.useRef<string[]>(appOwnerConfig.removedWorkerIds || []);
+  const removedCustomerIdsRef = React.useRef<string[]>(appOwnerConfig.removedCustomerIds || []);
+
+  React.useEffect(() => {
+    const rmWorkers = appOwnerConfig.removedWorkerIds || [];
+    const rmCustomers = appOwnerConfig.removedCustomerIds || [];
+    removedWorkerIdsRef.current = rmWorkers;
+    removedCustomerIdsRef.current = rmCustomers;
+
+    if (rmWorkers.length > 0) {
+      setWorkers((prev) => prev.filter((w) => !rmWorkers.includes(w.id)));
+      if (rmWorkers.includes(activeWorkerId)) {
+        setActiveWorkerId(DEFAULT_STANDBY_WORKER.id);
+        safeStorage.removeItem('smart_india_active_worker_id_v4');
+        setIncomingBookingAlert(null);
+        setActiveBooking((prev) => (prev && prev.workerId === activeWorkerId && prev.status !== 'completed' ? null : prev));
+        showToast(
+          language === 'hi'
+            ? '⚠️ ओनर द्वारा आपकी कारीगर ID ऐप से हटा दी गई है।'
+            : '⚠️ Your Worker ID has been removed by the App Owner.',
+          'warning'
+        );
+      }
+    }
+
+    if (rmCustomers.length > 0) {
+      setCustomers((prev) => prev.filter((c) => !rmCustomers.includes(c.id)));
+      if (rmCustomers.includes(activeCustomerId)) {
+        setActiveCustomerId(DEVICE_GUEST_CUSTOMER.id);
+        safeStorage.removeItem('smart_india_active_customer_id_v4');
+        setActiveBooking((prev) => (prev && prev.customerId === activeCustomerId && prev.status !== 'completed' ? null : prev));
+        showToast(
+          language === 'hi'
+            ? '⚠️ ओनर द्वारा आपकी ग्राहक ID ऐप से हटा दी गई है।'
+            : '⚠️ Your Customer ID has been removed by the App Owner.',
+          'warning'
+        );
+      }
+    }
+  }, [appOwnerConfig.removedWorkerIds, appOwnerConfig.removedCustomerIds, activeWorkerId, activeCustomerId, language, showToast]);
+
+  // Real-time App Owner Config listener (UPI ID, QR Photo, Reset Timestamp, Removed Member Lists)
   React.useEffect(() => {
     const unsubConfig = listenToAppConfig((cloudCfg) => {
       if (cloudCfg && cloudCfg.upiId) {
@@ -583,9 +631,12 @@ export default function App() {
     const passesCutoff = (tsMs: number) => effectiveCutoffMs <= 0 || tsMs >= effectiveCutoffMs;
 
     const unsubWorkers = listenToWorkers((cloudWorkers) => {
-      const cleanCloud = (cloudWorkers || []).filter((w) => !isLegacyDemoWorker(w));
+      const removedW = removedWorkerIdsRef.current;
+      const cleanCloud = (cloudWorkers || []).filter((w) => !isLegacyDemoWorker(w) && !removedW.includes(w.id));
       setWorkers((prev) => {
-        const recentLocal = prev.filter((w) => !isLegacyDemoWorker(w) && passesCutoff(extractRecordTimeMs(w.id)));
+        const recentLocal = prev.filter(
+          (w) => !isLegacyDemoWorker(w) && !removedW.includes(w.id) && passesCutoff(extractRecordTimeMs(w.id))
+        );
         const map = new Map(recentLocal.map((w) => [w.id, w]));
         cleanCloud.forEach((w) => map.set(w.id, { ...map.get(w.id), ...w }));
         return Array.from(map.values());
@@ -593,9 +644,12 @@ export default function App() {
     }, effectiveCutoffMs);
 
     const unsubCustomers = listenToCustomers((cloudCustomers) => {
-      const cleanCloud = (cloudCustomers || []).filter((c) => !isLegacyDemoCustomer(c));
+      const removedC = removedCustomerIdsRef.current;
+      const cleanCloud = (cloudCustomers || []).filter((c) => !isLegacyDemoCustomer(c) && !removedC.includes(c.id));
       setCustomers((prev) => {
-        const recentLocal = prev.filter((c) => !isLegacyDemoCustomer(c) && passesCutoff(extractRecordTimeMs(c.id)));
+        const recentLocal = prev.filter(
+          (c) => !isLegacyDemoCustomer(c) && !removedC.includes(c.id) && passesCutoff(extractRecordTimeMs(c.id))
+        );
         const map = new Map(recentLocal.map((c) => [c.id, c]));
         cleanCloud.forEach((c) => map.set(c.id, { ...map.get(c.id), ...c }));
         return Array.from(map.values());
@@ -688,7 +742,11 @@ export default function App() {
             prev.paymentStatus === latest.paymentStatus &&
             prev.customerRating === latest.customerRating &&
             prev.customerLiveLocation?.updatedAtMs === latest.customerLiveLocation?.updatedAtMs &&
-            prev.workerLiveLocation?.updatedAtMs === latest.workerLiveLocation?.updatedAtMs
+            prev.customerLiveLocation?.lat === latest.customerLiveLocation?.lat &&
+            prev.customerLiveLocation?.lng === latest.customerLiveLocation?.lng &&
+            prev.workerLiveLocation?.updatedAtMs === latest.workerLiveLocation?.updatedAtMs &&
+            prev.workerLiveLocation?.lat === latest.workerLiveLocation?.lat &&
+            prev.workerLiveLocation?.lng === latest.workerLiveLocation?.lng
           ) {
             return prev;
           }
@@ -702,6 +760,7 @@ export default function App() {
       const workerEligibleForAlerts =
         isWorkerScreen &&
         curWorkerId !== DEFAULT_STANDBY_WORKER.id &&
+        !curWorker?.isSuspendedByOwner &&
         !curWorker?.isIdPaused &&
         !curWorker?.isBlockedDueToUnpaidFee &&
         curWorker?.isOnline !== false;
@@ -781,8 +840,27 @@ export default function App() {
         const msgTime = latestMsg.createdAtMs || extractRecordTimeMs(latestMsg.id);
         const curView = activeViewRef.current;
         const myRole = curView === 'worker' ? 'worker' : 'customer';
+        const curBooking = activeBookingRef.current;
+        const curWorkerId = activeWorkerIdRef.current;
+        const curCustId = activeCustomerIdRef.current;
+
+        const isStrictlyMyActiveBookingMsg =
+          Boolean(curBooking) &&
+          curBooking!.workerId !== 'OPEN_BROADCAST' &&
+          curBooking!.status !== 'searching' &&
+          Boolean(latestMsg.bookingId) &&
+          latestMsg.bookingId !== 'live_booking_chat' &&
+          latestMsg.bookingId === curBooking!.id &&
+          (myRole === 'worker'
+            ? curWorkerId !== DEFAULT_STANDBY_WORKER.id &&
+              curBooking!.workerId === curWorkerId &&
+              (!latestMsg.recipientWorkerId || latestMsg.recipientWorkerId === curWorkerId)
+            : curBooking!.customerId === curCustId &&
+              (!latestMsg.customerId || latestMsg.customerId === curCustId));
+
         if (
           curView !== 'dual' &&
+          isStrictlyMyActiveBookingMsg &&
           latestMsg.senderRole !== myRole &&
           !latestMsg.isCallEvent &&
           Date.now() - msgTime < 20000 &&
@@ -826,6 +904,7 @@ export default function App() {
     if (activeView !== 'worker' && activeView !== 'dual') return;
     if (
       activeWorker.id === DEFAULT_STANDBY_WORKER.id ||
+      activeWorker.isSuspendedByOwner ||
       activeWorker.isIdPaused ||
       activeWorker.isBlockedDueToUnpaidFee ||
       activeWorker.isOnline === false
@@ -929,17 +1008,20 @@ export default function App() {
     };
   }, [incomingRingingCall, answeredCallSession]);
 
-  // Background two-way GPS broadcast while booking is active (when geolocation already granted)
+  // Background two-way GPS broadcast while booking is active (auto-starts + indoor network fallback)
   React.useEffect(() => {
+    const bookingId = activeBooking?.id;
+    const bookingStatus = activeBooking?.status;
+    const bookingShared = activeBooking?.isLocationShared;
     if (
-      !activeBooking ||
-      activeBooking.status === 'completed' ||
-      activeBooking.status === 'cancelled' ||
+      !bookingId ||
+      bookingStatus === 'completed' ||
+      bookingStatus === 'cancelled' ||
       (activeView !== 'customer' && activeView !== 'worker')
     ) {
       return;
     }
-    if (activeView === 'worker' && !activeBooking.isLocationShared) {
+    if (activeView === 'worker' && !bookingShared) {
       return;
     }
     if (typeof navigator === 'undefined' || !navigator.geolocation) return;
@@ -947,55 +1029,93 @@ export default function App() {
     let watchId: number | null = null;
     let cancelled = false;
     let lastSentMs = 0;
+    const role: 'customer' | 'worker' = activeView === 'worker' ? 'worker' : 'customer';
 
-    const startWatch = () => {
+    const pushPosition = (pos: GeolocationPosition, forceImmediate = false) => {
       if (cancelled) return;
-      watchId = navigator.geolocation.watchPosition(
-        (pos) => {
-          const nowMs = Date.now();
-          if (nowMs - lastSentMs < 5000) return;
-          lastSentMs = nowMs;
-          const speedKmh =
-            typeof pos.coords.speed === 'number' && !Number.isNaN(pos.coords.speed)
-              ? Math.round(pos.coords.speed * 3.6)
-              : null;
-          updateBookingLiveLocation(
-            activeBooking.id,
-            activeView === 'worker' ? 'worker' : 'customer',
-            {
-              lat: pos.coords.latitude,
-              lng: pos.coords.longitude,
-              accuracy: Math.round(pos.coords.accuracy),
-              speedKmh,
-              heading: typeof pos.coords.heading === 'number' ? Math.round(pos.coords.heading) : null,
+      const nowMs = Date.now();
+      if (!forceImmediate && nowMs - lastSentMs < 5000) return;
+      lastSentMs = nowMs;
+      const speedKmh =
+        typeof pos.coords.speed === 'number' && !Number.isNaN(pos.coords.speed)
+          ? Math.round(pos.coords.speed * 3.6)
+          : null;
+      const locPayload = {
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        accuracy: Math.round(pos.coords.accuracy),
+        speedKmh,
+        heading: typeof pos.coords.heading === 'number' ? Math.round(pos.coords.heading) : null,
+        updatedAtMs: nowMs,
+      };
+      updateBookingLiveLocation(
+        bookingId,
+        role,
+        locPayload,
+        role === 'worker' ? activeWorker.id : undefined
+      );
+      setActiveBooking((prev) =>
+        prev && prev.id === bookingId
+          ? {
+              ...prev,
+              ...(role === 'customer'
+                ? { customerLiveLocation: locPayload }
+                : { workerLiveLocation: locPayload }),
               updatedAtMs: nowMs,
-            },
-            activeView === 'worker' ? activeWorker.id : undefined
-          );
-        },
-        () => {},
-        { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+            }
+          : prev
       );
     };
 
-    if (navigator.permissions && navigator.permissions.query) {
-      navigator.permissions
-        .query({ name: 'geolocation' as PermissionName })
-        .then((res) => {
-          if (res.state === 'granted') {
-            startWatch();
+    const startWatch = (preferLowAccuracy: boolean) => {
+      if (cancelled) return;
+      if (watchId !== null) {
+        try {
+          navigator.geolocation.clearWatch(watchId);
+        } catch {}
+        watchId = null;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (pos) => pushPosition(pos, true),
+        (err) => {
+          if (!preferLowAccuracy && (err.code === 2 || err.code === 3)) {
+            startWatch(true);
           }
-        })
-        .catch(() => {});
-    }
+        },
+        {
+          enableHighAccuracy: !preferLowAccuracy,
+          maximumAge: preferLowAccuracy ? 30000 : 10000,
+          timeout: preferLowAccuracy ? 20000 : 12000,
+        }
+      );
+
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => pushPosition(pos, false),
+        (err) => {
+          if (!preferLowAccuracy && (err.code === 2 || err.code === 3)) {
+            startWatch(true);
+          }
+        },
+        {
+          enableHighAccuracy: !preferLowAccuracy,
+          maximumAge: preferLowAccuracy ? 20000 : 5000,
+          timeout: preferLowAccuracy ? 25000 : 15000,
+        }
+      );
+    };
+
+    startWatch(false);
 
     return () => {
       cancelled = true;
       if (watchId !== null) {
-        navigator.geolocation.clearWatch(watchId);
+        try {
+          navigator.geolocation.clearWatch(watchId);
+        } catch {}
       }
     };
-  }, [activeBooking, activeView, activeWorker.id]);
+  }, [activeBooking?.id, activeBooking?.status, activeBooking?.isLocationShared, activeView, activeWorker.id]);
 
   const handleMarkNotificationAsRead = (id: string) => {
     setWorkerNotifications((prev) =>
@@ -1031,11 +1151,54 @@ export default function App() {
   // Real-time synced chat stream (starts fresh for active real bookings)
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
-  // 1. Post a new Job Broadcast Requirement (All-Workers Broadcast: First-to-Accept Claims It)
+  const getRegisteredActiveWorkers = (categoryId?: string) => {
+    const verifiedPool = workers.filter(
+      (w) =>
+        w.id !== DEFAULT_STANDBY_WORKER.id &&
+        !isLegacyDemoWorker(w) &&
+        !w.isSuspendedByOwner &&
+        !w.isIdPaused &&
+        !w.isBlockedDueToUnpaidFee &&
+        w.isAadhaarVerified !== false
+    );
+    if (!categoryId) return verifiedPool;
+    const cleanCat = categoryId.trim().toLowerCase();
+    return verifiedPool.filter((w) => (w.category || '').trim().toLowerCase() === cleanCat);
+  };
+
+  // 1. Post a new Job Broadcast Requirement (Blocked if customer is on Hold or no verified Worker ID exists)
   const handlePostJob = (newJobData: Partial<JobPost>) => {
+    if (customer.isSuspendedByOwner) {
+      soundManager.playWarning();
+      showToast(
+        language === 'hi'
+          ? '⚠️ ओनर द्वारा आपकी ग्राहक ID अभी रोकी (Hold) गई है — आप नया काम पोस्ट नहीं कर सकते।'
+          : '⚠️ Your Customer ID is currently on Hold by the App Owner.',
+        'warning'
+      );
+      return;
+    }
     const targetCat = (newJobData.category || 'mistry').trim().toLowerCase();
     const catMeta = CATEGORIES.find((c) => c.id.toLowerCase() === targetCat);
     const catDisplayName = language === 'hi' ? (catMeta?.nameHi || newJobData.category || targetCat) : (catMeta?.name || newJobData.category || targetCat);
+
+    const allVerifiedWorkers = getRegisteredActiveWorkers();
+    const matchingWorkers = getRegisteredActiveWorkers(targetCat);
+    if (allVerifiedWorkers.length === 0 || matchingWorkers.length === 0) {
+      soundManager.playWarning();
+      showToast(
+        allVerifiedWorkers.length === 0
+          ? (language === 'hi'
+              ? '⚠️ अभी ऐप में किसी भी कारीगर (Worker) की ID नहीं बनी है — कारीगर ID बनने के बाद ही काम पोस्ट/बुक होगा।'
+              : '⚠️ No Worker ID is registered in the app yet — job cannot be booked without a registered worker.')
+          : (language === 'hi'
+              ? `⚠️ अभी "${catDisplayName}" काम के लिए किसी कारीगर की ID नहीं बनी है — इसलिए यह काम बुक नहीं हो सकता।`
+              : `⚠️ No registered Worker ID exists for "${catDisplayName}" yet — booking blocked.`),
+        'warning'
+      );
+      return;
+    }
+
     const nowMs = Date.now();
     const safeCustName = (customer.name || '').trim() || 'Smart India Customer';
 
@@ -1061,18 +1224,7 @@ export default function App() {
 
     setJobs((prev) => [newJob, ...prev]);
 
-    // 📢 OPEN BROADCAST TO ALL WORKERS:
-    // Send lead notification to ALL non-paused workers (matching-trade first) + OPEN_BROADCAST tag
-    const nonPausedWorkers = workers.filter(
-      (w) => w.id !== DEFAULT_STANDBY_WORKER.id && !w.isIdPaused
-    );
-    const matchingWorkers = nonPausedWorkers.filter(
-      (w) => (w.category || '').trim().toLowerCase() === targetCat
-    );
-    const sortedRecipients = [
-      ...matchingWorkers,
-      ...nonPausedWorkers.filter((w) => (w.category || '').trim().toLowerCase() !== targetCat),
-    ];
+    const sortedRecipients = matchingWorkers;
 
     const broadcastNotif: WorkerNotification = {
       id: `notif_${nowMs}_broadcast`,
@@ -1099,13 +1251,13 @@ export default function App() {
 
     setWorkerNotifications((prev) => [broadcastNotif, ...perWorkerNotifs, ...prev]);
 
-    // Sync job post to cloud Firestore so ALL workers across all phones see it immediately
+    // Sync job post to cloud Firestore so registered workers in this trade see it immediately
     syncJobToFirestore(newJob);
 
     showToast(
       language === 'hi'
-        ? `📢 ${catDisplayName} काम की लीड सभी कारीगरों को भेज दी गई! जो पहले स्वीकार करेगा, काम उसका होगा।`
-        : `📢 ${catDisplayName} job lead sent to ALL workers! First worker to accept gets the job.`,
+        ? `📢 ${catDisplayName} काम की लीड पंजीकृत कारीगरों को भेज दी गई! जो पहले स्वीकार करेगा, काम उसका होगा।`
+        : `📢 ${catDisplayName} job lead sent to registered workers! First worker to accept gets the job.`,
       'success'
     );
 
@@ -1118,7 +1270,18 @@ export default function App() {
 
   // 2. Direct Book a Worker from Directory (Only allowed for real, online, active workers)
   const handleBookWorker = (worker: WorkerProfile): boolean => {
-    if (!worker || worker.id === DEFAULT_STANDBY_WORKER.id) {
+    if (customer.isSuspendedByOwner) {
+      soundManager.playWarning();
+      showToast(
+        language === 'hi'
+          ? '⚠️ ओनर द्वारा आपकी ग्राहक ID अभी रोकी (Hold) गई है — आप बुकिंग नहीं कर सकते।'
+          : '⚠️ Your Customer ID is currently on Hold by the App Owner.',
+        'warning'
+      );
+      return false;
+    }
+
+    if (!worker || worker.id === DEFAULT_STANDBY_WORKER.id || worker.isSuspendedByOwner) {
       soundManager.playWarning();
       showToast(
         language === 'hi'
@@ -1233,12 +1396,40 @@ export default function App() {
     return true;
   };
 
-  // 2c. Instant Open-Broadcast Booking: sends lead to ALL workers via Firestore; first worker to accept wins it!
+  // 2c. Instant Open-Broadcast Booking: blocked if customer on Hold or NO real verified active Worker ID exists
   const handleBookCategory = (categoryId: string): boolean => {
-    soundManager.playTap();
+    if (customer.isSuspendedByOwner) {
+      soundManager.playWarning();
+      showToast(
+        language === 'hi'
+          ? '⚠️ ओनर द्वारा आपकी ग्राहक ID अभी रोकी (Hold) गई है — आप बुकिंग नहीं कर सकते।'
+          : '⚠️ Your Customer ID is currently on Hold by the App Owner.',
+        'warning'
+      );
+      return false;
+    }
     const cleanCat = categoryId.trim().toLowerCase();
     const catMeta = CATEGORIES.find((c) => c.id.toLowerCase() === cleanCat);
     const catLabel = language === 'hi' ? (catMeta?.nameHi || categoryId) : (catMeta?.name || categoryId);
+
+    const allVerifiedWorkers = getRegisteredActiveWorkers();
+    const matchingWorkers = getRegisteredActiveWorkers(cleanCat);
+    if (allVerifiedWorkers.length === 0 || matchingWorkers.length === 0) {
+      soundManager.playWarning();
+      showToast(
+        allVerifiedWorkers.length === 0
+          ? (language === 'hi'
+              ? '⚠️ अभी ऐप में किसी भी कारीगर (Worker) की ID नहीं बनी है — पहले कारीगर ID बनने दें, तभी बुकिंग होगी।'
+              : '⚠️ No registered Worker ID exists yet — booking is blocked until workers register.')
+          : (language === 'hi'
+              ? `⚠️ अभी "${catLabel}" के लिए कोई कारीगर ID नहीं बनी है — इसलिए यह काम अभी बुक नहीं हो सकता।`
+              : `⚠️ No registered Worker ID exists for "${catLabel}" yet — booking blocked.`),
+        'warning'
+      );
+      return false;
+    }
+
+    soundManager.playTap();
     const nowMs = Date.now();
     const parsedRate = Number((catMeta?.basePriceEstimate || '').replace(/[^\d]/g, ' ').trim().split(/\s+/)[0]) || 650;
     const safeCustName = (customer.name || '').trim() || 'Smart India Customer';
@@ -1251,7 +1442,7 @@ export default function App() {
       customerAddress: customer.address || customer.locality || 'Local Area',
       customerLocality: customer.locality || 'Local Area',
       workerId: 'OPEN_BROADCAST',
-      workerName: language === 'hi' ? 'सभी कारीगरों को लीड भेजी गई' : 'Broadcasted to All Workers',
+      workerName: language === 'hi' ? 'पंजीकृत कारीगरों को लीड भेजी गई' : 'Sent to Registered Workers',
       workerPhone: '',
       workerAvatar: '',
       workerRating: 5,
@@ -1295,9 +1486,7 @@ export default function App() {
     setWorkerNotifications((prev) => [broadcastNotif, ...prev]);
 
     if (activeView === 'dual') {
-      const targetDualWorker =
-        workers.find((w) => w.id !== DEFAULT_STANDBY_WORKER.id && !w.isIdPaused && !w.isBlockedDueToUnpaidFee && (w.category || '').trim().toLowerCase() === cleanCat) ||
-        workers.find((w) => w.id !== DEFAULT_STANDBY_WORKER.id && !w.isIdPaused && !w.isBlockedDueToUnpaidFee);
+      const targetDualWorker = matchingWorkers[0] || allVerifiedWorkers[0];
       if (targetDualWorker) {
         setActiveWorkerId(targetDualWorker.id);
         setIncomingBookingAlert(newBooking);
@@ -1319,8 +1508,8 @@ export default function App() {
 
     showToast(
       language === 'hi'
-        ? `📡 "${catLabel}" की लीड सभी कारीगरों को भेज दी गई — जो पहले स्वीकार करेगा, काम उसका होगा!`
-        : `📡 "${catLabel}" lead broadcast to ALL workers — first to accept wins the job!`,
+        ? `📡 "${catLabel}" की लीड पंजीकृत कारीगरों को भेज दी गई — जो पहले स्वीकार करेगा, काम उसका होगा!`
+        : `📡 "${catLabel}" lead broadcast to registered workers — first to accept wins the job!`,
       'success'
     );
     return true;
@@ -1328,6 +1517,16 @@ export default function App() {
 
   // 2b. Worker Accepts Incoming Booking (Atomic First-to-Accept Claim + Unlock Customer Location)
   const handleAcceptIncomingBooking = async (bookingId?: string) => {
+    if (activeWorker.isSuspendedByOwner) {
+      soundManager.playWarning();
+      showToast(
+        language === 'hi'
+          ? '⚠️ ओनर द्वारा आपकी कारीगर ID रोकी गई है — आप काम स्वीकार नहीं कर सकते।'
+          : '⚠️ Your Worker ID is currently on Hold by the App Owner.',
+        'warning'
+      );
+      return;
+    }
     if (activeWorker.id === DEFAULT_STANDBY_WORKER.id) {
       soundManager.playWarning();
       showToast(
@@ -1456,6 +1655,16 @@ export default function App() {
 
   // 3. Worker Accepts a Broadcast Job Post (First-to-Accept Transaction)
   const handleAcceptJob = async (job: JobPost) => {
+    if (activeWorker.isSuspendedByOwner) {
+      soundManager.playWarning();
+      showToast(
+        language === 'hi'
+          ? '⚠️ ओनर द्वारा आपकी कारीगर ID रोकी गई है — आप काम स्वीकार नहीं कर सकते।'
+          : '⚠️ Your Worker ID is currently on Hold by the App Owner.',
+        'warning'
+      );
+      return;
+    }
     if (activeWorker.id === DEFAULT_STANDBY_WORKER.id) {
       soundManager.playWarning();
       showToast(
@@ -1546,6 +1755,16 @@ export default function App() {
     setWorkers((prev) =>
       prev.map((w) => {
         if (w.id === targetId || (!workerId && w.id === prev[0]?.id)) {
+          if (w.isSuspendedByOwner) {
+            soundManager.playWarning();
+            showToast(
+              language === 'hi'
+                ? '⚠️ ओनर द्वारा आपकी ID रोकी गई है — केवल ओनर ही इसे चालू कर सकते हैं।'
+                : '⚠️ Held by Owner — only the Owner can reactivate this ID.',
+              'warning'
+            );
+            return w;
+          }
           const updated: WorkerProfile = {
             ...w,
             isOnline: !w.isOnline,
@@ -1569,6 +1788,16 @@ export default function App() {
     setWorkers((prev) =>
       prev.map((w) => {
         if (w.id === workerId) {
+          if (!isPaused && w.isSuspendedByOwner) {
+            soundManager.playWarning();
+            showToast(
+              language === 'hi'
+                ? '⚠️ ओनर द्वारा आपकी ID रोकी गई है — केवल ओनर ही इसे चालू कर सकते हैं।'
+                : '⚠️ Held by Owner — only the Owner can reactivate this ID.',
+              'warning'
+            );
+            return w;
+          }
           const updated: WorkerProfile = {
             ...w,
             isIdPaused: isPaused,
@@ -1870,6 +2099,143 @@ export default function App() {
       })
     );
     soundManager.playSuccessCoin();
+  };
+
+  // 7d-2. Owner Member Control: Keep Active / Put on Hold / Remove Permanently (Workers & Customers)
+  const handleToggleWorkerOwnerStatus = (workerId: string, suspend: boolean) => {
+    const target = workers.find((w) => w.id === workerId);
+    setWorkers((prev) =>
+      prev.map((w) => {
+        if (w.id === workerId) {
+          const updated: WorkerProfile = {
+            ...w,
+            isSuspendedByOwner: suspend,
+            isOnline: suspend ? false : true,
+            ownerDecisionAtMs: Date.now(),
+          };
+          syncWorkerToFirestore(updated);
+          return updated;
+        }
+        return w;
+      })
+    );
+    if (suspend) {
+      soundManager.playWarning();
+      showToast(
+        language === 'hi'
+          ? `⏸ कारीगर "${target?.name || ''}" को अस्थायी रूप से रोका (Hold) गया।`
+          : `⏸ Worker "${target?.name || ''}" placed on Hold.`,
+        'info'
+      );
+    } else {
+      soundManager.playSuccessCoin();
+      showToast(
+        language === 'hi'
+          ? `✓ कारीगर "${target?.name || ''}" को ऐप में सक्रिय रखा गया!`
+          : `✓ Worker "${target?.name || ''}" is active & kept in app!`,
+        'success'
+      );
+    }
+  };
+
+  const handleRemoveWorkerByOwner = (workerId: string) => {
+    const target = workers.find((w) => w.id === workerId);
+    setWorkers((prev) => prev.filter((w) => w.id !== workerId));
+    deleteWorkerFromFirestore(workerId);
+
+    const nextRemovedWorkers = Array.from(new Set([...(appOwnerConfig.removedWorkerIds || []), workerId]));
+    removedWorkerIdsRef.current = nextRemovedWorkers;
+    const updatedCfg: AppOwnerPaymentConfig = {
+      ...appOwnerConfig,
+      removedWorkerIds: nextRemovedWorkers,
+    };
+    setAppOwnerConfig(updatedCfg);
+    syncAppConfigToFirestore(updatedCfg);
+
+    if (activeWorkerId === workerId) {
+      setActiveWorkerId(DEFAULT_STANDBY_WORKER.id);
+      safeStorage.removeItem('smart_india_active_worker_id_v4');
+    }
+    if (activeBooking && activeBooking.workerId === workerId && activeBooking.status !== 'completed') {
+      syncBookingToFirestore({ ...activeBooking, status: 'cancelled', updatedAtMs: Date.now() });
+      setActiveBooking(null);
+    }
+
+    soundManager.playWarning();
+    showToast(
+      language === 'hi'
+        ? `🗑️ कारीगर "${target?.name || ''}" को ऐप से हटा दिया गया।`
+        : `🗑️ Worker "${target?.name || ''}" permanently removed from app.`,
+      'info'
+    );
+  };
+
+  const handleToggleCustomerOwnerStatus = (customerId: string, suspend: boolean) => {
+    const target = customers.find((c) => c.id === customerId);
+    setCustomers((prev) =>
+      prev.map((c) => {
+        if (c.id === customerId) {
+          const updated: CustomerProfile = {
+            ...c,
+            isSuspendedByOwner: suspend,
+            status: suspend ? 'suspended' : 'active',
+            ownerDecisionAtMs: Date.now(),
+          };
+          syncCustomerToFirestore(updated);
+          return updated;
+        }
+        return c;
+      })
+    );
+    if (suspend) {
+      soundManager.playWarning();
+      showToast(
+        language === 'hi'
+          ? `⏸ ग्राहक "${target?.name || ''}" को अस्थायी रूप से रोका (Hold) गया।`
+          : `⏸ Customer "${target?.name || ''}" placed on Hold.`,
+        'info'
+      );
+    } else {
+      soundManager.playSuccessCoin();
+      showToast(
+        language === 'hi'
+          ? `✓ ग्राहक "${target?.name || ''}" को ऐप में सक्रिय रखा गया!`
+          : `✓ Customer "${target?.name || ''}" is active & kept in app!`,
+        'success'
+      );
+    }
+  };
+
+  const handleRemoveCustomerByOwner = (customerId: string) => {
+    const target = customers.find((c) => c.id === customerId);
+    setCustomers((prev) => prev.filter((c) => c.id !== customerId));
+    deleteCustomerFromFirestore(customerId);
+
+    const nextRemovedCustomers = Array.from(new Set([...(appOwnerConfig.removedCustomerIds || []), customerId]));
+    removedCustomerIdsRef.current = nextRemovedCustomers;
+    const updatedCfg: AppOwnerPaymentConfig = {
+      ...appOwnerConfig,
+      removedCustomerIds: nextRemovedCustomers,
+    };
+    setAppOwnerConfig(updatedCfg);
+    syncAppConfigToFirestore(updatedCfg);
+
+    if (activeCustomerId === customerId) {
+      setActiveCustomerId(DEVICE_GUEST_CUSTOMER.id);
+      safeStorage.removeItem('smart_india_active_customer_id_v4');
+    }
+    if (activeBooking && activeBooking.customerId === customerId && activeBooking.status !== 'completed') {
+      syncBookingToFirestore({ ...activeBooking, status: 'cancelled', updatedAtMs: Date.now() });
+      setActiveBooking(null);
+    }
+
+    soundManager.playWarning();
+    showToast(
+      language === 'hi'
+        ? `🗑️ ग्राहक "${target?.name || ''}" को ऐप से हटा दिया गया।`
+        : `🗑️ Customer "${target?.name || ''}" permanently removed from app.`,
+      'info'
+    );
   };
 
   // 7e. App Owner Bank Withdrawal Engine
@@ -2410,12 +2776,13 @@ export default function App() {
     setWalletTransactions((prev) => [newTx, ...prev]);
   };
 
-  // 11. Worker KYC update (with Aadhaar Front & Back Photos)
+  // 11. Worker KYC update (with Aadhaar Front & Back Photos + Verhoeff/OCR Metadata)
   const handleUpdateKyc = (
     aadhar: string,
     pan: string,
     aadhaarFrontPhoto?: string,
-    aadhaarBackPhoto?: string
+    aadhaarBackPhoto?: string,
+    extra?: { aadhaarHash?: string; aadhaarExtractedName?: string; aadhaarDocVerified?: boolean }
   ) => {
     setWorkers((prev) =>
       prev.map((w) => {
@@ -2425,6 +2792,9 @@ export default function App() {
             aadhaarNumber: aadhar || w.aadhaarNumber,
             aadhaarFrontPhoto: aadhaarFrontPhoto ?? w.aadhaarFrontPhoto,
             aadhaarBackPhoto: aadhaarBackPhoto ?? w.aadhaarBackPhoto,
+            aadhaarHash: extra?.aadhaarHash || w.aadhaarHash,
+            aadhaarExtractedName: extra?.aadhaarExtractedName || w.aadhaarExtractedName,
+            aadhaarDocVerified: extra?.aadhaarDocVerified ?? w.aadhaarDocVerified,
             isAadhaarVerified: Boolean(aadhaarFrontPhoto ?? w.aadhaarFrontPhoto),
             isPanVerified: Boolean(pan?.trim()) || w.isPanVerified,
           };
@@ -2462,8 +2832,26 @@ export default function App() {
     );
   };
 
-  // 13. Send Real-Time Cross-Device Chat Message via Firestore
+  // 13. Send Real-Time Cross-Device Chat Message via Firestore (Strictly scoped to assigned booking & worker)
   const handleSendMessage = (text: string, options?: SendMessageOptions) => {
+    const targetBookingId = options?.bookingId || activeBooking?.id || '';
+    if (
+      !targetBookingId ||
+      targetBookingId === 'live_booking_chat' ||
+      !activeBooking ||
+      activeBooking.workerId === 'OPEN_BROADCAST' ||
+      activeBooking.status === 'searching'
+    ) {
+      soundManager.playWarning();
+      showToast(
+        language === 'hi'
+          ? '⚠️ जब कोई कारीगर आपका काम स्वीकार कर लेगा, तभी उससे निजी चैट/कॉल हो सकेगी।'
+          : '⚠️ Private chat is enabled once a specific worker accepts this booking.',
+        'warning'
+      );
+      return;
+    }
+
     const now = new Date();
     const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const senderRole: 'customer' | 'worker' =
@@ -2472,7 +2860,9 @@ export default function App() {
     const sanitizedText = SecurityShieldService.sanitizeInput(text);
     const newMsg: ChatMessage = {
       id: `msg_${Date.now()}_${Math.floor(Math.random() * 999)}`,
-      bookingId: options?.bookingId || activeBooking?.id || 'live_booking_chat',
+      bookingId: targetBookingId,
+      recipientWorkerId: activeBooking.workerId,
+      customerId: activeBooking.customerId,
       senderRole,
       senderName: isWorkerSender ? activeWorker.name : customer.name,
       text: sanitizedText,
@@ -2529,11 +2919,15 @@ export default function App() {
   // 16. Add New Customer Profile (Deduplicates by 10-digit mobile number so reinstall never creates duplicate Owner entries)
   const handleAddCustomer = async (newCustData: Omit<CustomerProfile, 'id'>) => {
     const clean10 = normalizeIndianPhone10(newCustData.phone);
+    const removedC = removedCustomerIdsRef.current;
     let existingCust = clean10.length === 10
-      ? customers.find((c) => !c.id.startsWith('c_new_guest') && normalizeIndianPhone10(c.phone) === clean10) || null
+      ? customers.find((c) => !c.id.startsWith('c_new_guest') && !removedC.includes(c.id) && normalizeIndianPhone10(c.phone) === clean10) || null
       : null;
     if (!existingCust && clean10.length === 10) {
-      existingCust = await findExistingCustomerByPhone(clean10);
+      const cloudMatch = await findExistingCustomerByPhone(clean10);
+      if (cloudMatch && !removedC.includes(cloudMatch.id)) {
+        existingCust = cloudMatch;
+      }
     }
 
     if (existingCust) {
@@ -2542,7 +2936,7 @@ export default function App() {
         city: newCustData.city || existingCust.city,
         locality: newCustData.locality || existingCust.locality,
         address: newCustData.address || existingCust.address,
-        lastActive: 'अभी सक्रिय',
+        lastActive: existingCust.isSuspendedByOwner ? existingCust.lastActive : 'अभी सक्रिय',
       };
       setCustomers((prev) => {
         const exists = prev.some((c) => c.id === restoredCustomer.id);
@@ -2615,20 +3009,24 @@ export default function App() {
   // 19. Add New Worker Functionality (Deduplicates by 10-digit mobile number so reinstall never creates duplicate/renamed IDs for Owner!)
   const handleAddWorker = async (newWorkerData: Omit<WorkerProfile, 'id'>) => {
     const clean10 = normalizeIndianPhone10(newWorkerData.phone);
+    const removedW = removedWorkerIdsRef.current;
     let existingWorker = clean10.length === 10
-      ? workers.find((w) => w.id !== DEFAULT_STANDBY_WORKER.id && normalizeIndianPhone10(w.phone) === clean10) || null
+      ? workers.find((w) => w.id !== DEFAULT_STANDBY_WORKER.id && !removedW.includes(w.id) && normalizeIndianPhone10(w.phone) === clean10) || null
       : null;
     if (!existingWorker && clean10.length === 10) {
-      existingWorker = await findExistingWorkerByPhone(clean10);
+      const cloudMatch = await findExistingWorkerByPhone(clean10);
+      if (cloudMatch && !removedW.includes(cloudMatch.id)) {
+        existingWorker = cloudMatch;
+      }
     }
 
     if (existingWorker) {
-      // Preserve registered name, ID code, wallet balance, completed jobs, and any unpaid fee lock
+      // Preserve registered name, ID code, wallet balance, Owner Hold, and any unpaid fee lock
       const restoredWorker: WorkerProfile = {
         ...existingWorker,
         city: newWorkerData.city || existingWorker.city,
         locality: newWorkerData.locality || existingWorker.locality,
-        isOnline: !existingWorker.isIdPaused,
+        isOnline: existingWorker.isSuspendedByOwner ? false : !existingWorker.isIdPaused,
       };
       setWorkers((prev) => {
         const exists = prev.some((w) => w.id === restoredWorker.id);
@@ -2873,7 +3271,11 @@ export default function App() {
             try {
               safeStorage.setItem('smart_india_onboarded_v4', 'true');
               safeStorage.setItem('smart_india_preferred_role_v4', 'customer');
+              safeStorage.removeItem('smart_india_active_customer_id_v4');
+              safeStorage.removeItem('smart_india_active_worker_id_v4');
             } catch {}
+            setActiveCustomerId(DEVICE_GUEST_CUSTOMER.id);
+            setActiveWorkerId(DEFAULT_STANDBY_WORKER.id);
             setIsOwnerSession(false);
             setActiveView('customer');
             setShowOnboarding(false);
@@ -3180,6 +3582,7 @@ export default function App() {
                   onClearAllNotifications={handleClearAllNotifications}
                   incomingBookingAlert={
                     incomingBookingAlert &&
+                    !activeWorker.isSuspendedByOwner &&
                     !activeWorker.isIdPaused &&
                     !activeWorker.isBlockedDueToUnpaidFee &&
                     activeWorker.id !== DEFAULT_STANDBY_WORKER.id &&
@@ -3336,6 +3739,7 @@ export default function App() {
               onClearAllNotifications={handleClearAllNotifications}
               incomingBookingAlert={
                 incomingBookingAlert &&
+                !activeWorker.isSuspendedByOwner &&
                 !activeWorker.isIdPaused &&
                 !activeWorker.isBlockedDueToUnpaidFee &&
                 activeWorker.id !== DEFAULT_STANDBY_WORKER.id &&
@@ -3422,6 +3826,10 @@ export default function App() {
                 }}
                 onPayoutToBank={handleOwnerWithdrawToBank}
                 onUnlockWorker={handleUnlockWorkerByAdmin}
+                onToggleWorkerOwnerStatus={handleToggleWorkerOwnerStatus}
+                onRemoveWorker={handleRemoveWorkerByOwner}
+                onToggleCustomerOwnerStatus={handleToggleCustomerOwnerStatus}
+                onRemoveCustomer={handleRemoveCustomerByOwner}
                 onNavigateToView={(view) => {
                   setIsOwnerSession(true);
                   setActiveView(view);
@@ -3445,10 +3853,14 @@ export default function App() {
                   setCallSessions([]);
                   setAnsweredCallSession(null);
                   purgeAllFirestoreData();
+                  removedWorkerIdsRef.current = [];
+                  removedCustomerIdsRef.current = [];
                   const resetCfg: AppOwnerPaymentConfig = {
                     ...appOwnerConfig,
                     totalWithdrawnToBank: 0,
                     payoutHistory: [],
+                    removedWorkerIds: [],
+                    removedCustomerIds: [],
                     cleanResetAtMs: Date.now(),
                   };
                   setAppOwnerConfig(resetCfg);
@@ -3509,6 +3921,7 @@ export default function App() {
         isOpen={isGlobalAddWorkerOpen}
         onClose={() => setIsGlobalAddWorkerOpen(false)}
         language={language}
+        workers={workers}
         onWorkerAdded={(newWorker) => {
           handleAddWorker(newWorker);
           setIsGlobalAddWorkerOpen(false);

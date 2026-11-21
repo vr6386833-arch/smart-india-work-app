@@ -86,7 +86,13 @@ interface WorkerAppProps {
   onVerifyOtp: (record?: CommissionRecord, method?: 'upi_direct' | 'wallet_deduct') => void;
   onCompleteJob: (amount?: number, method?: 'upi' | 'cash', txnId?: string) => void;
   onRechargeWallet: (amount: number) => void;
-  onUpdateKyc: (aadhar: string, pan: string, aadhaarFrontPhoto?: string, aadhaarBackPhoto?: string) => void;
+  onUpdateKyc: (
+    aadhar: string,
+    pan: string,
+    aadhaarFrontPhoto?: string,
+    aadhaarBackPhoto?: string,
+    extra?: { aadhaarHash?: string; aadhaarExtractedName?: string; aadhaarDocVerified?: boolean }
+  ) => void;
   onAddPortfolio: (title: string, tag: string, desc: string, img: string) => void;
   onUpdateWorker?: (updated: WorkerProfile) => void;
   chatMessages: ChatMessage[];
@@ -253,7 +259,13 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
   const [isOwnerPinOpen, setIsOwnerPinOpen] = useState(false);
 
   const activeBookingMessages = myActiveBooking
-    ? chatMessages.filter((m) => !m.bookingId || m.bookingId === myActiveBooking.id)
+    ? chatMessages.filter(
+        (m) =>
+          Boolean(m.bookingId) &&
+          m.bookingId !== 'live_booking_chat' &&
+          m.bookingId === myActiveBooking.id &&
+          (!m.recipientWorkerId || m.recipientWorkerId === worker.id)
+      )
     : [];
 
   useEffect(() => {
@@ -454,18 +466,31 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
             {/* Duty Toggle Button */}
             <button
               onClick={() => {
+                if (worker.isSuspendedByOwner) {
+                  soundManager.playWarning();
+                  return;
+                }
                 soundManager.playTap();
                 if (worker.isIdPaused && onTogglePauseId) {
                   onTogglePauseId(worker.id, false);
                 }
                 onToggleOnline();
               }}
+              disabled={Boolean(worker.isSuspendedByOwner)}
               className={`p-1.5 rounded-xl transition-all shadow-sm ${
-                worker.isOnline
+                worker.isSuspendedByOwner
+                  ? 'bg-rose-950/70 text-rose-400 border border-rose-500/40 cursor-not-allowed'
+                  : worker.isOnline
                   ? 'bg-emerald-600 text-white shadow-emerald-600/30'
                   : 'bg-slate-800 text-slate-400'
               }`}
-              title={worker.isOnline ? 'Go Offline' : 'Go Online to receive leads'}
+              title={
+                worker.isSuspendedByOwner
+                  ? (language === 'hi' ? 'ओनर द्वारा रोका गया' : 'Held by Owner')
+                  : worker.isOnline
+                  ? 'Go Offline'
+                  : 'Go Online to receive leads'
+              }
             >
               <Power className="w-4 h-4" />
             </button>
@@ -639,6 +664,31 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                   <UserPlus className="w-4 h-4" />
                   <span>{language === 'hi' ? '+ अभी नई Worker ID बनाएं' : '+ Create New Worker ID Now'}</span>
                 </button>
+              </div>
+            )}
+            {/* OWNER SUSPENDED / HOLD BANNER */}
+            {worker.isSuspendedByOwner && (
+              <div className="p-4 rounded-3xl bg-gradient-to-br from-rose-950/90 via-slate-900 to-red-950/80 border-2 border-rose-500/70 shadow-2xl space-y-2 animate-in fade-in">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-2xl bg-rose-500/20 border border-rose-500/50 text-rose-400 flex items-center justify-center shrink-0">
+                    <Lock className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="px-2 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black uppercase">
+                      {language === 'hi' ? 'ओनर द्वारा रोका गया (Owner Hold)' : 'Held by App Owner'}
+                    </span>
+                    <h4 className="text-sm font-black text-white mt-1">
+                      {language === 'hi'
+                        ? 'ओनर द्वारा आपकी कारीगर ID अभी रोकी गई है'
+                        : 'Your Worker ID is currently on Hold by the Owner'}
+                    </h4>
+                  </div>
+                </div>
+                <p className="text-xs text-rose-200/90 leading-relaxed">
+                  {language === 'hi'
+                    ? 'जब तक ऐप ओनर आपकी ID को दोबारा "रखें / चालू करें" नहीं करते, तब तक आप ऑनलाइन नहीं हो सकते और नई काम लीड स्वीकार नहीं कर सकते।'
+                    : 'You cannot go online or accept new leads until the App Owner reactivates your ID.'}
+                </p>
               </div>
             )}
             {/* WORKER ID VOLUNTARILY PAUSED BANNER */}
@@ -2600,6 +2650,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
         isOpen={isKycModalOpen}
         onClose={() => setIsKycModalOpen(false)}
         worker={worker}
+        workers={workers}
         language={language}
         onKycUpdated={onUpdateKyc}
       />
@@ -2640,6 +2691,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
           isOpen={isAddWorkerOpen}
           onClose={() => setIsAddWorkerOpen(false)}
           language={language}
+          workers={workers}
           onWorkerAdded={(newWorker) => {
             onAddWorker(newWorker);
             setIsAddWorkerOpen(false);

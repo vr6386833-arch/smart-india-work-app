@@ -29,12 +29,18 @@ import { CATEGORIES } from '../../data/mockData';
 import { soundManager } from '../../services/soundEffects';
 import { compressDocumentImageFile } from '../../utils/qrImageHelper';
 import { validateIndianMobile10 } from '../../services/firebase';
+import {
+  validateAadhaarVerhoeff,
+  computeAadhaarHash,
+  verifyAadhaarCardWithServer,
+} from '../../utils/aadhaarValidator';
 import { FirebasePhoneOtpBox } from '../common/FirebasePhoneOtpBox';
 
 interface AddWorkerModalProps {
   isOpen: boolean;
   onClose: () => void;
   language: Language;
+  workers?: WorkerProfile[];
   onWorkerAdded: (newWorker: Omit<WorkerProfile, 'id'>) => void;
 }
 
@@ -64,6 +70,7 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
   isOpen,
   onClose,
   language,
+  workers = [],
   onWorkerAdded,
 }) => {
   // Form state
@@ -81,10 +88,14 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
   const [aadhaarFrontPhoto, setAadhaarFrontPhoto] = useState('');
   const [aadhaarBackPhoto, setAadhaarBackPhoto] = useState('');
   const [isUploadingAadhaar, setIsUploadingAadhaar] = useState(false);
+  const [isVerifyingAadhaar, setIsVerifyingAadhaar] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
   // Real Firebase OTP Verification state for Worker ID signup
   const [isOtpVerified, setIsOtpVerified] = useState(false);
+
+  const cleanedAadhaarDigits = aadhaarNumber.replace(/\D/g, '');
+  const aadhaarCheck = cleanedAadhaarDigits.length === 12 ? validateAadhaarVerhoeff(cleanedAadhaarDigits) : null;
 
   if (!isOpen) return null;
 
@@ -167,8 +178,9 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isVerifyingAadhaar) return;
     setErrorMsg('');
 
     if (!name.trim()) {
@@ -185,13 +197,9 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
       return;
     }
 
-    const cleanedAadhaar = aadhaarNumber.replace(/\D/g, '');
-    if (cleanedAadhaar.length !== 12) {
-      setErrorMsg(
-        language === 'hi'
-          ? 'कृपया पूरे 12 अंकों का सही आधार कार्ड नंबर दर्ज करें।'
-          : 'Please enter a valid 12-digit Aadhaar card number.'
-      );
+    const verhoeff = validateAadhaarVerhoeff(aadhaarNumber);
+    if (!verhoeff.valid) {
+      setErrorMsg(language === 'hi' ? verhoeff.reasonHi : verhoeff.reasonEn);
       return;
     }
 
@@ -223,59 +231,90 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
       return;
     }
 
-    const currentCat = CATEGORIES.find((c) => c.id === category) || CATEGORIES[0];
-    const formattedPhone = `+91 ${cleanedPhone.slice(0, 5)} ${cleanedPhone.slice(5)}`;
-    const formattedAadhaar = cleanedAadhaar.length === 12 
-      ? `XXXX-XXXX-${cleanedAadhaar.slice(8)}`
-      : 'XXXX-XXXX-4819';
-    const codeNum = Math.floor(10000 + Math.random() * 90000);
-    const workerIdCode = `SI-WRK-${new Date().getFullYear()}-${codeNum}`;
+    setIsVerifyingAadhaar(true);
+    try {
+      const aadhaarHash = await computeAadhaarHash(verhoeff.digits);
+      const duplicateWorker = workers.find(
+        (w) => w.id !== 'wrk_standby_live' && w.aadhaarHash && w.aadhaarHash === aadhaarHash
+      );
+      if (duplicateWorker) {
+        setErrorMsg(
+          language === 'hi'
+            ? `यह आधार कार्ड नंबर पहले से दूसरी कारीगर ID (${duplicateWorker.name}) में पंजीकृत है।`
+            : `This Aadhaar number is already registered with ${duplicateWorker.name}.`
+        );
+        soundManager.playWarning();
+        return;
+      }
 
-    const newWorkerData: Omit<WorkerProfile, 'id'> = {
-      name: name.trim(),
-      nameHi: name.trim(),
-      age: Number(age),
-      phone: formattedPhone,
-      avatar,
-      rating: 5.0,
-      reviewsCount: 0,
-      experienceYears: Number(experienceYears) || 1,
-      category,
-      subSkills: currentCat.subcategories.slice(0, 4),
-      city: city.trim() || 'Delhi NCR',
-      locality: locality.trim() || 'Sector 62, Noida',
-      distanceKm: 1.2,
-      hourlyRate: Number(hourlyRate) || 150,
-      dailyRate: Number(dailyRate) || 900,
-      isAadhaarVerified: Boolean(aadhaarFrontPhoto && cleanedAadhaar.length === 12),
-      isPanVerified: true,
-      isOnline: true,
-      walletBalance: 0,
-      completedJobsCount: 0,
-      workerIdCode,
-      aadhaarNumber: formattedAadhaar,
-      aadhaarFrontPhoto,
-      aadhaarBackPhoto: aadhaarBackPhoto || undefined,
-      registeredDate: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-      bloodGroup: 'B+',
-      emergencyContact: '+91 98765 00000',
-      isPhoneVerified: true,
-      loginMethod: 'otp',
-      portfolio: [
-        {
-          id: `p_${Date.now()}`,
-          title: `${currentCat.name} Work Excellence`,
-          imageUrl: currentCat.imageUrl || SAMPLE_AVATARS[0],
-          description: `Professional and verified services with guaranteed work warranty.`,
-          tag: currentCat.subcategories[0] || 'Quality Work',
-        },
-      ],
-      currentLocation: { lat: 28.6280, lng: 77.3649 },
-    };
+      const aiRes = await verifyAadhaarCardWithServer({
+        imageDataUrl: aadhaarFrontPhoto,
+        expectedName: name.trim(),
+        expectedAadhaar: verhoeff.digits,
+      });
+      if (!aiRes.serverUnavailable && !aiRes.verified) {
+        setErrorMsg(language === 'hi' ? aiRes.reasonHi : aiRes.reasonEn);
+        soundManager.playWarning();
+        return;
+      }
 
-    soundManager.playSuccess();
-    onWorkerAdded(newWorkerData);
-    onClose();
+      const currentCat = CATEGORIES.find((c) => c.id === category) || CATEGORIES[0];
+      const formattedPhone = `+91 ${cleanedPhone.slice(0, 5)} ${cleanedPhone.slice(5)}`;
+      const formattedAadhaar = `XXXX-XXXX-${verhoeff.digits.slice(8)}`;
+      const codeNum = Math.floor(10000 + Math.random() * 90000);
+      const workerIdCode = `SI-WRK-${new Date().getFullYear()}-${codeNum}`;
+
+      const newWorkerData: Omit<WorkerProfile, 'id'> = {
+        name: name.trim(),
+        nameHi: name.trim(),
+        age: Number(age),
+        phone: formattedPhone,
+        avatar,
+        rating: 5.0,
+        reviewsCount: 0,
+        experienceYears: Number(experienceYears) || 1,
+        category,
+        subSkills: currentCat.subcategories.slice(0, 4),
+        city: city.trim() || 'Delhi NCR',
+        locality: locality.trim() || 'Sector 62, Noida',
+        distanceKm: 1.2,
+        hourlyRate: Number(hourlyRate) || 150,
+        dailyRate: Number(dailyRate) || 900,
+        isAadhaarVerified: true,
+        isPanVerified: true,
+        isOnline: true,
+        walletBalance: 0,
+        completedJobsCount: 0,
+        workerIdCode,
+        aadhaarNumber: formattedAadhaar,
+        aadhaarFrontPhoto,
+        aadhaarBackPhoto: aadhaarBackPhoto || undefined,
+        aadhaarHash,
+        aadhaarExtractedName: aiRes.extractedName || name.trim(),
+        aadhaarDocVerified: Boolean(aiRes.verified && !aiRes.serverUnavailable),
+        registeredDate: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        bloodGroup: 'B+',
+        emergencyContact: '+91 98765 00000',
+        isPhoneVerified: true,
+        loginMethod: 'otp',
+        portfolio: [
+          {
+            id: `p_${Date.now()}`,
+            title: `${currentCat.name} Work Excellence`,
+            imageUrl: currentCat.imageUrl || SAMPLE_AVATARS[0],
+            description: `Professional and verified services with guaranteed work warranty.`,
+            tag: currentCat.subcategories[0] || 'Quality Work',
+          },
+        ],
+        currentLocation: { lat: 28.6280, lng: 77.3649 },
+      };
+
+      soundManager.playSuccess();
+      onWorkerAdded(newWorkerData);
+      onClose();
+    } finally {
+      setIsVerifyingAadhaar(false);
+    }
   };
 
   const currentCatObj = CATEGORIES.find((c) => c.id === category) || CATEGORIES[0];
@@ -411,13 +450,25 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
                 onChange={(e) => handleAadhaarChange(e.target.value)}
                 placeholder="5842-9182-4819"
                 maxLength={14}
-                className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 font-mono tracking-wider focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                className={`w-full bg-slate-950 border rounded-2xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 font-mono tracking-wider focus:outline-none focus:ring-1 ${
+                  aadhaarCheck
+                    ? aadhaarCheck.valid
+                      ? 'border-emerald-500 focus:ring-emerald-500'
+                      : 'border-rose-500 focus:ring-rose-500'
+                    : 'border-slate-800 focus:border-emerald-500 focus:ring-emerald-500'
+                }`}
               />
-              <p className="text-[10px] text-slate-400">
-                {language === 'hi' 
-                  ? '12 अंकों का आधार (फोटो के साथ सत्यापित होगा)' 
-                  : '12-digit Indian Aadhaar card number'}
-              </p>
+              {aadhaarCheck ? (
+                <p className={`text-[10px] font-semibold ${aadhaarCheck.valid ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {language === 'hi' ? aadhaarCheck.reasonHi : aadhaarCheck.reasonEn}
+                </p>
+              ) : (
+                <p className="text-[10px] text-slate-400">
+                  {language === 'hi' 
+                    ? '12 अंकों का आधार (नाम व फोटो के साथ सत्यापित होगा)' 
+                    : '12-digit Indian Aadhaar card number'}
+                </p>
+              )}
             </div>
 
             {/* Mobile Phone Number */}
@@ -794,14 +845,17 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
 
           <button
             type="button"
+            disabled={isVerifyingAadhaar || isUploadingAadhaar}
             onClick={handleSubmit}
-            className={`px-5 py-2.5 rounded-2xl font-bold text-xs shadow-lg flex items-center gap-2 transition-all active:scale-98 ${
+            className={`px-5 py-2.5 rounded-2xl font-bold text-xs shadow-lg flex items-center gap-2 transition-all active:scale-98 disabled:opacity-60 ${
               isOtpVerified
                 ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-slate-950 shadow-emerald-500/20'
                 : 'bg-emerald-950/80 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-500/50 shadow-sm'
             }`}
           >
-            {isOtpVerified ? (
+            {isVerifyingAadhaar ? (
+              <span>{language === 'hi' ? 'आधार कार्ड व नाम जाँचा जा रहा है...' : 'Verifying Aadhaar & Name...'}</span>
+            ) : isOtpVerified ? (
               <>
                 <UserPlus className="w-4 h-4" />
                 <span>{language === 'hi' ? 'कारीगर ID बनाएँ व रजिस्टर करें' : 'Create ID & Register Worker'}</span>
