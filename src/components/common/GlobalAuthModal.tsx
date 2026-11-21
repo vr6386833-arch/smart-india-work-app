@@ -66,7 +66,7 @@ export const GlobalAuthModal: React.FC<GlobalAuthModalProps> = ({
 
   // New user registration extra fields
   const [name, setName] = useState('');
-  const [locality, setLocality] = useState('Sector 62, Noida');
+  const [locality, setLocality] = useState('');
   const [address, setAddress] = useState('');
   const [workerAge, setWorkerAge] = useState<number | ''>(28);
   const [workerAadhaar, setWorkerAadhaar] = useState('');
@@ -141,12 +141,12 @@ export const GlobalAuthModal: React.FC<GlobalAuthModalProps> = ({
         name: finalName,
         phone: formattedPhone,
         avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80',
-        city: 'Delhi NCR',
-        locality: locality.trim() || 'Sector 62, Noida',
-        address: address.trim() || 'Sector 62, Noida',
+        city: 'India',
+        locality: locality.trim() || 'Local Area',
+        address: address.trim() || locality.trim() || 'Local Area',
         loginMethod: 'otp',
         isPhoneVerified: true,
-        savedAddresses: [{ label: 'Home', address: address.trim() || 'Sector 62, Noida' }]
+        savedAddresses: [{ label: 'Home', address: address.trim() || locality.trim() || 'Local Area' }]
       });
     } else {
       const cleanedAadhaar = workerAadhaar.replace(/\D/g, '');
@@ -183,8 +183,8 @@ export const GlobalAuthModal: React.FC<GlobalAuthModalProps> = ({
         experienceYears: 1,
         category: workerCategory,
         subSkills: ['General Work', 'Maintenance'],
-        city: 'Delhi NCR',
-        locality: locality.trim() || 'Sector 62, Noida',
+        city: 'India',
+        locality: locality.trim() || 'Local Area',
         distanceKm: 1.0,
         hourlyRate: 150,
         dailyRate: 900,
@@ -294,12 +294,12 @@ export const GlobalAuthModal: React.FC<GlobalAuthModalProps> = ({
       email: customGmail.trim(),
       phone: formattedPhone,
       avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=400&q=80',
-      city: 'Delhi NCR',
-      locality: locality.trim() || 'Sector 62, Noida',
-      address: address.trim() || 'Sector 62, Noida',
+      city: 'India',
+      locality: locality.trim() || 'Local Area',
+      address: address.trim() || locality.trim() || 'Local Area',
       loginMethod: 'gmail',
       isPhoneVerified: true,
-      savedAddresses: [{ label: 'Home', address: address.trim() || 'Sector 62, Noida' }]
+      savedAddresses: [{ label: 'Home', address: address.trim() || locality.trim() || 'Local Area' }]
     });
 
     soundManager.playPaymentSuccess();

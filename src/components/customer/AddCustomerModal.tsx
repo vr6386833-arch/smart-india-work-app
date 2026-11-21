@@ -13,13 +13,15 @@ import {
   CheckCircle2,
   AlertCircle,
   ArrowRight,
-  Mail
+  Mail,
+  LocateFixed
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { CustomerProfile, Language } from '../../types';
 import { soundManager } from '../../services/soundEffects';
 import { validateIndianMobile10, signInCustomerWithGoogle, mapFirebaseAuthError } from '../../services/firebase';
 import { FirebasePhoneOtpBox } from '../common/FirebasePhoneOtpBox';
+import { getFreshPhoneGps, reverseGeocodePhoneCoords } from '../../utils/liveGpsService';
 
 interface AddCustomerModalProps {
   isOpen: boolean;
@@ -57,7 +59,7 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
   // Form State
   const [name, setName] = useState('');
   const [phoneDigits, setPhoneDigits] = useState('');
-  const [city, setCity] = useState('Noida');
+  const [city, setCity] = useState('');
   const [locality, setLocality] = useState('');
   const [address, setAddress] = useState('');
   const [addressLabel, setAddressLabel] = useState<'Home' | 'Office' | 'Shop'>('Home');
@@ -65,6 +67,7 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
   const [customAvatarUrl, setCustomAvatarUrl] = useState('');
   const [showCustomAvatarInput, setShowCustomAvatarInput] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [isDetectingGps, setIsDetectingGps] = useState(false);
 
   // Real Firebase OTP Verification state
   const [isOtpVerified, setIsOtpVerified] = useState(false);
@@ -141,7 +144,7 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
     const emailName = customGmailName.trim() || customGmail.split('@')[0].replace('.', ' ');
     const formattedName = emailName.charAt(0).toUpperCase() + emailName.slice(1);
     const formattedPhone = `+91 ${cleanPhone.slice(0, 5)} ${cleanPhone.slice(5)}`;
-    const userLocality = customGmailLocality.trim() || 'Sector 62, Noida';
+    const userLocality = customGmailLocality.trim() || locality.trim() || 'India';
 
     onCustomerAdded({
       name: formattedName,
@@ -150,10 +153,10 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
       avatar: selectedAvatar,
       city: city.trim() || 'India',
       locality: userLocality,
-      address: userLocality,
+      address: address.trim() || userLocality,
       loginMethod: 'gmail',
       isPhoneVerified: true,
-      savedAddresses: [{ label: 'Home', address: userLocality }]
+      savedAddresses: [{ label: 'Home', address: address.trim() || userLocality }]
     });
 
     setCustomGmail('');
@@ -167,6 +170,45 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
       confetti({ particleCount: 50, spread: 60 });
     } catch {}
     onClose();
+  };
+
+  const handleDetectCurrentPhoneLocation = async (target: 'otp' | 'gmail') => {
+    soundManager.playTap();
+    setIsDetectingGps(true);
+    setErrorMsg('');
+    try {
+      const gps = await getFreshPhoneGps();
+      if (!gps) {
+        setErrorMsg(
+          language === 'hi'
+            ? 'फ़ोन की लोकेशन अनुमति बंद है या GPS नहीं मिला। कृपया Location चालू करें।'
+            : 'Phone GPS unavailable. Please enable Device Location permission.'
+        );
+        return;
+      }
+      const place = await reverseGeocodePhoneCoords(gps.lat, gps.lng);
+      if (place) {
+        if (target === 'gmail') {
+          setCustomGmailLocality(place.fullAddress || place.locality);
+          if (place.city) setCity(place.city);
+        } else {
+          if (place.city) setCity(place.city);
+          setLocality(place.locality);
+          setAddress(place.fullAddress);
+        }
+      } else {
+        const coordText = `${gps.lat.toFixed(5)}, ${gps.lng.toFixed(5)}`;
+        if (target === 'gmail') {
+          setCustomGmailLocality(coordText);
+        } else {
+          setLocality(coordText);
+          setAddress(coordText);
+        }
+      }
+      soundManager.playSuccess();
+    } finally {
+      setIsDetectingGps(false);
+    }
   };
 
   const handleApplyPresetLocality = (item: { city: string; locality: string }) => {
@@ -233,7 +275,7 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
       name: name.trim(),
       phone: formattedPhone,
       avatar: avatarUrl,
-      city: city.trim() || 'Noida',
+      city: city.trim() || 'India',
       locality: locality.trim(),
       address: address.trim(),
       loginMethod: 'otp',
@@ -430,15 +472,26 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
               </div>
 
               <div>
-                <label className="text-[11px] font-bold text-slate-300 block mb-1">
-                  {language === 'hi' ? 'शहर / इलाका *' : 'City / Locality *'}
-                </label>
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <label className="text-[11px] font-bold text-slate-300">
+                    {language === 'hi' ? 'शहर / इलाका *' : 'City / Locality *'}
+                  </label>
+                  <button
+                    type="button"
+                    disabled={isDetectingGps}
+                    onClick={() => handleDetectCurrentPhoneLocation('gmail')}
+                    className="px-2 py-0.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-[10px] font-bold flex items-center gap-1 disabled:opacity-60"
+                  >
+                    <LocateFixed className="w-3 h-3" />
+                    <span>{isDetectingGps ? '...' : language === 'hi' ? 'अभी की फ़ोन लोकेशन लें' : 'Use Phone GPS'}</span>
+                  </button>
+                </div>
                 <input
                   type="text"
                   required
                   value={customGmailLocality}
                   onChange={(e) => setCustomGmailLocality(e.target.value)}
-                  placeholder={language === 'hi' ? 'जैसे: गोमती नगर, लखनऊ' : 'e.g. Sector 62, Noida'}
+                  placeholder={language === 'hi' ? 'जैसे: गोमती नगर, लखनऊ' : 'e.g. Gomti Nagar, Lucknow'}
                   className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs focus:border-blue-500 focus:outline-none"
                 />
               </div>
@@ -541,6 +594,25 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
               </div>
             </div>
 
+            {/* 1-Click Detect Exact Phone GPS Location */}
+            <button
+              type="button"
+              disabled={isDetectingGps}
+              onClick={() => handleDetectCurrentPhoneLocation('otp')}
+              className="w-full py-2 px-3 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 font-bold text-xs flex items-center justify-center gap-2 transition-all disabled:opacity-60"
+            >
+              <LocateFixed className="w-4 h-4" />
+              <span>
+                {isDetectingGps
+                  ? language === 'hi'
+                    ? 'फ़ोन से सटीक लोकेशन ली जा रही है...'
+                    : 'Detecting exact phone GPS...'
+                  : language === 'hi'
+                  ? '📍 मेरे फ़ोन की अभी की असली लोकेशन ऑटो-भरें'
+                  : '📍 Auto-Fill My Current Phone Location'}
+              </span>
+            </button>
+
             {/* City & Locality */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
@@ -553,7 +625,7 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
                     type="text"
                     value={city}
                     onChange={(e) => setCity(e.target.value)}
-                    placeholder="Noida"
+                    placeholder={language === 'hi' ? 'जैसे: लखनऊ' : 'e.g. Lucknow'}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 text-xs"
                   />
                 </div>
@@ -561,7 +633,7 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
 
               <div className="sm:col-span-2">
                 <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                  {language === 'hi' ? 'क्षेत्र / सेक्टर / कॉलोनी *' : 'Locality / Sector / Area *'}
+                  {language === 'hi' ? 'क्षेत्र / कॉलोनी / गाँव *' : 'Locality / Area / Village *'}
                 </label>
                 <div className="relative">
                   <MapPin className="w-4 h-4 text-orange-400 absolute left-3 top-2.5" />
@@ -569,7 +641,7 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
                     type="text"
                     value={locality}
                     onChange={(e) => setLocality(e.target.value)}
-                    placeholder={language === 'hi' ? 'उदा. सेक्टर 76, आम्रपाली सिलिकॉन' : 'e.g. Sector 76, Amrapali Silicon'}
+                    placeholder={language === 'hi' ? 'जैसे: सरोसा भरोसा, लखनऊ' : 'e.g. Gomti Nagar, Lucknow'}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 text-xs"
                     required
                   />

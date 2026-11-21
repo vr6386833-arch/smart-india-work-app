@@ -82,8 +82,8 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
   const [experienceYears, setExperienceYears] = useState<number>(5);
   const [dailyRate, setDailyRate] = useState<number>(900);
   const [hourlyRate, setHourlyRate] = useState<number>(150);
-  const [city, setCity] = useState('Delhi NCR');
-  const [locality, setLocality] = useState('Sector 62, Noida');
+  const [city, setCity] = useState('');
+  const [locality, setLocality] = useState('');
   const [avatar, setAvatar] = useState(SAMPLE_AVATARS[0]);
   const [aadhaarFrontPhoto, setAadhaarFrontPhoto] = useState('');
   const [aadhaarBackPhoto, setAadhaarBackPhoto] = useState('');
@@ -275,8 +275,8 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
         experienceYears: Number(experienceYears) || 1,
         category,
         subSkills: currentCat.subcategories.slice(0, 4),
-        city: city.trim() || 'Delhi NCR',
-        locality: locality.trim() || 'Sector 62, Noida',
+        city: city.trim() || 'India',
+        locality: locality.trim() || 'Local Area',
         distanceKm: 1.2,
         hourlyRate: Number(hourlyRate) || 150,
         dailyRate: Number(dailyRate) || 900,
@@ -306,7 +306,6 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
             tag: currentCat.subcategories[0] || 'Quality Work',
           },
         ],
-        currentLocation: { lat: 28.6280, lng: 77.3649 },
       };
 
       soundManager.playSuccess();

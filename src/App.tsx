@@ -30,10 +30,12 @@ import {
   OwnerPayoutRecord,
   WorkerNotification,
   UpiPaymentRequest,
-  CallSession
+  CallSession,
+  LiveGeoLocation
 } from './types';
 import { StorageService } from './services/storageService';
 import { safeStorage } from './services/safeStorage';
+import { getFreshPhoneGps, watchExactPhoneGps } from './utils/liveGpsService';
 import { 
   CLEAN_LAUNCH_CUTOFF_MS,
   extractRecordTimeMs,
@@ -50,6 +52,10 @@ import {
   claimBroadcastBookingInFirestore,
   claimJobPostInFirestore,
   updateBookingLiveLocation,
+  setBookingCustomerLocationSharing,
+  cancelBookingInFirestore,
+  cancelCustomerActiveBookingsInFirestore,
+  cancelJobPostInFirestore,
   syncJobToFirestore,
   syncWorkerToFirestore, 
   syncCustomerToFirestore,
@@ -464,7 +470,7 @@ export default function App() {
       const saved = safeStorage.getItem('smart_india_active_booking_v3');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed && !isLegacyDemoBooking(parsed)) {
+        if (parsed && !isLegacyDemoBooking(parsed) && parsed.status !== 'cancelled') {
           return parsed;
         }
       }
@@ -550,6 +556,8 @@ export default function App() {
   const activeViewRef = React.useRef(activeView);
   const activeBookingRef = React.useRef<Booking | null>(activeBooking);
   const alertedBookingIdsRef = React.useRef<Set<string>>(new Set());
+  const allCloudBookingsRef = React.useRef<Booking[]>([]);
+  const notifiedCancelledIdsRef = React.useRef<Set<string>>(new Set());
 
   React.useEffect(() => {
     activeCustomerIdRef.current = activeCustomerId;
@@ -666,22 +674,37 @@ export default function App() {
     }, effectiveCutoffMs);
 
     const unsubBookings = listenToBookings((cloudBookings) => {
-      const freshBookings = (cloudBookings || []).filter((b: Booking & { updatedAtMs?: number }) => {
+      const allCloud = cloudBookings || [];
+      const cancelledIds = new Set(
+        allCloud.filter((b) => b.status === 'cancelled').map((b) => b.id)
+      );
+
+      const freshBookings = allCloud.filter((b: Booking & { updatedAtMs?: number }) => {
         if (isLegacyDemoBooking(b)) return false;
         const tsMs = b.updatedAtMs || b.createdAtMs || extractRecordTimeMs(b.id);
         return passesCutoff(tsMs);
       });
+
+      const sorted = [...freshBookings].sort(
+        (a: Booking & { updatedAtMs?: number }, b: Booking & { updatedAtMs?: number }) =>
+          (b.updatedAtMs || b.createdAtMs || extractRecordTimeMs(b.id) || 0) -
+          (a.updatedAtMs || a.createdAtMs || extractRecordTimeMs(a.id) || 0)
+      );
+      allCloudBookingsRef.current = sorted;
+
+      // Immediately purge notifications belonging to any cancelled booking so Worker never sees stale alerts
+      if (cancelledIds.size > 0) {
+        setWorkerNotifications((prev) =>
+          prev.filter((n) => !n.bookingId || !cancelledIds.has(n.bookingId))
+        );
+      }
+
       if (freshBookings.length === 0) {
         setBroadcastBookings([]);
         setActiveBooking(null);
         setIncomingBookingAlert(null);
         return;
       }
-      const sorted = [...freshBookings].sort(
-        (a: Booking & { updatedAtMs?: number }, b: Booking & { updatedAtMs?: number }) =>
-          (b.updatedAtMs || b.createdAtMs || extractRecordTimeMs(b.id) || 0) -
-          (a.updatedAtMs || a.createdAtMs || extractRecordTimeMs(a.id) || 0)
-      );
 
       const activeFresh = sorted.filter((b) => b.status !== 'cancelled');
 
@@ -697,6 +720,7 @@ export default function App() {
       // Dismiss alert modal if the alerted broadcast booking was already claimed by someone else or cancelled
       setIncomingBookingAlert((prevAlert) => {
         if (!prevAlert) return null;
+        if (cancelledIds.has(prevAlert.id)) return null;
         const latestCopy = sorted.find((b) => b.id === prevAlert.id);
         if (!latestCopy || latestCopy.status === 'cancelled') return null;
         if (
@@ -712,6 +736,25 @@ export default function App() {
       const curCustId = activeCustomerIdRef.current;
       const curView = activeViewRef.current;
 
+      // Notify worker once if their previously active booking was cancelled by customer
+      const prevActive = activeBookingRef.current;
+      if (
+        curView === 'worker' &&
+        prevActive &&
+        prevActive.workerId === curWorkerId &&
+        cancelledIds.has(prevActive.id) &&
+        !notifiedCancelledIdsRef.current.has(prevActive.id)
+      ) {
+        notifiedCancelledIdsRef.current.add(prevActive.id);
+        soundManager.playWarning();
+        showToast(
+          language === 'hi'
+            ? `❌ ग्राहक (${prevActive.customerName}) ने बुकिंग #${prevActive.id} रद्द कर दी है — काम हटा दिया गया।`
+            : `❌ Customer cancelled booking #${prevActive.id} — removed from your screen.`,
+          'info'
+        );
+      }
+
       const latest =
         curView === 'dual'
           ? activeFresh[0] || null
@@ -722,10 +765,12 @@ export default function App() {
       if (!latest) {
         setActiveBooking((prev) => {
           if (!prev) return null;
+          if (cancelledIds.has(prev.id)) return null;
+          // For worker screen, if cloud has zero active bookings assigned to this worker, clear any cached booking immediately
+          if (curView === 'worker') return null;
           const prevInCloud = sorted.find((b) => b.id === prev.id);
-          // If customer's or worker's previous booking was cancelled or claimed by someone else, clear it
           if (prevInCloud && prevInCloud.status === 'cancelled') return null;
-          if (curView === 'worker' && prevInCloud && prevInCloud.workerId !== curWorkerId) return null;
+          if (allCloud.length > 0 && !activeFresh.some((b) => b.id === prev.id)) return null;
           return prev;
         });
       } else {
@@ -739,14 +784,14 @@ export default function App() {
             prev.workerLocationProgress === latest.workerLocationProgress &&
             prev.isOtpVerified === latest.isOtpVerified &&
             prev.isLocationShared === latest.isLocationShared &&
+            Boolean(prev.isCustomerSharingLiveLocation) === Boolean(latest.isCustomerSharingLiveLocation) &&
+            prev.customerAddress === latest.customerAddress &&
+            prev.customerLocality === latest.customerLocality &&
             prev.paymentStatus === latest.paymentStatus &&
             prev.customerRating === latest.customerRating &&
             prev.customerLiveLocation?.updatedAtMs === latest.customerLiveLocation?.updatedAtMs &&
             prev.customerLiveLocation?.lat === latest.customerLiveLocation?.lat &&
-            prev.customerLiveLocation?.lng === latest.customerLiveLocation?.lng &&
-            prev.workerLiveLocation?.updatedAtMs === latest.workerLiveLocation?.updatedAtMs &&
-            prev.workerLiveLocation?.lat === latest.workerLiveLocation?.lat &&
-            prev.workerLiveLocation?.lng === latest.workerLiveLocation?.lng
+            prev.customerLiveLocation?.lng === latest.customerLiveLocation?.lng
           ) {
             return prev;
           }
@@ -1008,114 +1053,112 @@ export default function App() {
     };
   }, [incomingRingingCall, answeredCallSession]);
 
-  // Background two-way GPS broadcast while booking is active (auto-starts + indoor network fallback)
+  const latestCustomerGpsRef = React.useRef<LiveGeoLocation | null>(null);
+
+  // Strictly one-way AND customer-consented GPS broadcast:
+  // Customer's live GPS ONLY streams to Worker AFTER Customer explicitly turns ON live location sharing!
   React.useEffect(() => {
     const bookingId = activeBooking?.id;
     const bookingStatus = activeBooking?.status;
-    const bookingShared = activeBooking?.isLocationShared;
+    const isSharingEnabled = Boolean(activeBooking?.isCustomerSharingLiveLocation);
     if (
       !bookingId ||
       bookingStatus === 'completed' ||
       bookingStatus === 'cancelled' ||
-      (activeView !== 'customer' && activeView !== 'worker')
+      activeView !== 'customer' ||
+      !isSharingEnabled
     ) {
       return;
     }
-    if (activeView === 'worker' && !bookingShared) {
-      return;
-    }
-    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
 
-    let watchId: number | null = null;
-    let cancelled = false;
     let lastSentMs = 0;
-    const role: 'customer' | 'worker' = activeView === 'worker' ? 'worker' : 'customer';
-
-    const pushPosition = (pos: GeolocationPosition, forceImmediate = false) => {
-      if (cancelled) return;
+    const stopWatch = watchExactPhoneGps((locPayload) => {
+      latestCustomerGpsRef.current = locPayload;
       const nowMs = Date.now();
-      if (!forceImmediate && nowMs - lastSentMs < 5000) return;
+      if (nowMs - lastSentMs < 4000) return;
       lastSentMs = nowMs;
-      const speedKmh =
-        typeof pos.coords.speed === 'number' && !Number.isNaN(pos.coords.speed)
-          ? Math.round(pos.coords.speed * 3.6)
-          : null;
-      const locPayload = {
-        lat: pos.coords.latitude,
-        lng: pos.coords.longitude,
-        accuracy: Math.round(pos.coords.accuracy),
-        speedKmh,
-        heading: typeof pos.coords.heading === 'number' ? Math.round(pos.coords.heading) : null,
-        updatedAtMs: nowMs,
-      };
-      updateBookingLiveLocation(
-        bookingId,
-        role,
-        locPayload,
-        role === 'worker' ? activeWorker.id : undefined
-      );
+      updateBookingLiveLocation(bookingId, 'customer', locPayload);
       setActiveBooking((prev) =>
-        prev && prev.id === bookingId
+        prev && prev.id === bookingId && prev.isCustomerSharingLiveLocation
           ? {
               ...prev,
-              ...(role === 'customer'
-                ? { customerLiveLocation: locPayload }
-                : { workerLiveLocation: locPayload }),
+              customerLiveLocation: locPayload,
               updatedAtMs: nowMs,
             }
           : prev
       );
-    };
-
-    const startWatch = (preferLowAccuracy: boolean) => {
-      if (cancelled) return;
-      if (watchId !== null) {
-        try {
-          navigator.geolocation.clearWatch(watchId);
-        } catch {}
-        watchId = null;
-      }
-
-      navigator.geolocation.getCurrentPosition(
-        (pos) => pushPosition(pos, true),
-        (err) => {
-          if (!preferLowAccuracy && (err.code === 2 || err.code === 3)) {
-            startWatch(true);
-          }
-        },
-        {
-          enableHighAccuracy: !preferLowAccuracy,
-          maximumAge: preferLowAccuracy ? 30000 : 10000,
-          timeout: preferLowAccuracy ? 20000 : 12000,
-        }
-      );
-
-      watchId = navigator.geolocation.watchPosition(
-        (pos) => pushPosition(pos, false),
-        (err) => {
-          if (!preferLowAccuracy && (err.code === 2 || err.code === 3)) {
-            startWatch(true);
-          }
-        },
-        {
-          enableHighAccuracy: !preferLowAccuracy,
-          maximumAge: preferLowAccuracy ? 20000 : 5000,
-          timeout: preferLowAccuracy ? 25000 : 15000,
-        }
-      );
-    };
-
-    startWatch(false);
+    });
 
     return () => {
-      cancelled = true;
-      if (watchId !== null) {
-        try {
-          navigator.geolocation.clearWatch(watchId);
-        } catch {}
-      }
+      stopWatch();
     };
-  }, [activeBooking?.id, activeBooking?.status, activeBooking?.isLocationShared, activeView, activeWorker.id]);
+  }, [activeBooking?.id, activeBooking?.status, activeBooking?.isCustomerSharingLiveLocation, activeView]);
+
+  const handleToggleCustomerLiveLocation = async (enabled: boolean) => {
+    if (!activeBooking || activeBooking.status === 'cancelled' || activeBooking.status === 'completed') return;
+    const targetId = activeBooking.id;
+    soundManager.playTap();
+
+    if (!enabled) {
+      latestCustomerGpsRef.current = null;
+      setActiveBooking((prev) =>
+        prev && prev.id === targetId
+          ? {
+              ...prev,
+              isCustomerSharingLiveLocation: false,
+              customerLiveLocation: undefined,
+              updatedAtMs: Date.now(),
+            }
+          : prev
+      );
+      await setBookingCustomerLocationSharing(targetId, false, null);
+      showToast(
+        language === 'hi'
+          ? '🔒 लाइव लोकेशन बंद कर दी गई — अब कारीगर को आपकी लाइव GPS लोकेशन नहीं दिखेगी।'
+          : '🔒 Live location sharing stopped — Worker can no longer see your live GPS.',
+        'info'
+      );
+      return;
+    }
+
+    setActiveBooking((prev) =>
+      prev && prev.id === targetId
+        ? {
+            ...prev,
+            isCustomerSharingLiveLocation: true,
+            updatedAtMs: Date.now(),
+          }
+        : prev
+    );
+    showToast(
+      language === 'hi'
+        ? activeBooking.isLocationShared
+          ? '📍 आपकी असली फ़ोन लाइव लोकेशन कारीगर को भेजी जा रही है!'
+          : '📍 लाइव लोकेशन चालू है — कारीगर के काम स्वीकार करते ही उसे दिखने लगेगी।'
+        : activeBooking.isLocationShared
+        ? '📍 Sharing your exact live phone location with Worker now!'
+        : '📍 Live location enabled — Worker will see it once job is accepted.',
+      'success'
+    );
+
+    const fresh = await getFreshPhoneGps();
+    if (fresh) {
+      latestCustomerGpsRef.current = fresh;
+      setActiveBooking((prev) =>
+        prev && prev.id === targetId && prev.isCustomerSharingLiveLocation
+          ? {
+              ...prev,
+              isCustomerSharingLiveLocation: true,
+              customerLiveLocation: fresh,
+              updatedAtMs: Date.now(),
+            }
+          : prev
+      );
+      await setBookingCustomerLocationSharing(targetId, true, fresh);
+    } else {
+      await setBookingCustomerLocationSharing(targetId, true, null);
+    }
+  };
 
   const handleMarkNotificationAsRead = (id: string) => {
     setWorkerNotifications((prev) =>
@@ -1345,6 +1388,7 @@ export default function App() {
       estimatedAmount: worker.dailyRate,
       status: 'requested', // Pending worker acceptance
       isLocationShared: false, // Customer location locked until worker accepts
+      isCustomerSharingLiveLocation: false, // Stays OFF until customer explicitly turns live location ON
       createdAt: 'Just now',
       scheduledTime: language === 'hi' ? 'तत्काल सेवा अनुरोध' : 'Immediate Request',
       workerLocationProgress: 0,
@@ -1454,6 +1498,7 @@ export default function App() {
       estimatedAmount: parsedRate,
       status: 'searching',
       isLocationShared: false,
+      isCustomerSharingLiveLocation: false, // Customer controls when live location is shared
       createdAt: 'Just now',
       createdAtMs: nowMs,
       updatedAtMs: nowMs,
@@ -1642,11 +1687,7 @@ export default function App() {
     }
 
     if (target && target.workerId === activeWorker.id) {
-      syncBookingToFirestore({
-        ...target,
-        status: 'cancelled' as Booking['status'],
-        updatedAtMs: Date.now(),
-      });
+      void cancelBookingInFirestore(target.id, 'worker');
       setActiveBooking(null);
     }
     setIncomingBookingAlert(null);
@@ -1711,20 +1752,12 @@ export default function App() {
       estimatedAmount: job.budget,
       status: 'accepted',
       isLocationShared: true,
+      isCustomerSharingLiveLocation: false, // Stays OFF until customer explicitly toggles ON
       acceptedAt: 'Just now',
       createdAt: 'Just now',
       createdAtMs: nowMs,
       updatedAtMs: nowMs,
       workerLocationProgress: 0,
-      ...(activeWorker.currentLocation
-        ? {
-            workerLiveLocation: {
-              lat: Number(activeWorker.currentLocation.lat.toFixed(6)),
-              lng: Number(activeWorker.currentLocation.lng.toFixed(6)),
-              updatedAtMs: nowMs,
-            },
-          }
-        : {}),
     };
 
     alertedBookingIdsRef.current.add(newBooking.id);
@@ -3064,7 +3097,7 @@ export default function App() {
       walletBalance: newWorkerData.walletBalance ?? 0,
       isOnline: true,
       portfolio: newWorkerData.portfolio || [],
-      currentLocation: newWorkerData.currentLocation || { lat: 28.5355, lng: 77.3910 }
+      ...(newWorkerData.currentLocation ? { currentLocation: newWorkerData.currentLocation } : {}),
     };
     setWorkers((prev) => [newWorker, ...prev]);
     setActiveWorkerId(newWorkerId);
@@ -3123,19 +3156,59 @@ export default function App() {
     setSupportTickets(INITIAL_TICKETS);
   };
 
-  // Cancel / Dismiss Active Booking
-  const handleCancelBooking = () => {
+  // Cancel / Dismiss Active Booking (cancels in Firestore across customer & worker devices immediately)
+  const handleCancelBooking = (bookingIdToCancel?: string) => {
     soundManager.playTap();
-    if (activeBooking) {
-      syncBookingToFirestore({
-        ...activeBooking,
-        status: 'cancelled' as Booking['status'],
-      });
+    latestCustomerGpsRef.current = null;
+
+    const idsToCancel = new Set<string>();
+    if (bookingIdToCancel) idsToCancel.add(bookingIdToCancel);
+    if (activeBooking?.id) idsToCancel.add(activeBooking.id);
+
+    allCloudBookingsRef.current.forEach((b) => {
+      if (b.customerId === customer.id && b.status !== 'completed' && b.status !== 'cancelled') {
+        idsToCancel.add(b.id);
+      }
+    });
+    broadcastBookings.forEach((b) => {
+      if (b.customerId === customer.id) idsToCancel.add(b.id);
+    });
+
+    const jobIdToCancel =
+      activeBooking?.jobId ||
+      allCloudBookingsRef.current.find((b) => idsToCancel.has(b.id))?.jobId;
+    if (jobIdToCancel) {
+      setJobs((prev) =>
+        prev.map((j) =>
+          j.id === jobIdToCancel ? { ...j, status: 'cancelled', updatedAtMs: Date.now() } : j
+        )
+      );
+      void cancelJobPostInFirestore(jobIdToCancel);
     }
+
+    if (idsToCancel.size > 0 || customer.id) {
+      void cancelCustomerActiveBookingsInFirestore(customer.id, Array.from(idsToCancel));
+    }
+
     setActiveBooking(null);
+    setBroadcastBookings((prev) => prev.filter((b) => !idsToCancel.has(b.id) && b.customerId !== customer.id));
+    setIncomingBookingAlert((prev) =>
+      prev && (idsToCancel.has(prev.id) || prev.customerId === customer.id) ? null : prev
+    );
+    setWorkerNotifications((prev) =>
+      prev.filter((n) => !n.bookingId || !idsToCancel.has(n.bookingId))
+    );
+
     safeStorage.removeItem('smart_india_active_booking');
     safeStorage.removeItem('smart_india_active_booking_v2');
     safeStorage.removeItem('smart_india_active_booking_v3');
+
+    showToast(
+      language === 'hi'
+        ? '❌ बुकिंग रद्द कर दी गई — कारीगर की स्क्रीन से भी हटा दी गई है।'
+        : '❌ Booking cancelled — cleared from worker screen as well.',
+      'info'
+    );
   };
 
   // Update Customer Profile
@@ -3499,6 +3572,7 @@ export default function App() {
                   onAddCustomerAddress={handleAddCustomerAddress}
                   onUpdateCustomerProfile={handleUpdateCustomerProfile}
                   onCancelBooking={handleCancelBooking}
+                  onToggleCustomerLocationSharing={handleToggleCustomerLiveLocation}
                   chatMessages={chatMessages}
                   onSendMessage={handleSendMessage}
                   activeCallSession={activeCallSession}
@@ -3632,6 +3706,7 @@ export default function App() {
               onAddCustomerAddress={handleAddCustomerAddress}
               onUpdateCustomerProfile={handleUpdateCustomerProfile}
               onCancelBooking={handleCancelBooking}
+              onToggleCustomerLocationSharing={handleToggleCustomerLiveLocation}
               chatMessages={chatMessages}
               onSendMessage={handleSendMessage}
               activeCallSession={activeCallSession}

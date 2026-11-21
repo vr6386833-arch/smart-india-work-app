@@ -44,6 +44,7 @@ interface LiveTrackingViewProps {
   onVerifyOtpDirect?: () => void;
   onCompleteJobDirect?: () => void;
   onCancelBooking?: () => void;
+  onToggleCustomerLocationSharing?: (enabled: boolean) => void;
 }
 
 export const LiveTrackingView: React.FC<LiveTrackingViewProps> = ({
@@ -59,6 +60,7 @@ export const LiveTrackingView: React.FC<LiveTrackingViewProps> = ({
   onVerifyOtpDirect,
   onCompleteJobDirect,
   onCancelBooking,
+  onToggleCustomerLocationSharing,
 }) => {
   const [showQrForCustomer, setShowQrForCustomer] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
@@ -162,6 +164,7 @@ export const LiveTrackingView: React.FC<LiveTrackingViewProps> = ({
             onOpenChat={onOpenChat}
             onOpenCall={onOpenCall}
             onTriggerSos={onTriggerSos}
+            onToggleCustomerLocationSharing={onToggleCustomerLocationSharing}
           />
         )}
 
@@ -216,8 +219,8 @@ export const LiveTrackingView: React.FC<LiveTrackingViewProps> = ({
               </h4>
               <p className="text-[11px] text-amber-200/90 mt-0.5 leading-snug">
                 {language === 'hi'
-                  ? 'जो कारीगर पहले इस काम को स्वीकार करेगा वो तुरंत यहाँ जुड़ेगा और कॉल/चैट व लाइव GPS चालू हो जाएगा।'
-                  : 'Whichever worker accepts first will connect here immediately with Call, Chat & Live GPS.'}
+                  ? 'जो कारीगर पहले इस काम को स्वीकार करेगा वो तुरंत यहाँ जुड़ेगा, कॉल/चैट चालू होगा और आपकी लाइव GPS लोकेशन कारीगर को मिल जाएगी।'
+                  : 'Whichever worker accepts first will connect here with Call, Chat & receive your Live GPS location.'}
               </p>
             </div>
           </div>

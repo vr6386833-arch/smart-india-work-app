@@ -68,6 +68,7 @@ interface CustomerAppProps {
   onAddCustomerAddress?: (label: string, address: string) => void;
   onUpdateCustomerProfile?: (updated: Partial<CustomerProfile>) => void;
   onCancelBooking?: () => void;
+  onToggleCustomerLocationSharing?: (enabled: boolean) => void;
   chatMessages: ChatMessage[];
   onSendMessage: (text: string, options?: SendMessageOptions) => void;
   activeCallSession?: CallSession | null;
@@ -109,6 +110,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
   onAddCustomerAddress,
   onUpdateCustomerProfile,
   onCancelBooking,
+  onToggleCustomerLocationSharing,
   chatMessages,
   onSendMessage,
   activeCallSession = null,
@@ -138,7 +140,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                         activeBooking?.id?.startsWith('BK_88') ||
                         activeBooking?.workerName?.includes('Rameshwar') ||
                         activeBooking?.workerName?.includes('Mukesh');
-  const safeActiveBooking = isMockBooking ? null : activeBooking;
+  const safeActiveBooking = isMockBooking || activeBooking?.status === 'cancelled' ? null : activeBooking;
   const [isOwnerPinOpen, setIsOwnerPinOpen] = useState(false);
   const secretTapRef = useRef<{ count: number; lastTap: number }>({ count: 0, lastTap: 0 });
 
@@ -243,7 +245,6 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
           walletBalance: 0,
           completedJobsCount: 1,
           portfolio: [],
-          currentLocation: { lat: 28.5355, lng: 77.391 },
         }
       : null;
 
@@ -1077,6 +1078,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                 onVerifyOtpDirect={onVerifyOtp}
                 onCompleteJobDirect={onCompleteJob}
                 onCancelBooking={onCancelBooking}
+                onToggleCustomerLocationSharing={onToggleCustomerLocationSharing}
               />
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-slate-400">

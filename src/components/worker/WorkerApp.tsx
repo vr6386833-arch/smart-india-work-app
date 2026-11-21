@@ -205,30 +205,57 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
   const unreadNotifCount = notifications.filter((n) => !n.isRead).length;
   const isStandbyWorker = worker.id === 'wrk_standby_live';
   const workerCat = (worker.category || '').trim().toLowerCase();
-  const myActiveBooking = !isStandbyWorker && activeBooking && activeBooking.workerId === worker.id ? activeBooking : null;
+  const myActiveBooking =
+    !isStandbyWorker &&
+    activeBooking &&
+    activeBooking.workerId === worker.id &&
+    activeBooking.status !== 'cancelled'
+      ? activeBooking
+      : null;
 
   // React to incomingBookingAlert prop from parent: support Direct Bookings AND All-Worker Open Broadcast Leads
   useEffect(() => {
-    if (worker.isIdPaused || isStandbyWorker || isAccountBlocked) return;
+    if (
+      worker.isIdPaused ||
+      isStandbyWorker ||
+      isAccountBlocked ||
+      !incomingBookingAlert ||
+      incomingBookingAlert.status === 'cancelled' ||
+      incomingBookingAlert.status === 'completed'
+    ) {
+      setLocalIncomingAlert(null);
+      return;
+    }
 
-    if (incomingBookingAlert) {
-      const isDirectMatch = incomingBookingAlert.workerId === worker.id;
-      const isOpenBroadcast =
-        incomingBookingAlert.workerId === 'OPEN_BROADCAST' ||
-        incomingBookingAlert.status === 'searching';
-      if (isDirectMatch || isOpenBroadcast) {
-        setLocalIncomingAlert(incomingBookingAlert);
-      }
+    const isDirectMatch = incomingBookingAlert.workerId === worker.id;
+    const isOpenBroadcast =
+      incomingBookingAlert.workerId === 'OPEN_BROADCAST' ||
+      incomingBookingAlert.status === 'searching';
+    if (isDirectMatch || isOpenBroadcast) {
+      setLocalIncomingAlert(incomingBookingAlert);
+    } else {
+      setLocalIncomingAlert(null);
     }
   }, [incomingBookingAlert, worker.id, worker.isIdPaused, isStandbyWorker, isAccountBlocked]);
 
-  // Real-time observer: when myActiveBooking updates to a newly booked job for this worker, trigger alert & voice!
+  // Real-time observer: clear worker modals/alerts if booking cancelled, or trigger alert & voice on new job
   const prevBookingIdRef = useRef<string | null>(myActiveBooking?.id || null);
   useEffect(() => {
-    // 🔕 If worker voluntarily paused their ID or is standby placeholder, DO NOT trigger any alert, sound, or voice!
+    if (!myActiveBooking || myActiveBooking.status === 'cancelled') {
+      prevBookingIdRef.current = null;
+      setIsWorkerNavModalOpen(false);
+      setIsOtpModalOpen(false);
+      setIsChatOpen(false);
+      setLocalIncomingAlert((prev) =>
+        prev && activeBooking?.id && prev.id === activeBooking.id ? null : prev
+      );
+      return;
+    }
+
+    // If worker voluntarily paused their ID or is standby placeholder, DO NOT trigger any alert, sound, or voice!
     if (worker.isIdPaused || isStandbyWorker) return;
 
-    if (myActiveBooking && myActiveBooking.serviceCategory.trim().toLowerCase() === workerCat) {
+    if (myActiveBooking.serviceCategory.trim().toLowerCase() === workerCat) {
       if (myActiveBooking.id !== prevBookingIdRef.current) {
         prevBookingIdRef.current = myActiveBooking.id;
         setLocalIncomingAlert(myActiveBooking);
@@ -236,7 +263,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
         soundManager.speakNewBookingAlert(myActiveBooking.customerName, myActiveBooking.estimatedAmount, language, myActiveBooking.serviceCategory);
       }
     }
-  }, [myActiveBooking, workerCat, language, worker.isIdPaused, isStandbyWorker]);
+  }, [myActiveBooking, activeBooking?.id, workerCat, language, worker.isIdPaused, isStandbyWorker]);
   
   // Modals
   const [isRecordsModalOpen, setIsRecordsModalOpen] = useState(false);
@@ -326,6 +353,8 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
   const visibleBroadcastBookings = !worker.isIdPaused
     ? [...broadcastBookings]
         .filter((b) => {
+          if (b.status === 'cancelled' || b.status === 'completed') return false;
+          if (myActiveBooking && b.id === myActiveBooking.id) return false;
           if (leadScopeFilter === 'trade' && workerCat) {
             return (b.serviceCategory || '').trim().toLowerCase() === workerCat;
           }

@@ -33,7 +33,7 @@ export const SosEmergencyModal: React.FC<SosEmergencyModalProps> = ({
   language,
   activeBooking,
   userRole = 'customer',
-  currentLocationText = 'Noida Sector 62 / Dadri Road, Uttar Pradesh',
+  currentLocationText = 'India (Live Phone Location)',
 }) => {
   const [isSirenActive, setIsSirenActive] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
@@ -80,7 +80,7 @@ Location: ${activeBooking?.customerAddress || currentLocationText}
 ${activeBooking ? `Booking ID: ${activeBooking.id}
 Partner Involved: ${userRole === 'customer' ? activeBooking.workerName : activeBooking.customerName}
 Phone: ${userRole === 'customer' ? activeBooking.workerPhone : activeBooking.customerPhone}` : ''}
-Google Maps: https://maps.google.com/?q=28.5670,77.3260
+${activeBooking?.customerLiveLocation ? `Google Maps: https://maps.google.com/?q=${activeBooking.customerLiveLocation.lat},${activeBooking.customerLiveLocation.lng}` : `Location Text: ${activeBooking?.customerAddress || currentLocationText}`}
 
 कृपया तुरंत सहायता भेजें या पुलिस को कॉल करें!`;
 

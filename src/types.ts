@@ -127,6 +127,7 @@ export interface JobPost {
   status: 'open' | 'assigned' | 'in_progress' | 'completed' | 'cancelled';
   assignedWorkerId?: string;
   assignedWorkerName?: string;
+  customerLiveLocation?: LiveGeoLocation;
 }
 
 export type BookingStatus = 
@@ -182,6 +183,9 @@ export interface Booking {
   meetingFeeMethod?: 'upi_direct' | 'wallet_deduct';
   status: BookingStatus;
   isLocationShared?: boolean; // Unlocked only after worker clicks "Accept Job"
+  isCustomerSharingLiveLocation?: boolean; // Strictly false by default; customer turns ON explicitly when they want worker to see live GPS
+  cancelledAtMs?: number;
+  cancelledBy?: 'customer' | 'worker' | 'owner';
   acceptedAt?: string;
   createdAt: string;
   createdAtMs?: number;

@@ -13,7 +13,9 @@ import {
   serverTimestamp,
   getDocFromServer,
   runTransaction,
+  deleteField,
   query,
+  where,
   limit
 } from 'firebase/firestore';
 import {
@@ -244,10 +246,27 @@ export async function testFirestoreConnection(): Promise<boolean> {
   }
 }
 
+function stripUndefinedValue(val: unknown): unknown {
+  if (Array.isArray(val)) {
+    return val.map(stripUndefinedValue).filter((item) => item !== undefined);
+  }
+  if (val && typeof val === 'object' && Object.getPrototypeOf(val) === Object.prototype) {
+    return stripUndefined(val as Record<string, unknown>);
+  }
+  return val;
+}
+
 function stripUndefined<T extends object>(data: T): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(data).filter(([, value]) => value !== undefined)
-  );
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value !== undefined) {
+      const cleaned = stripUndefinedValue(value);
+      if (cleaned !== undefined) {
+        result[key] = cleaned;
+      }
+    }
+  }
+  return result;
 }
 
 enum OperationType {
@@ -340,15 +359,6 @@ export async function claimBroadcastBookingInFirestore(
         acceptedAt: 'Just now',
         workerLocationProgress: 0,
         updatedAtMs: nowMs,
-        ...(worker.currentLocation
-          ? {
-              workerLiveLocation: {
-                lat: Number(worker.currentLocation.lat.toFixed(6)),
-                lng: Number(worker.currentLocation.lng.toFixed(6)),
-                updatedAtMs: nowMs,
-              },
-            }
-          : {}),
       };
 
       tx.set(
@@ -406,14 +416,16 @@ export async function claimJobPostInFirestore(
   }
 }
 
-// Sync real-time customer or worker live GPS coordinates onto active booking
+// Sync real-time customer live GPS coordinates onto active booking (strictly one-way: Customer -> Worker only)
 export async function updateBookingLiveLocation(
   bookingId: string,
   role: 'customer' | 'worker',
   location: LiveGeoLocation,
-  workerId?: string
+  _workerId?: string
 ): Promise<void> {
   if (!db || !bookingId) return;
+  // Never broadcast or store worker's live GPS onto booking / customer side
+  if (role === 'worker') return;
   try {
     const bookingRef = doc(db, 'bookings', bookingId);
     const cleanLoc: LiveGeoLocation = {
@@ -424,21 +436,122 @@ export async function updateBookingLiveLocation(
       heading: location.heading ?? null,
       updatedAtMs: location.updatedAtMs || Date.now(),
     };
-    const fieldName = role === 'worker' ? 'workerLiveLocation' : 'customerLiveLocation';
     await setDoc(bookingRef, {
-      [fieldName]: stripUndefined(cleanLoc),
+      customerLiveLocation: stripUndefined(cleanLoc),
+      isCustomerSharingLiveLocation: true,
       updatedAtMs: Date.now(),
       updatedAt: serverTimestamp(),
     }, { merge: true });
+  } catch (err) {
+    console.error('Error syncing customer live GPS location to cloud:', err);
+  }
+}
 
-    if (role === 'worker' && workerId && workerId !== 'wrk_standby_live') {
-      await setDoc(doc(db, 'workers', workerId), {
-        currentLocation: { lat: cleanLoc.lat, lng: cleanLoc.lng },
+// Explicit customer consent control: turns live GPS sharing ON or OFF & deletes coordinates immediately when turned OFF
+export async function setBookingCustomerLocationSharing(
+  bookingId: string,
+  enabled: boolean,
+  location?: LiveGeoLocation | null
+): Promise<void> {
+  if (!db || !bookingId) return;
+  const nowMs = Date.now();
+  try {
+    const bookingRef = doc(db, 'bookings', bookingId);
+    if (enabled) {
+      const payload: Record<string, unknown> = {
+        isCustomerSharingLiveLocation: true,
+        updatedAtMs: nowMs,
+        updatedAt: serverTimestamp(),
+      };
+      if (location) {
+        payload.customerLiveLocation = stripUndefined({
+          lat: Number(location.lat.toFixed(6)),
+          lng: Number(location.lng.toFixed(6)),
+          accuracy: typeof location.accuracy === 'number' ? Math.round(location.accuracy) : undefined,
+          speedKmh: location.speedKmh ?? null,
+          heading: location.heading ?? null,
+          updatedAtMs: location.updatedAtMs || nowMs,
+        });
+      }
+      await setDoc(bookingRef, payload, { merge: true });
+    } else {
+      await setDoc(bookingRef, {
+        isCustomerSharingLiveLocation: false,
+        customerLiveLocation: deleteField(),
+        updatedAtMs: nowMs,
         updatedAt: serverTimestamp(),
       }, { merge: true });
     }
   } catch (err) {
-    console.error('Error syncing live GPS location to cloud:', err);
+    logFirestoreError(err, OperationType.WRITE, `bookings/${bookingId}`);
+  }
+}
+
+// Atomic booking cancellation in Firestore: sets status='cancelled' & wipes live GPS immediately so Worker app clears it
+export async function cancelBookingInFirestore(
+  bookingId: string,
+  cancelledBy: 'customer' | 'worker' | 'owner' = 'customer'
+): Promise<void> {
+  if (!db || !bookingId) return;
+  const nowMs = Date.now();
+  try {
+    const bookingRef = doc(db, 'bookings', bookingId);
+    await setDoc(bookingRef, {
+      id: bookingId,
+      status: 'cancelled',
+      cancelledBy,
+      cancelledAtMs: nowMs,
+      isLocationShared: false,
+      isCustomerSharingLiveLocation: false,
+      customerLiveLocation: deleteField(),
+      updatedAtMs: nowMs,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+  } catch (err) {
+    logFirestoreError(err, OperationType.WRITE, `bookings/${bookingId}`);
+  }
+}
+
+// Cancel ALL uncompleted bookings belonging to a customer in Firestore (prevents orphaned bookings lingering on Worker screen)
+export async function cancelCustomerActiveBookingsInFirestore(
+  customerId: string,
+  knownBookingIds: string[] = []
+): Promise<void> {
+  if (!db || (!customerId && knownBookingIds.length === 0)) return;
+  try {
+    const targetIds = new Set<string>(knownBookingIds.filter(Boolean));
+    if (customerId) {
+      const q = query(collection(db, 'bookings'), where('customerId', '==', customerId));
+      const snap = await getDocs(q);
+      snap.forEach((docSnap) => {
+        const d = docSnap.data() as Partial<Booking>;
+        if (d.status !== 'completed' && d.status !== 'cancelled') {
+          targetIds.add(docSnap.id);
+        }
+      });
+    }
+    await Promise.all(
+      Array.from(targetIds).map((id) => cancelBookingInFirestore(id, 'customer'))
+    );
+  } catch (err) {
+    console.error('Error cancelling customer active bookings in cloud:', err);
+  }
+}
+
+// Cancel linked JobPost in Firestore so it leaves Worker radar feed
+export async function cancelJobPostInFirestore(jobId: string): Promise<void> {
+  if (!db || !jobId) return;
+  const nowMs = Date.now();
+  try {
+    await setDoc(doc(db, 'jobs', jobId), {
+      id: jobId,
+      status: 'cancelled',
+      customerLiveLocation: deleteField(),
+      updatedAtMs: nowMs,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+  } catch (err) {
+    logFirestoreError(err, OperationType.WRITE, `jobs/${jobId}`);
   }
 }
 

@@ -10,12 +10,14 @@ import {
   Camera,
   Trash2,
   ZoomIn,
-  Plus
+  Plus,
+  LocateFixed
 } from 'lucide-react';
 import { CATEGORIES } from '../../data/mockData';
 import { JobPost, Language } from '../../types';
 import { soundManager } from '../../services/soundEffects';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
+import { getFreshPhoneGps, reverseGeocodePhoneCoords } from '../../utils/liveGpsService';
 
 interface PostJobModalProps {
   isOpen: boolean;
@@ -44,11 +46,14 @@ export const PostJobModal: React.FC<PostJobModalProps> = ({
     'https://images.unsplash.com/photo-1504307651254-35680f356dfd?auto=format&fit=crop&w=800&q=80',
     'https://images.unsplash.com/photo-1503387762-592deb58ef4e?auto=format&fit=crop&w=800&q=80'
   ]);
-  const [locality, setLocality] = useState(defaultLocality || 'Sector 62, Noida');
+  const [locality, setLocality] = useState(
+    defaultLocality && defaultLocality !== 'लोकेशन चुनें' ? defaultLocality : ''
+  );
+  const [isDetectingGps, setIsDetectingGps] = useState(false);
   const [activePreviewImage, setActivePreviewImage] = useState<string | null>(null);
 
   React.useEffect(() => {
-    if (defaultLocality) {
+    if (defaultLocality && defaultLocality !== 'लोकेशन चुनें') {
       setLocality(defaultLocality);
     }
   }, [defaultLocality, isOpen]);
@@ -373,16 +378,41 @@ export const PostJobModal: React.FC<PostJobModalProps> = ({
 
             {/* Location */}
             <div>
-              <label className="block text-slate-300 font-semibold mb-1">
-                Service Locality / Society
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-slate-300 font-semibold">
+                  {language === 'hi' ? 'काम की जगह / पता *' : 'Service Locality / Area *'}
+                </label>
+                <button
+                  type="button"
+                  disabled={isDetectingGps}
+                  onClick={async () => {
+                    soundManager.playTap();
+                    setIsDetectingGps(true);
+                    try {
+                      const gps = await getFreshPhoneGps();
+                      if (gps) {
+                        const place = await reverseGeocodePhoneCoords(gps.lat, gps.lng);
+                        setLocality(place?.fullAddress || place?.locality || `${gps.lat.toFixed(5)}, ${gps.lng.toFixed(5)}`);
+                        soundManager.playSuccess();
+                      }
+                    } finally {
+                      setIsDetectingGps(false);
+                    }
+                  }}
+                  className="px-2 py-0.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-[10px] font-bold flex items-center gap-1"
+                >
+                  <LocateFixed className="w-3 h-3" />
+                  <span>{isDetectingGps ? '...' : language === 'hi' ? 'अभी की फ़ोन लोकेशन लें' : 'Use Phone GPS'}</span>
+                </button>
+              </div>
               <div className="flex items-center gap-2 bg-slate-950 border border-slate-700 rounded-xl p-2">
                 <MapPin className="w-4 h-4 text-orange-400 shrink-0" />
                 <input
                   type="text"
+                  required
                   value={locality}
                   onChange={(e) => setLocality(e.target.value)}
-                  placeholder="e.g. Sector 44, Noida"
+                  placeholder={language === 'hi' ? 'जैसे: आपका मोहल्ला, शहर' : 'e.g. Your area, city'}
                   className="w-full bg-transparent text-xs text-white focus:outline-none"
                 />
               </div>

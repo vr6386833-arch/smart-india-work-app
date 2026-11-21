@@ -63,6 +63,50 @@ async function startServer() {
     res.json({ ok: true, service: 'smart-india-work-api' });
   });
 
+  app.get('/api/reverse-geocode', async (req, res) => {
+    try {
+      const lat = Number(req.query.lat);
+      const lng = Number(req.query.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        return res.status(400).json({ error: 'Invalid coordinates' });
+      }
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4500);
+      const osmUrl = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(
+        lat
+      )}&lon=${encodeURIComponent(lng)}&zoom=18&addressdetails=1`;
+      const osmRes = await fetch(osmUrl, {
+        headers: {
+          'User-Agent': 'SmartIndiaWorkApp/1.0 (https://smartindiawork.in)',
+          'Accept-Language': 'en-IN,en,hi',
+        },
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (!osmRes.ok) {
+        return res.status(502).json({ error: 'Geocoder unavailable' });
+      }
+      const data = (await osmRes.json()) as { address?: Record<string, string>; display_name?: string };
+      const addr = data.address || {};
+      const city = addr.city || addr.town || addr.state_district || addr.county || addr.state || '';
+      const streetPart =
+        addr.house_number && addr.road
+          ? `${addr.house_number}, ${addr.road}`
+          : addr.road || addr.neighbourhood || addr.residential || '';
+      const areaPart = addr.suburb || addr.village || addr.town || addr.city_district || addr.locality || '';
+      const postcode = addr.postcode || '';
+      const localityParts = Array.from(new Set([streetPart, areaPart, city].filter(Boolean)));
+      const fullParts = Array.from(new Set([streetPart, areaPart, city, postcode].filter(Boolean)));
+      return res.json({
+        city: city || 'India',
+        locality: localityParts.slice(0, 2).join(', ') || data.display_name || `${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+        fullAddress: fullParts.join(', ') || data.display_name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+      });
+    } catch {
+      return res.status(502).json({ error: 'Reverse geocode failed' });
+    }
+  });
+
   app.post('/api/verify-aadhaar', async (req, res) => {
     try {
       const body = req.body as {
