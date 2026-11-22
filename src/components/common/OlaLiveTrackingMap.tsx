@@ -92,13 +92,14 @@ export const OlaLiveTrackingMap: React.FC<OlaLiveTrackingMapProps> = ({
 
   const pushCustomerCoordsToCloud = (loc: LiveGeoLocation) => {
     // Strictly one-way AND strictly customer-consented: Worker NEVER uploads GPS, and Customer ONLY uploads when sharing is ON!
-    if (isWorkerMode || !booking.isCustomerSharingLiveLocation) return;
+    // When onToggleCustomerLocationSharing is provided, parent App.tsx runs the single throttled cloud GPS broadcaster (prevents duplicate Firestore writes).
+    if (isWorkerMode || !booking.isCustomerSharingLiveLocation || onToggleCustomerLocationSharing) return;
     const prev = lastSyncedRef.current;
     const now = Date.now();
     const movedKm = prev ? haversineDistanceKm(prev, loc) || 0 : 1;
-    if (!prev || movedKm >= 0.008 || now - prev.timeMs >= 4000) {
+    if (!prev || movedKm >= 0.02 || now - prev.timeMs >= 15000) {
       lastSyncedRef.current = { lat: loc.lat, lng: loc.lng, timeMs: now };
-      updateBookingLiveLocation(booking.id, 'customer', loc);
+      void updateBookingLiveLocation(booking.id, 'customer', loc);
     }
   };
 
@@ -146,9 +147,16 @@ export const OlaLiveTrackingMap: React.FC<OlaLiveTrackingMapProps> = ({
     setGpsErrorMsg(null);
     if (onToggleCustomerLocationSharing) {
       onToggleCustomerLocationSharing(true);
-    } else {
-      await syncLocationSharingFlag(booking.id, true, null);
+      const fresh = await getFreshPhoneGps();
+      if (fresh) {
+        setGpsLoading(false);
+        setRealCoords(fresh);
+        setUseRealGps(true);
+      }
+      startRealGps();
+      return;
     }
+    await syncLocationSharingFlag(booking.id, true, null);
     const fresh = await getFreshPhoneGps();
     if (fresh) {
       setGpsLoading(false);
@@ -670,11 +678,17 @@ Status: ${isArrived ? 'Arrived at Doorstep' : booking.isLocationShared ? 'Accept
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <div className="relative">
-                  <img
-                    src={booking.workerAvatar}
-                    alt={booking.workerName}
-                    className="w-11 h-11 rounded-2xl object-cover border-2 border-emerald-500/60 shadow-md"
-                  />
+                  {booking.workerAvatar ? (
+                    <img
+                      src={booking.workerAvatar}
+                      alt={booking.workerName}
+                      className="w-11 h-11 rounded-2xl object-cover border-2 border-emerald-500/60 shadow-md"
+                    />
+                  ) : (
+                    <div className="w-11 h-11 rounded-2xl bg-emerald-500/20 border-2 border-emerald-500/60 text-emerald-300 font-black text-base flex items-center justify-center shadow-md">
+                      {(isWorkerMode ? booking.customerName : booking.workerName || 'W').charAt(0)}
+                    </div>
+                  )}
                   <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center text-[9px] font-bold">
                     ✓
                   </div>

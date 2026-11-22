@@ -12,11 +12,6 @@ import {
 import { WorkerProfile, Language } from '../../types';
 import { soundManager } from '../../services/soundEffects';
 import { compressDocumentImageFile } from '../../utils/qrImageHelper';
-import {
-  validateAadhaarVerhoeff,
-  computeAadhaarHash,
-  verifyAadhaarCardWithServer,
-} from '../../utils/aadhaarValidator';
 
 interface KycVerificationModalProps {
   isOpen: boolean;
@@ -37,7 +32,6 @@ export const KycVerificationModal: React.FC<KycVerificationModalProps> = ({
   isOpen,
   onClose,
   worker,
-  workers = [],
   language,
   onKycUpdated,
 }) => {
@@ -47,7 +41,6 @@ export const KycVerificationModal: React.FC<KycVerificationModalProps> = ({
   const [backPhoto, setBackPhoto] = useState(worker.aadhaarBackPhoto || '');
   const [isUploading, setIsUploading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
@@ -88,84 +81,34 @@ export const KycVerificationModal: React.FC<KycVerificationModalProps> = ({
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (isSubmitting) return;
     const cleanedAadhaar = aadharNumber.replace(/\D/g, '');
     const isExistingMasked = /^XXXX-XXXX-\d{4}$/.test(aadharNumber.trim());
 
-    if (!isExistingMasked) {
-      const verhoeff = validateAadhaarVerhoeff(cleanedAadhaar);
-      if (!verhoeff.valid) {
-        soundManager.playWarning();
-        setErrorMsg(language === 'hi' ? verhoeff.reasonHi : verhoeff.reasonEn);
-        return;
-      }
-    }
-
-    if (!frontPhoto) {
+    if (!isExistingMasked && cleanedAadhaar.length !== 12) {
       soundManager.playWarning();
       setErrorMsg(
         language === 'hi'
-          ? 'कृपया आधार कार्ड की आगे की साफ फोटो अपलोड करें।'
-          : 'Please upload a clear photo of your Aadhaar Card (Front).'
+          ? 'कृपया 12 अंकों का वैध आधार नंबर दर्ज करें।'
+          : 'Please enter a valid 12-digit Aadhaar number.'
       );
       return;
     }
 
     setErrorMsg(null);
-    soundManager.playTap();
-    setIsSubmitting(true);
+    const formattedAadhaar =
+      cleanedAadhaar.length === 12
+        ? `XXXX-XXXX-${cleanedAadhaar.slice(8)}`
+        : aadharNumber;
 
-    try {
-      let aadhaarHash: string | undefined;
-      if (cleanedAadhaar.length === 12) {
-        aadhaarHash = await computeAadhaarHash(cleanedAadhaar);
-        const dup = workers.find(
-          (w) => w.id !== worker.id && w.id !== 'wrk_standby_live' && w.aadhaarHash && w.aadhaarHash === aadhaarHash
-        );
-        if (dup) {
-          soundManager.playWarning();
-          setErrorMsg(
-            language === 'hi'
-              ? `यह आधार नंबर पहले से दूसरी कारीगर ID (${dup.name}) से जुड़ा है।`
-              : `This Aadhaar number is already registered with ${dup.name}.`
-          );
-          return;
-        }
-      }
-
-      const aiRes = await verifyAadhaarCardWithServer({
-        imageDataUrl: frontPhoto,
-        expectedName: worker.name,
-        expectedAadhaar: cleanedAadhaar.length === 12 ? cleanedAadhaar : aadharNumber,
-      });
-
-      if (!aiRes.serverUnavailable && !aiRes.verified) {
-        soundManager.playWarning();
-        setErrorMsg(language === 'hi' ? aiRes.reasonHi : aiRes.reasonEn);
-        return;
-      }
-
-      const formattedAadhaar =
-        cleanedAadhaar.length === 12
-          ? `XXXX-XXXX-${cleanedAadhaar.slice(8)}`
-          : aadharNumber;
-
-      soundManager.playSuccessCoin();
-      onKycUpdated(formattedAadhaar, panNumber, frontPhoto, backPhoto || undefined, {
-        ...(aadhaarHash ? { aadhaarHash } : {}),
-        aadhaarExtractedName: aiRes.extractedName || worker.name,
-        aadhaarDocVerified: Boolean(aiRes.verified && !aiRes.serverUnavailable),
-      });
-      setSuccess(true);
-      setTimeout(() => {
-        setSuccess(false);
-        onClose();
-      }, 900);
-    } finally {
-      setIsSubmitting(false);
-    }
+    soundManager.playSuccessCoin();
+    onKycUpdated(formattedAadhaar, panNumber, frontPhoto || undefined, backPhoto || undefined);
+    setSuccess(true);
+    setTimeout(() => {
+      setSuccess(false);
+      onClose();
+    }, 900);
   };
 
   return (
@@ -178,10 +121,10 @@ export const KycVerificationModal: React.FC<KycVerificationModalProps> = ({
             </div>
             <div>
               <h3 className="text-base font-bold text-white">
-                {language === 'hi' ? 'आधार कार्ड व KYC फोटो' : 'Aadhaar Photo & KYC'}
+                {language === 'hi' ? 'आधार कार्ड व KYC अपडेट' : 'Aadhaar & KYC Verification'}
               </h3>
               <p className="text-[11px] text-slate-400">
-                {language === 'hi' ? 'सही पहचान के लिए आधार फोटो अनिवार्य है' : 'Aadhaar Card photo prevents fake IDs'}
+                {language === 'hi' ? 'सरल 12-अंक आधार व वैकल्पिक फोटो KYC' : 'Simple 12-digit Aadhaar & optional photo KYC'}
               </p>
             </div>
           </div>
@@ -209,14 +152,8 @@ export const KycVerificationModal: React.FC<KycVerificationModalProps> = ({
                 <CreditCard className="w-3.5 h-3.5 text-orange-400" />
                 <span>{language === 'hi' ? 'आधार नंबर (12 अंक) *' : 'Aadhaar Number (12 Digits) *'}</span>
               </label>
-              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
-                frontPhoto
-                  ? 'bg-emerald-500/20 text-emerald-400'
-                  : 'bg-amber-500/20 text-amber-300'
-              }`}>
-                {frontPhoto
-                  ? (language === 'hi' ? '✓ फोटो अपलोड' : '✓ Photo Added')
-                  : (language === 'hi' ? 'फोटो बाकी' : 'Photo Needed')}
+              <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-500/20 text-emerald-400">
+                {language === 'hi' ? 'सरल KYC' : 'Simple KYC'}
               </span>
             </div>
             <input
@@ -231,7 +168,7 @@ export const KycVerificationModal: React.FC<KycVerificationModalProps> = ({
               required
             />
 
-            {/* Front & Back Photo Upload */}
+            {/* Optional Front & Back Photo Upload */}
             <div className="grid grid-cols-2 gap-2 pt-1">
               {frontPhoto ? (
                 <div className="relative rounded-xl overflow-hidden border border-emerald-500/50 bg-slate-900 h-24">
@@ -248,10 +185,10 @@ export const KycVerificationModal: React.FC<KycVerificationModalProps> = ({
                   </span>
                 </div>
               ) : (
-                <label className="flex flex-col items-center justify-center gap-1 h-24 rounded-xl border-2 border-dashed border-emerald-500/40 bg-slate-900/70 hover:bg-slate-900 cursor-pointer text-center p-2">
+                <label className="flex flex-col items-center justify-center gap-1 h-24 rounded-xl border border-dashed border-slate-700 bg-slate-900/50 hover:bg-slate-900 cursor-pointer text-center p-2">
                   <Camera className="w-5 h-5 text-emerald-400" />
-                  <span className="text-[10px] font-bold text-emerald-300">
-                    {isUploading ? '...' : (language === 'hi' ? 'आगे की फोटो *' : 'Front Photo *')}
+                  <span className="text-[10px] font-bold text-slate-300">
+                    {isUploading ? '...' : (language === 'hi' ? 'आगे की फोटो (वैकल्पिक)' : 'Front Photo (Optional)')}
                   </span>
                   <input
                     type="file"
@@ -281,7 +218,7 @@ export const KycVerificationModal: React.FC<KycVerificationModalProps> = ({
                 <label className="flex flex-col items-center justify-center gap-1 h-24 rounded-xl border border-dashed border-slate-700 bg-slate-900/50 hover:bg-slate-900 cursor-pointer text-center p-2">
                   <Upload className="w-5 h-5 text-slate-400" />
                   <span className="text-[10px] font-bold text-slate-300">
-                    {language === 'hi' ? 'पीछे की फोटो' : 'Back Photo'}
+                    {language === 'hi' ? 'पीछे की फोटो (वैकल्पिक)' : 'Back Photo (Optional)'}
                   </span>
                   <input
                     type="file"
@@ -317,27 +254,25 @@ export const KycVerificationModal: React.FC<KycVerificationModalProps> = ({
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
             <span>
               {language === 'hi'
-                ? 'असली आधार फोटो लगाने से आपकी ID सत्यापित दिखती है और नकली ID पर रोक लगती है।'
-                : 'Uploading real Aadhaar photos verifies your identity and blocks fake accounts.'}
+                ? '12 अंकों का आधार नंबर सेव करते ही आपकी कारीगर ID तुरंत सत्यापित हो जाएगी।'
+                : 'Saving your 12-digit Aadhaar immediately verifies your Worker ID.'}
             </span>
           </div>
 
           {success && (
             <div className="p-2 bg-emerald-500/20 border border-emerald-500/40 rounded-xl text-emerald-300 text-center font-bold">
-              {language === 'hi' ? '✓ आधार फोटो व KYC सेव हो गया!' : '✓ Aadhaar Photo & KYC Saved!'}
+              {language === 'hi' ? '✓ आधार व KYC सफलतापूर्वक सेव हो गया!' : '✓ Aadhaar & KYC Saved!'}
             </div>
           )}
 
           <button
             type="submit"
-            disabled={isSubmitting || isUploading}
+            disabled={isUploading}
             className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2"
           >
             <ShieldCheck className="w-4 h-4" />
             <span>
-              {isSubmitting
-                ? (language === 'hi' ? 'सेव हो रहा है...' : 'Saving...')
-                : (language === 'hi' ? 'आधार फोटो व KYC सेव करें' : 'Save Aadhaar Photo & KYC')}
+              {language === 'hi' ? 'आधार व KYC सेव करें' : 'Save Aadhaar & KYC'}
             </span>
           </button>
         </form>

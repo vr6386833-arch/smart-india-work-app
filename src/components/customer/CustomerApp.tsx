@@ -68,6 +68,7 @@ interface CustomerAppProps {
   onAddCustomerAddress?: (label: string, address: string) => void;
   onUpdateCustomerProfile?: (updated: Partial<CustomerProfile>) => void;
   onCancelBooking?: () => void;
+  onDismissCompletedBooking?: (bookingId?: string) => void;
   onToggleCustomerLocationSharing?: (enabled: boolean) => void;
   chatMessages: ChatMessage[];
   onSendMessage: (text: string, options?: SendMessageOptions) => void;
@@ -110,6 +111,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
   onAddCustomerAddress,
   onUpdateCustomerProfile,
   onCancelBooking,
+  onDismissCompletedBooking,
   onToggleCustomerLocationSharing,
   chatMessages,
   onSendMessage,
@@ -180,6 +182,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
     return workers.filter(
       (w) =>
         w.id !== 'wrk_standby_live' &&
+        !w.isSuspendedByOwner &&
         !w.isIdPaused &&
         !w.isBlockedDueToUnpaidFee &&
         w.isAadhaarVerified !== false &&
@@ -1057,7 +1060,13 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
           >
             {safeActiveBooking ? (
               <LiveTrackingView
-                booking={safeActiveBooking}
+                booking={{
+                  ...safeActiveBooking,
+                  workerAvatar:
+                    safeActiveBooking.workerAvatar ||
+                    bookedWorkerObj?.avatar ||
+                    '',
+                }}
                 language={language}
                 onOpenChat={() => {
                   soundManager.playTap();
@@ -1079,6 +1088,11 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                 onCompleteJobDirect={onCompleteJob}
                 onCancelBooking={onCancelBooking}
                 onToggleCustomerLocationSharing={onToggleCustomerLocationSharing}
+                onDismissCompleted={
+                  onDismissCompletedBooking
+                    ? () => onDismissCompletedBooking(safeActiveBooking.id)
+                    : undefined
+                }
               />
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-slate-400">

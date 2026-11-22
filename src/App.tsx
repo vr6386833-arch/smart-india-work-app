@@ -80,6 +80,7 @@ import {
   purgeAllFirestoreData
 } from './services/firebase';
 import { Header } from './components/common/Header';
+import { haversineDistanceKm } from './components/common/GoogleLiveMap';
 import { PhoneFrame } from './components/common/PhoneFrame';
 import { CustomerApp } from './components/customer/CustomerApp';
 import { SendMessageOptions } from './components/customer/ChatCallModal';
@@ -210,6 +211,7 @@ export default function App() {
   const [isCloudConnected, setIsCloudConnected] = useState(true);
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [isGmpQuotaExceeded, setIsGmpQuotaExceeded] = useState(false);
+  const [isFirestoreQuotaExceeded, setIsFirestoreQuotaExceeded] = useState(false);
   const [callSessions, setCallSessions] = useState<CallSession[]>([]);
   const [answeredCallSession, setAnsweredCallSession] = useState<CallSession | null>(null);
   const lastNotifiedMsgIdRef = React.useRef<string | null>(null);
@@ -220,6 +222,39 @@ export default function App() {
       setAppToast((prev) => (prev?.message === message ? null : prev));
     }, 4500);
   }, []);
+
+  const handleFirestoreWriteOutcome = React.useCallback(
+    (
+      res: { ok: boolean; quotaExceeded?: boolean } | undefined,
+      actionLabelHi: string,
+      actionLabelEn: string
+    ): boolean => {
+      if (!res || res.ok) {
+        if (res?.ok) setIsFirestoreQuotaExceeded(false);
+        return true;
+      }
+      if (res.quotaExceeded) {
+        setIsFirestoreQuotaExceeded(true);
+        soundManager.playWarning();
+        showToast(
+          language === 'hi'
+            ? `⚠️ Firebase डेटाबेस की आज की मुफ्त राइट लिमिट भर गई है (Quota Exceeded) — ${actionLabelHi} सर्वर पर सेव नहीं हो सकी। यह कल रीसेट होगी।`
+            : `⚠️ Firestore daily free write quota exceeded — ${actionLabelEn} could not sync. Resets tomorrow or upgrade Firestore.`,
+          'warning'
+        );
+      } else {
+        soundManager.playWarning();
+        showToast(
+          language === 'hi'
+            ? `⚠️ सर्वर से कनेक्ट नहीं हो सका: ${actionLabelHi} दूसरे फ़ोन पर नहीं गई — इंटरनेट जांचकर पुनः प्रयास करें।`
+            : `⚠️ Could not sync ${actionLabelEn} to cloud — check internet connection and retry.`,
+          'warning'
+        );
+      }
+      return false;
+    },
+    [language, showToast]
+  );
 
   // Case A Tier 1 & Tier 2 Google Maps Platform quota-exceeded listener
   React.useEffect(() => {
@@ -499,6 +534,18 @@ export default function App() {
   const [incomingBookingAlert, setIncomingBookingAlert] = useState<Booking | null>(null);
   const [broadcastBookings, setBroadcastBookings] = useState<Booking[]>([]);
   const [dismissedBroadcastIds, setDismissedBroadcastIds] = useState<string[]>([]);
+  const [dismissedCompletedIds, setDismissedCompletedIds] = useState<string[]>(() => {
+    try {
+      const saved = safeStorage.getItem('smart_india_dismissed_completed_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+  const dismissedCompletedIdsRef = React.useRef<string[]>(dismissedCompletedIds);
+  dismissedCompletedIdsRef.current = dismissedCompletedIds;
 
   // Auto-save changes to persistent storage v3
   React.useEffect(() => {
@@ -755,17 +802,22 @@ export default function App() {
         );
       }
 
+      const visibleCandidates = activeFresh.filter(
+        (b) => !(b.status === 'completed' && dismissedCompletedIdsRef.current.includes(b.id))
+      );
+
       const latest =
         curView === 'dual'
-          ? activeFresh[0] || null
+          ? visibleCandidates[0] || null
           : curView === 'worker'
-          ? activeFresh.find((b) => b.workerId === curWorkerId) || null
-          : activeFresh.find((b) => b.customerId === curCustId) || null;
+          ? visibleCandidates.find((b) => b.workerId === curWorkerId) || null
+          : visibleCandidates.find((b) => b.customerId === curCustId) || null;
 
       if (!latest) {
         setActiveBooking((prev) => {
           if (!prev) return null;
           if (cancelledIds.has(prev.id)) return null;
+          if (prev.status === 'completed' && dismissedCompletedIdsRef.current.includes(prev.id)) return null;
           // For worker screen, if cloud has zero active bookings assigned to this worker, clear any cached booking immediately
           if (curView === 'worker') return null;
           const prevInCloud = sorted.find((b) => b.id === prev.id);
@@ -993,6 +1045,7 @@ export default function App() {
     dismissedBroadcastIds,
     activeView,
     activeWorker.id,
+    activeWorker.isSuspendedByOwner,
     activeWorker.isIdPaused,
     activeWorker.isBlockedDueToUnpaidFee,
     activeWorker.isOnline,
@@ -1071,13 +1124,16 @@ export default function App() {
       return;
     }
 
-    let lastSentMs = 0;
+    let lastSent: { lat: number; lng: number; timeMs: number } | null = null;
     const stopWatch = watchExactPhoneGps((locPayload) => {
       latestCustomerGpsRef.current = locPayload;
       const nowMs = Date.now();
-      if (nowMs - lastSentMs < 4000) return;
-      lastSentMs = nowMs;
-      updateBookingLiveLocation(bookingId, 'customer', locPayload);
+      const movedKm = lastSent ? haversineDistanceKm(lastSent, locPayload) || 0 : 1;
+      if (lastSent && movedKm < 0.02 && nowMs - lastSent.timeMs < 15000) return;
+      lastSent = { lat: locPayload.lat, lng: locPayload.lng, timeMs: nowMs };
+      void updateBookingLiveLocation(bookingId, 'customer', locPayload).then((res) => {
+        if (res.quotaExceeded) setIsFirestoreQuotaExceeded(true);
+      });
       setActiveBooking((prev) =>
         prev && prev.id === bookingId && prev.isCustomerSharingLiveLocation
           ? {
@@ -1111,7 +1167,11 @@ export default function App() {
             }
           : prev
       );
-      await setBookingCustomerLocationSharing(targetId, false, null);
+      const stopRes = await setBookingCustomerLocationSharing(targetId, false, null);
+      if (!stopRes.ok) {
+        handleFirestoreWriteOutcome(stopRes, 'लोकेशन बंद', 'stop location sharing');
+        return;
+      }
       showToast(
         language === 'hi'
           ? '🔒 लाइव लोकेशन बंद कर दी गई — अब कारीगर को आपकी लाइव GPS लोकेशन नहीं दिखेगी।'
@@ -1130,16 +1190,6 @@ export default function App() {
           }
         : prev
     );
-    showToast(
-      language === 'hi'
-        ? activeBooking.isLocationShared
-          ? '📍 आपकी असली फ़ोन लाइव लोकेशन कारीगर को भेजी जा रही है!'
-          : '📍 लाइव लोकेशन चालू है — कारीगर के काम स्वीकार करते ही उसे दिखने लगेगी।'
-        : activeBooking.isLocationShared
-        ? '📍 Sharing your exact live phone location with Worker now!'
-        : '📍 Live location enabled — Worker will see it once job is accepted.',
-      'success'
-    );
 
     const fresh = await getFreshPhoneGps();
     if (fresh) {
@@ -1154,10 +1204,29 @@ export default function App() {
             }
           : prev
       );
-      await setBookingCustomerLocationSharing(targetId, true, fresh);
+      const shareRes = await setBookingCustomerLocationSharing(targetId, true, fresh);
+      if (!shareRes.ok) {
+        handleFirestoreWriteOutcome(shareRes, 'लाइव लोकेशन शेयर', 'share live location');
+        return;
+      }
     } else {
-      await setBookingCustomerLocationSharing(targetId, true, null);
+      const shareRes = await setBookingCustomerLocationSharing(targetId, true, null);
+      if (!shareRes.ok) {
+        handleFirestoreWriteOutcome(shareRes, 'लाइव लोकेशन शेयर', 'share live location');
+        return;
+      }
     }
+
+    showToast(
+      language === 'hi'
+        ? activeBooking.isLocationShared
+          ? '📍 आपकी असली फ़ोन लाइव लोकेशन कारीगर को भेजी जा रही है!'
+          : '📍 लाइव लोकेशन चालू है — कारीगर के काम स्वीकार करते ही उसे दिखने लगेगी।'
+        : activeBooking.isLocationShared
+        ? '📍 Sharing your exact live phone location with Worker now!'
+        : '📍 Live location enabled — Worker will see it once job is accepted.',
+      'success'
+    );
   };
 
   const handleMarkNotificationAsRead = (id: string) => {
@@ -1295,7 +1364,12 @@ export default function App() {
     setWorkerNotifications((prev) => [broadcastNotif, ...perWorkerNotifs, ...prev]);
 
     // Sync job post to cloud Firestore so registered workers in this trade see it immediately
-    syncJobToFirestore(newJob);
+    void syncJobToFirestore(newJob).then((res) => {
+      if (!res.ok) {
+        setJobs((prev) => prev.filter((j) => j.id !== newJob.id));
+        handleFirestoreWriteOutcome(res, 'काम की पोस्ट', 'job post');
+      }
+    });
 
     showToast(
       language === 'hi'
@@ -1368,8 +1442,9 @@ export default function App() {
       return false;
     }
 
+    const nowMs = Date.now();
     const newBooking: Booking = {
-      id: `BK_${Math.floor(1000 + Math.random() * 9000)}`,
+      id: `BK_${nowMs.toString().slice(-6)}_${Math.floor(10 + Math.random() * 89)}`,
       customerId: customer.id,
       customerName: customer.name,
       customerPhone: customer.phone,
@@ -1390,12 +1465,28 @@ export default function App() {
       isLocationShared: false, // Customer location locked until worker accepts
       isCustomerSharingLiveLocation: false, // Stays OFF until customer explicitly turns live location ON
       createdAt: 'Just now',
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
       scheduledTime: language === 'hi' ? 'तत्काल सेवा अनुरोध' : 'Immediate Request',
       workerLocationProgress: 0,
     };
 
+    const prevBookingIds = Array.from(
+      new Set([
+        ...(activeBooking && activeBooking.customerId === customer.id && activeBooking.status !== 'completed' && activeBooking.status !== 'cancelled' ? [activeBooking.id] : []),
+        ...allCloudBookingsRef.current
+          .filter((b) => b.customerId === customer.id && b.status !== 'completed' && b.status !== 'cancelled')
+          .map((b) => b.id),
+        ...broadcastBookings.filter((b) => b.customerId === customer.id).map((b) => b.id),
+      ])
+    ).filter((id) => id !== newBooking.id);
+
     alertedBookingIdsRef.current.add(newBooking.id);
     setActiveBooking(newBooking);
+    if (prevBookingIds.length > 0) {
+      setBroadcastBookings((prev) => prev.filter((b) => !prevBookingIds.includes(b.id)));
+      setIncomingBookingAlert((prev) => (prev && prevBookingIds.includes(prev.id) ? null : prev));
+    }
     if (activeView === 'dual') {
       setActiveWorkerId(worker.id);
     }
@@ -1435,7 +1526,16 @@ export default function App() {
     });
 
     IndexedDbSyncService.saveBookingLocally(newBooking);
-    syncBookingToFirestore(newBooking);
+    void (async () => {
+      if (prevBookingIds.length > 0 || customer.id) {
+        await cancelCustomerActiveBookingsInFirestore(customer.id, prevBookingIds, newBooking.id);
+      }
+      const res = await syncBookingToFirestore(newBooking);
+      if (!res.ok) {
+        setActiveBooking((prev) => (prev?.id === newBooking.id ? null : prev));
+        handleFirestoreWriteOutcome(res, 'बुकिंग', 'booking');
+      }
+    })();
     AwsCloudService.syncBookingToAws(newBooking);
     return true;
   };
@@ -1506,9 +1606,25 @@ export default function App() {
       workerLocationProgress: 0,
     };
 
+    const prevBookingIds = Array.from(
+      new Set([
+        ...(activeBooking && activeBooking.customerId === customer.id && activeBooking.status !== 'completed' && activeBooking.status !== 'cancelled' ? [activeBooking.id] : []),
+        ...allCloudBookingsRef.current
+          .filter((b) => b.customerId === customer.id && b.status !== 'completed' && b.status !== 'cancelled')
+          .map((b) => b.id),
+        ...broadcastBookings.filter((b) => b.customerId === customer.id).map((b) => b.id),
+      ])
+    ).filter((id) => id !== newBooking.id);
+
     alertedBookingIdsRef.current.add(newBooking.id);
     setActiveBooking(newBooking);
-    setBroadcastBookings((prev) => [newBooking, ...prev.filter((b) => b.id !== newBooking.id)]);
+    setBroadcastBookings((prev) => [
+      newBooking,
+      ...prev.filter((b) => b.id !== newBooking.id && !prevBookingIds.includes(b.id) && b.customerId !== customer.id),
+    ]);
+    if (prevBookingIds.length > 0) {
+      setIncomingBookingAlert((prev) => (prev && prevBookingIds.includes(prev.id) ? null : prev));
+    }
 
     const broadcastNotif: WorkerNotification = {
       id: `notif_${nowMs}_bc`,
@@ -1528,7 +1644,10 @@ export default function App() {
       category: categoryId,
       amount: parsedRate,
     } as WorkerNotification;
-    setWorkerNotifications((prev) => [broadcastNotif, ...prev]);
+    setWorkerNotifications((prev) => [
+      broadcastNotif,
+      ...prev.filter((n) => !n.bookingId || !prevBookingIds.includes(n.bookingId)),
+    ]);
 
     if (activeView === 'dual') {
       const targetDualWorker = matchingWorkers[0] || allVerifiedWorkers[0];
@@ -1548,15 +1667,26 @@ export default function App() {
     });
 
     IndexedDbSyncService.saveBookingLocally(newBooking);
-    syncBookingToFirestore(newBooking);
     AwsCloudService.syncBookingToAws(newBooking);
 
-    showToast(
-      language === 'hi'
-        ? `📡 "${catLabel}" की लीड पंजीकृत कारीगरों को भेज दी गई — जो पहले स्वीकार करेगा, काम उसका होगा!`
-        : `📡 "${catLabel}" lead broadcast to registered workers — first to accept wins the job!`,
-      'success'
-    );
+    void (async () => {
+      if (prevBookingIds.length > 0 || customer.id) {
+        await cancelCustomerActiveBookingsInFirestore(customer.id, prevBookingIds, newBooking.id);
+      }
+      const res = await syncBookingToFirestore(newBooking);
+      if (!res.ok) {
+        setActiveBooking((prev) => (prev?.id === newBooking.id ? null : prev));
+        setBroadcastBookings((prev) => prev.filter((b) => b.id !== newBooking.id));
+        handleFirestoreWriteOutcome(res, 'बुकिंग लीड', 'booking lead');
+        return;
+      }
+      showToast(
+        language === 'hi'
+          ? `📡 "${catLabel}" की लीड पंजीकृत कारीगरों को भेज दी गई — जो पहले स्वीकार करेगा, काम उसका होगा!`
+          : `📡 "${catLabel}" lead broadcast to registered workers — first to accept wins the job!`,
+        'success'
+      );
+    })();
     return true;
   };
 
@@ -1619,27 +1749,20 @@ export default function App() {
       return;
     }
 
-    const nowMs = Date.now();
-    const claimedBooking: Booking =
-      claimResult.outcome === 'CLAIMED'
-        ? claimResult.booking
-        : {
-            ...targetBooking,
-            workerId: activeWorker.id,
-            workerName: activeWorker.name,
-            workerPhone: activeWorker.phone,
-            workerAvatar: activeWorker.avatar,
-            workerRating: activeWorker.rating || 5,
-            status: 'accepted',
-            isLocationShared: true,
-            acceptedAt: 'Just now',
-            workerLocationProgress: 0,
-            updatedAtMs: nowMs,
-          };
+    if (claimResult.outcome === 'ERROR') {
+      handleFirestoreWriteOutcome(
+        { ok: false, quotaExceeded: claimResult.quotaExceeded },
+        'काम स्वीकार',
+        'accept booking'
+      );
+      return;
+    }
 
     if (claimResult.outcome !== 'CLAIMED') {
-      syncBookingToFirestore(claimedBooking);
+      return;
     }
+
+    const claimedBooking: Booking = claimResult.booking;
     AwsCloudService.syncBookingToAws(claimedBooking);
     IndexedDbSyncService.saveBookingLocally(claimedBooking);
 
@@ -1687,8 +1810,12 @@ export default function App() {
     }
 
     if (target && target.workerId === activeWorker.id) {
-      void cancelBookingInFirestore(target.id, 'worker');
       setActiveBooking(null);
+      void cancelBookingInFirestore(target.id, 'worker').then((res) => {
+        if (!res.ok) {
+          handleFirestoreWriteOutcome(res, 'बुकिंग हटाना', 'clear booking');
+        }
+      });
     }
     setIncomingBookingAlert(null);
     soundManager.playWarning();
@@ -1726,6 +1853,26 @@ export default function App() {
           ? `⚠️ यह काम दूसरे कारीगर (${claimJobRes.claimedByName || 'Other Worker'}) ने पहले ही स्वीकार कर लिया है।`
           : `⚠️ This job was already claimed by ${claimJobRes.claimedByName || 'another worker'}.`,
         'warning'
+      );
+      return;
+    }
+
+    if (claimJobRes.outcome === 'NOT_FOUND') {
+      soundManager.playWarning();
+      showToast(
+        language === 'hi'
+          ? '⚠️ यह काम ग्राहक द्वारा रद्द कर दिया गया है।'
+          : '⚠️ This job post is no longer available.',
+        'warning'
+      );
+      return;
+    }
+
+    if (claimJobRes.outcome === 'ERROR') {
+      handleFirestoreWriteOutcome(
+        { ok: false, quotaExceeded: claimJobRes.quotaExceeded },
+        'काम स्वीकार',
+        'accept job'
       );
       return;
     }
@@ -1769,9 +1916,14 @@ export default function App() {
       updatedAtMs: nowMs,
     };
     setJobs((prev) => prev.map((j) => (j.id === job.id ? updatedJob : j)));
-    syncJobToFirestore(updatedJob);
+    void syncJobToFirestore(updatedJob);
     setActiveBooking(newBooking);
-    syncBookingToFirestore(newBooking);
+    void syncBookingToFirestore(newBooking).then((res) => {
+      if (!res.ok) {
+        setActiveBooking((prev) => (prev?.id === newBooking.id ? null : prev));
+        handleFirestoreWriteOutcome(res, 'बुकिंग निर्माण', 'booking sync');
+      }
+    });
     AwsCloudService.syncBookingToAws(newBooking);
     soundManager.playSuccessCoin();
     showToast(
@@ -2755,6 +2907,10 @@ export default function App() {
 
   // 9. Customer Rates Worker
   const handleRateWorker = (bookingId: string, stars: number, review: string) => {
+    const targetWorkerId =
+      (activeBooking && activeBooking.id === bookingId ? activeBooking.workerId : '') ||
+      activeWorker.id;
+
     if (activeBooking && activeBooking.id === bookingId) {
       const ratedBooking: Booking = {
         ...activeBooking,
@@ -2767,7 +2923,7 @@ export default function App() {
 
     setWorkers((prev) =>
       prev.map((w) => {
-        if (w.id === activeWorker.id) {
+        if (w.id === targetWorkerId) {
           const newCount = w.reviewsCount + 1;
           const newRating = Number(((w.rating * w.reviewsCount + stars) / newCount).toFixed(2));
           const updated = { ...w, rating: newRating, reviewsCount: newCount };
@@ -2809,7 +2965,7 @@ export default function App() {
     setWalletTransactions((prev) => [newTx, ...prev]);
   };
 
-  // 11. Worker KYC update (with Aadhaar Front & Back Photos + Verhoeff/OCR Metadata)
+  // 11. Worker KYC update (12-digit Aadhaar + optional photos)
   const handleUpdateKyc = (
     aadhar: string,
     pan: string,
@@ -2828,7 +2984,9 @@ export default function App() {
             aadhaarHash: extra?.aadhaarHash || w.aadhaarHash,
             aadhaarExtractedName: extra?.aadhaarExtractedName || w.aadhaarExtractedName,
             aadhaarDocVerified: extra?.aadhaarDocVerified ?? w.aadhaarDocVerified,
-            isAadhaarVerified: Boolean(aadhaarFrontPhoto ?? w.aadhaarFrontPhoto),
+            isAadhaarVerified: Boolean(
+              aadhar?.trim() || w.aadhaarNumber || aadhaarFrontPhoto || w.aadhaarFrontPhoto || w.isAadhaarVerified
+            ),
             isPanVerified: Boolean(pan?.trim()) || w.isPanVerified,
           };
           syncWorkerToFirestore(updated);
@@ -3186,10 +3344,6 @@ export default function App() {
       void cancelJobPostInFirestore(jobIdToCancel);
     }
 
-    if (idsToCancel.size > 0 || customer.id) {
-      void cancelCustomerActiveBookingsInFirestore(customer.id, Array.from(idsToCancel));
-    }
-
     setActiveBooking(null);
     setBroadcastBookings((prev) => prev.filter((b) => !idsToCancel.has(b.id) && b.customerId !== customer.id));
     setIncomingBookingAlert((prev) =>
@@ -3203,12 +3357,44 @@ export default function App() {
     safeStorage.removeItem('smart_india_active_booking_v2');
     safeStorage.removeItem('smart_india_active_booking_v3');
 
-    showToast(
-      language === 'hi'
-        ? '❌ बुकिंग रद्द कर दी गई — कारीगर की स्क्रीन से भी हटा दी गई है।'
-        : '❌ Booking cancelled — cleared from worker screen as well.',
-      'info'
-    );
+    if (idsToCancel.size > 0 || customer.id) {
+      void cancelCustomerActiveBookingsInFirestore(customer.id, Array.from(idsToCancel)).then((res) => {
+        if (!res.ok) {
+          handleFirestoreWriteOutcome(res, 'बुकिंग रद्दीकरण', 'booking cancellation');
+        } else {
+          showToast(
+            language === 'hi'
+              ? '❌ बुकिंग रद्द कर दी गई — कारीगर की स्क्रीन से भी हटा दी गई है।'
+              : '❌ Booking cancelled — cleared from worker screen as well.',
+            'info'
+          );
+        }
+      });
+    } else {
+      showToast(
+        language === 'hi'
+          ? '❌ बुकिंग रद्द कर दी गई — कारीगर की स्क्रीन से भी हटा दी गई है।'
+          : '❌ Booking cancelled — cleared from worker screen as well.',
+        'info'
+      );
+    }
+  };
+
+  // Dismiss an already-completed booking card locally so Customer/Worker can start fresh
+  const handleDismissCompletedBooking = (bookingId?: string) => {
+    const targetId = bookingId || activeBooking?.id;
+    soundManager.playTap();
+    if (targetId) {
+      const nextIds = Array.from(new Set([...dismissedCompletedIdsRef.current, targetId])).slice(-50);
+      dismissedCompletedIdsRef.current = nextIds;
+      setDismissedCompletedIds(nextIds);
+      try {
+        safeStorage.setItem('smart_india_dismissed_completed_v1', JSON.stringify(nextIds));
+      } catch {}
+      setActiveBooking((prev) => (prev?.id === targetId ? null : prev));
+    } else {
+      setActiveBooking(null);
+    }
   };
 
   // Update Customer Profile
@@ -3379,6 +3565,35 @@ export default function App() {
           } catch {}
         }}
       />
+
+      {/* Firestore Daily Write Quota Exceeded Banner */}
+      {isFirestoreQuotaExceeded && (
+        <div className="bg-rose-950 border-b border-rose-500/60 text-rose-100 px-3 py-2 text-[11px] flex items-center justify-between gap-2 z-50 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span className="leading-snug">
+              {language === 'hi'
+                ? 'Firebase डेटाबेस की आज की मुफ्त राइट लिमिट भर गई है (Quota exceeded) — यह कल रीसेट होगी। प्लान अपग्रेड:'
+                : 'Firestore free daily write quota exceeded — resets tomorrow. Upgrade plan:'}{' '}
+              <a
+                href="https://console.firebase.google.com/project/articulate-vigil-fvxch/firestore/databases/ai-studio-remixsmartindiaw-06a16189-5dd6-43f5-bcb0-1098faae4695/data?openUpgradeDialog=true"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline font-bold text-amber-300"
+              >
+                {language === 'hi' ? 'Firebase Console' : 'Upgrade Firestore'}
+              </a>
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsFirestoreQuotaExceeded(false)}
+            className="text-rose-300 hover:text-white font-bold px-1.5 shrink-0"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Google Maps Platform Quota Exceeded Banner (Required Case A Banner) */}
       {isGmpQuotaExceeded && (
@@ -3572,6 +3787,7 @@ export default function App() {
                   onAddCustomerAddress={handleAddCustomerAddress}
                   onUpdateCustomerProfile={handleUpdateCustomerProfile}
                   onCancelBooking={handleCancelBooking}
+                  onDismissCompletedBooking={handleDismissCompletedBooking}
                   onToggleCustomerLocationSharing={handleToggleCustomerLiveLocation}
                   chatMessages={chatMessages}
                   onSendMessage={handleSendMessage}
@@ -3681,6 +3897,7 @@ export default function App() {
                   upiPaymentClaims={upiPaymentClaims}
                   existingUtrs={existingUtrs}
                   onSubmitPaymentClaim={handleSubmitUpiPaymentClaim}
+                  onDismissCompletedBooking={handleDismissCompletedBooking}
                 />
               </PhoneFrame>
             </div>
@@ -3706,6 +3923,7 @@ export default function App() {
               onAddCustomerAddress={handleAddCustomerAddress}
               onUpdateCustomerProfile={handleUpdateCustomerProfile}
               onCancelBooking={handleCancelBooking}
+              onDismissCompletedBooking={handleDismissCompletedBooking}
               onToggleCustomerLocationSharing={handleToggleCustomerLiveLocation}
               chatMessages={chatMessages}
               onSendMessage={handleSendMessage}
@@ -3861,6 +4079,7 @@ export default function App() {
               upiPaymentClaims={upiPaymentClaims}
               existingUtrs={existingUtrs}
               onSubmitPaymentClaim={handleSubmitUpiPaymentClaim}
+              onDismissCompletedBooking={handleDismissCompletedBooking}
             />
           </div>
         )}

@@ -128,6 +128,7 @@ interface WorkerAppProps {
   onSubmitPaymentClaim?: (
     claim: Omit<UpiPaymentRequest, 'id' | 'status' | 'submittedAtMs' | 'submittedAtText'>
   ) => { ok: boolean; error?: string };
+  onDismissCompletedBooking?: (bookingId?: string) => void;
 }
 
 export const WorkerApp: React.FC<WorkerAppProps> = ({
@@ -184,6 +185,7 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
   upiPaymentClaims = [],
   existingUtrs = [],
   onSubmitPaymentClaim,
+  onDismissCompletedBooking,
 }) => {
   const [activeTab, setActiveTab] = useState<'radar' | 'active' | 'wallet' | 'profile'>('radar');
   const workerClaims = upiPaymentClaims.filter((c) => c.workerId === worker.id);
@@ -1475,15 +1477,30 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
               )}
 
               {/* Job Status Banner */}
-              <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between">
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400">Booking ID: {myActiveBooking.id}</span>
+              <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block truncate">Booking ID: {myActiveBooking.id}</span>
                   <h4 className="text-xs font-bold text-white">{myActiveBooking.serviceCategory}</h4>
                   <p className="text-[11px] text-slate-400">{myActiveBooking.serviceSubCategory}</p>
                 </div>
-                <div className="text-right">
-                  <span className="text-sm font-black text-emerald-400 block">₹{myActiveBooking.estimatedAmount}</span>
-                  <span className="text-[9px] text-slate-500">Fixed Rate</span>
+                <div className="flex items-center gap-2 shrink-0">
+                  {!isOtpVerified && onDeclineBooking && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        soundManager.playWarning();
+                        onDeclineBooking(myActiveBooking.id);
+                        setActiveTab('radar');
+                      }}
+                      className="px-2.5 py-1.5 rounded-xl bg-rose-950/70 hover:bg-rose-900/70 border border-rose-500/40 text-rose-300 font-bold text-[10px] transition-colors active:scale-95"
+                    >
+                      {language === 'hi' ? '✕ रद्द / हटाएं' : '✕ Clear'}
+                    </button>
+                  )}
+                  <div className="text-right">
+                    <span className="text-sm font-black text-emerald-400 block">₹{myActiveBooking.estimatedAmount}</span>
+                    <span className="text-[9px] text-slate-500">Fixed Rate</span>
+                  </div>
                 </div>
               </div>
 
@@ -1915,6 +1932,25 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                               </div>
                             );
                           })()}
+
+                          {onDismissCompletedBooking && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                soundManager.playTap();
+                                onDismissCompletedBooking(myActiveBooking.id);
+                                setActiveTab('radar');
+                              }}
+                              className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 font-bold text-xs border border-slate-700 flex items-center justify-center gap-1.5 transition-colors"
+                            >
+                              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                              <span>
+                                {language === 'hi'
+                                  ? '✓ काम पूर्ण — अगला काम देखें (Done)'
+                                  : '✓ Job Done — Return to Radar'}
+                              </span>
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>

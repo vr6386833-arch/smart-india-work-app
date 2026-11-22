@@ -24,11 +24,14 @@ import {
   HardHat,
   Navigation,
   X,
-  RotateCcw
+  RotateCcw,
+  Zap
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Booking, Language } from '../../types';
 import { soundManager } from '../../services/soundEffects';
+import { normalizeIndianPhone10 } from '../../services/firebase';
+import { launchDirectUpiApp, UpiPreferredApp } from '../../utils/upiIntentHelper';
 import { OlaLiveTrackingMap } from '../common/OlaLiveTrackingMap';
 
 interface LiveTrackingViewProps {
@@ -45,6 +48,7 @@ interface LiveTrackingViewProps {
   onCompleteJobDirect?: () => void;
   onCancelBooking?: () => void;
   onToggleCustomerLocationSharing?: (enabled: boolean) => void;
+  onDismissCompleted?: () => void;
 }
 
 export const LiveTrackingView: React.FC<LiveTrackingViewProps> = ({
@@ -61,6 +65,7 @@ export const LiveTrackingView: React.FC<LiveTrackingViewProps> = ({
   onCompleteJobDirect,
   onCancelBooking,
   onToggleCustomerLocationSharing,
+  onDismissCompleted,
 }) => {
   const [showQrForCustomer, setShowQrForCustomer] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
@@ -74,7 +79,9 @@ export const LiveTrackingView: React.FC<LiveTrackingViewProps> = ({
   const isEnRoute = !isSearchingBroadcast && (booking.isLocationShared || booking.status === 'worker_en_route' || isArrived);
 
   const finalPayAmount = booking.paidAmount || booking.finalAmount || booking.estimatedAmount;
-  const workerUpi = `${booking.workerPhone}@ybl`;
+  const workerPhone10 = normalizeIndianPhone10(booking.workerPhone);
+  const safeWorkerSlug = (booking.workerName || 'worker').toLowerCase().replace(/[^a-z0-9]/g, '') || 'worker';
+  const workerUpi = workerPhone10 ? `${workerPhone10}@ybl` : `${safeWorkerSlug}@upi`;
   const upiIntentUrl = `upi://pay?pa=${encodeURIComponent(workerUpi)}&pn=${encodeURIComponent(booking.workerName)}&am=${finalPayAmount.toFixed(2)}&cu=INR&tn=${encodeURIComponent(`SmartIndia #${booking.id}`)}`;
 
   const handleCopyBookingId = () => {
@@ -509,6 +516,65 @@ export const LiveTrackingView: React.FC<LiveTrackingViewProps> = ({
               </button>
             </div>
 
+            {/* 1-Touch Direct UPI Launch for Single-Device Customers */}
+            {booking.paymentStatus !== 'paid_upi' && (
+              <div className="space-y-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundManager.playTap();
+                    launchDirectUpiApp(
+                      {
+                        upiId: workerUpi,
+                        payeeName: booking.workerName || 'Smart India Worker',
+                        amount: finalPayAmount,
+                        transactionNote: `SmartIndia #${booking.id}`,
+                        transactionRef: `SIW${booking.id.replace(/[^a-zA-Z0-9]/g, '').slice(-8)}`,
+                      },
+                      'any'
+                    );
+                  }}
+                  className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:from-emerald-400 text-slate-950 font-black text-xs shadow-lg flex items-center justify-center gap-1.5 active:scale-98 transition-all"
+                >
+                  <Zap className="w-4 h-4 shrink-0" />
+                  <span>
+                    {language === 'hi'
+                      ? `⚡ 1-टच में सीधे ₹${finalPayAmount} कारीगर को UPI भेजें`
+                      : `⚡ 1-Touch Pay ₹${finalPayAmount} via UPI App`}
+                  </span>
+                </button>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {[
+                    { id: 'gpay' as UpiPreferredApp, label: 'GPay' },
+                    { id: 'phonepe' as UpiPreferredApp, label: 'PhonePe' },
+                    { id: 'paytm' as UpiPreferredApp, label: 'Paytm' },
+                    { id: 'bhim' as UpiPreferredApp, label: 'BHIM' },
+                  ].map((app) => (
+                    <button
+                      key={app.id}
+                      type="button"
+                      onClick={() => {
+                        soundManager.playTap();
+                        launchDirectUpiApp(
+                          {
+                            upiId: workerUpi,
+                            payeeName: booking.workerName || 'Smart India Worker',
+                            amount: finalPayAmount,
+                            transactionNote: `SmartIndia #${booking.id}`,
+                            transactionRef: `SIW${booking.id.replace(/[^a-zA-Z0-9]/g, '').slice(-8)}`,
+                          },
+                          app.id
+                        );
+                      }}
+                      className="py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[10px] font-bold text-slate-200 transition-colors"
+                    >
+                      {app.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Expandable Customer QR View */}
             {showQrForCustomer && (
               <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 flex flex-col items-center text-center space-y-3">
@@ -558,6 +624,19 @@ export const LiveTrackingView: React.FC<LiveTrackingViewProps> = ({
               >
                 <Star className="w-4 h-4 fill-slate-950" />
                 <span>{language === 'hi' ? 'कारीगर को रेटिंग व समीक्षा दें' : 'Rate & Review Worker'}</span>
+              </button>
+            )}
+            {onDismissCompleted && (
+              <button
+                type="button"
+                onClick={() => {
+                  soundManager.playTap();
+                  onDismissCompleted();
+                }}
+                className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 font-bold text-xs border border-slate-700 flex items-center justify-center gap-1.5 transition-colors"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-emerald-400" />
+                <span>{language === 'hi' ? '✓ ठीक है — नया काम बुक करें (Done)' : '✓ Done — Book Another Service'}</span>
               </button>
             )}
           </div>

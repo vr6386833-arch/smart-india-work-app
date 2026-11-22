@@ -7,6 +7,7 @@ import {
   setDoc, 
   updateDoc,
   arrayUnion,
+  getDoc,
   getDocs, 
   deleteDoc,
   onSnapshot, 
@@ -293,27 +294,54 @@ function logFirestoreError(error: unknown, operationType: OperationType, path: s
   console.error('Firestore Error: ', JSON.stringify(errInfo));
 }
 
+export interface FirestoreWriteResult {
+  ok: boolean;
+  quotaExceeded?: boolean;
+  error?: string;
+}
+
+export function isFirestoreQuotaError(err: unknown): boolean {
+  const code = (err as { code?: string })?.code || '';
+  const msg = (err instanceof Error ? err.message : String(err || '')).toLowerCase();
+  return (
+    code === 'resource-exhausted' ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('quota exceeded') ||
+    msg.includes('quota limit exceeded')
+  );
+}
+
 // Sync booking to cloud Firestore
-export async function syncBookingToFirestore(booking: Booking): Promise<void> {
-  if (!db) return;
+export async function syncBookingToFirestore(booking: Booking): Promise<FirestoreWriteResult> {
+  if (!db) return { ok: false, error: 'Firestore unavailable' };
   const nowMs = Date.now();
   try {
+    const compactAvatar =
+      booking.workerAvatar && booking.workerAvatar.startsWith('data:') && booking.workerAvatar.length > 4000
+        ? ''
+        : booking.workerAvatar;
     const bookingRef = doc(db, 'bookings', booking.id);
     await setDoc(bookingRef, {
-      ...stripUndefined(booking),
+      ...stripUndefined({ ...booking, workerAvatar: compactAvatar }),
       createdAtMs: booking.createdAtMs || nowMs,
       updatedAtMs: nowMs,
       updatedAt: serverTimestamp(),
     }, { merge: true });
+    return { ok: true };
   } catch (err) {
     logFirestoreError(err, OperationType.WRITE, `bookings/${booking.id}`);
+    return {
+      ok: false,
+      quotaExceeded: isFirestoreQuotaError(err),
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
 export type ClaimBookingResult =
   | { outcome: 'CLAIMED'; booking: Booking }
   | { outcome: 'ALREADY_CLAIMED'; claimedByName?: string }
-  | { outcome: 'CANCELLED' | 'NOT_FOUND' | 'ERROR'; error?: string };
+  | { outcome: 'CANCELLED' | 'NOT_FOUND' | 'ERROR'; quotaExceeded?: boolean; error?: string };
 
 // First-to-accept atomic Firestore transaction so any open-broadcast lead goes strictly to the first worker who accepts
 export async function claimBroadcastBookingInFirestore(
@@ -346,13 +374,17 @@ export async function claimBroadcastBookingInFirestore(
         } as ClaimBookingResult;
       }
 
+      const compactAvatar =
+        worker.avatar && worker.avatar.startsWith('data:') && worker.avatar.length > 4000
+          ? ''
+          : worker.avatar;
       const nowMs = Date.now();
       const claimedBooking: Booking = {
         ...data,
         workerId: worker.id,
         workerName: worker.name,
         workerPhone: worker.phone,
-        workerAvatar: worker.avatar,
+        workerAvatar: compactAvatar,
         workerRating: worker.rating || 5,
         status: 'accepted',
         isLocationShared: true,
@@ -375,21 +407,26 @@ export async function claimBroadcastBookingInFirestore(
     return result;
   } catch (err) {
     logFirestoreError(err, OperationType.WRITE, `bookings/${bookingId}`);
-    return { outcome: 'ERROR', error: err instanceof Error ? err.message : String(err) };
+    return {
+      outcome: 'ERROR',
+      quotaExceeded: isFirestoreQuotaError(err),
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
 export type ClaimJobResult =
   | { outcome: 'CLAIMED'; job: JobPost }
   | { outcome: 'ALREADY_CLAIMED'; claimedByName?: string }
-  | { outcome: 'NOT_FOUND' | 'ERROR' };
+  | { outcome: 'NOT_FOUND' }
+  | { outcome: 'ERROR'; quotaExceeded?: boolean; error?: string };
 
 // Atomic transaction for Claiming an Open Broadcast JobPost
 export async function claimJobPostInFirestore(
   jobId: string,
   worker: WorkerProfile
 ): Promise<ClaimJobResult> {
-  if (!db || !jobId) return { outcome: 'ERROR' };
+  if (!db || !jobId) return { outcome: 'ERROR', error: 'Firestore unavailable' };
   try {
     const jobRef = doc(db, 'jobs', jobId);
     return await runTransaction(db, async (tx) => {
@@ -412,7 +449,11 @@ export async function claimJobPostInFirestore(
     });
   } catch (err) {
     logFirestoreError(err, OperationType.WRITE, `jobs/${jobId}`);
-    return { outcome: 'ERROR' };
+    return {
+      outcome: 'ERROR',
+      quotaExceeded: isFirestoreQuotaError(err),
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
@@ -422,10 +463,10 @@ export async function updateBookingLiveLocation(
   role: 'customer' | 'worker',
   location: LiveGeoLocation,
   _workerId?: string
-): Promise<void> {
-  if (!db || !bookingId) return;
+): Promise<FirestoreWriteResult> {
+  if (!db || !bookingId) return { ok: false, error: 'Unavailable' };
   // Never broadcast or store worker's live GPS onto booking / customer side
-  if (role === 'worker') return;
+  if (role === 'worker') return { ok: true };
   try {
     const bookingRef = doc(db, 'bookings', bookingId);
     const cleanLoc: LiveGeoLocation = {
@@ -442,8 +483,14 @@ export async function updateBookingLiveLocation(
       updatedAtMs: Date.now(),
       updatedAt: serverTimestamp(),
     }, { merge: true });
+    return { ok: true };
   } catch (err) {
     console.error('Error syncing customer live GPS location to cloud:', err);
+    return {
+      ok: false,
+      quotaExceeded: isFirestoreQuotaError(err),
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
@@ -452,8 +499,8 @@ export async function setBookingCustomerLocationSharing(
   bookingId: string,
   enabled: boolean,
   location?: LiveGeoLocation | null
-): Promise<void> {
-  if (!db || !bookingId) return;
+): Promise<FirestoreWriteResult> {
+  if (!db || !bookingId) return { ok: false, error: 'Unavailable' };
   const nowMs = Date.now();
   try {
     const bookingRef = doc(db, 'bookings', bookingId);
@@ -482,8 +529,14 @@ export async function setBookingCustomerLocationSharing(
         updatedAt: serverTimestamp(),
       }, { merge: true });
     }
+    return { ok: true };
   } catch (err) {
     logFirestoreError(err, OperationType.WRITE, `bookings/${bookingId}`);
+    return {
+      ok: false,
+      quotaExceeded: isFirestoreQuotaError(err),
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
@@ -491,13 +544,16 @@ export async function setBookingCustomerLocationSharing(
 export async function cancelBookingInFirestore(
   bookingId: string,
   cancelledBy: 'customer' | 'worker' | 'owner' = 'customer'
-): Promise<void> {
-  if (!db || !bookingId) return;
+): Promise<FirestoreWriteResult> {
+  if (!db || !bookingId) return { ok: false, error: 'Unavailable' };
   const nowMs = Date.now();
   try {
     const bookingRef = doc(db, 'bookings', bookingId);
-    await setDoc(bookingRef, {
-      id: bookingId,
+    const existingSnap = await getDoc(bookingRef);
+    if (!existingSnap.exists()) {
+      return { ok: true };
+    }
+    await updateDoc(bookingRef, {
       status: 'cancelled',
       cancelledBy,
       cancelledAtMs: nowMs,
@@ -506,66 +562,97 @@ export async function cancelBookingInFirestore(
       customerLiveLocation: deleteField(),
       updatedAtMs: nowMs,
       updatedAt: serverTimestamp(),
-    }, { merge: true });
+    });
+    return { ok: true };
   } catch (err) {
     logFirestoreError(err, OperationType.WRITE, `bookings/${bookingId}`);
+    return {
+      ok: false,
+      quotaExceeded: isFirestoreQuotaError(err),
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
 // Cancel ALL uncompleted bookings belonging to a customer in Firestore (prevents orphaned bookings lingering on Worker screen)
 export async function cancelCustomerActiveBookingsInFirestore(
   customerId: string,
-  knownBookingIds: string[] = []
-): Promise<void> {
-  if (!db || (!customerId && knownBookingIds.length === 0)) return;
+  knownBookingIds: string[] = [],
+  excludeBookingId?: string
+): Promise<FirestoreWriteResult> {
+  if (!db || (!customerId && knownBookingIds.length === 0)) return { ok: true };
   try {
-    const targetIds = new Set<string>(knownBookingIds.filter(Boolean));
+    const targetIds = new Set<string>(knownBookingIds.filter((id) => Boolean(id) && id !== excludeBookingId));
     if (customerId) {
       const q = query(collection(db, 'bookings'), where('customerId', '==', customerId));
       const snap = await getDocs(q);
       snap.forEach((docSnap) => {
         const d = docSnap.data() as Partial<Booking>;
-        if (d.status !== 'completed' && d.status !== 'cancelled') {
+        if (docSnap.id !== excludeBookingId && d.status !== 'completed' && d.status !== 'cancelled') {
           targetIds.add(docSnap.id);
         }
       });
     }
-    await Promise.all(
+    if (targetIds.size === 0) return { ok: true };
+    const results = await Promise.all(
       Array.from(targetIds).map((id) => cancelBookingInFirestore(id, 'customer'))
     );
+    const failed = results.find((r) => !r.ok);
+    return failed || { ok: true };
   } catch (err) {
     console.error('Error cancelling customer active bookings in cloud:', err);
+    return {
+      ok: false,
+      quotaExceeded: isFirestoreQuotaError(err),
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
 // Cancel linked JobPost in Firestore so it leaves Worker radar feed
-export async function cancelJobPostInFirestore(jobId: string): Promise<void> {
-  if (!db || !jobId) return;
+export async function cancelJobPostInFirestore(jobId: string): Promise<FirestoreWriteResult> {
+  if (!db || !jobId) return { ok: false, error: 'Unavailable' };
   const nowMs = Date.now();
   try {
-    await setDoc(doc(db, 'jobs', jobId), {
-      id: jobId,
+    const jobRef = doc(db, 'jobs', jobId);
+    const existingSnap = await getDoc(jobRef);
+    if (!existingSnap.exists()) {
+      return { ok: true };
+    }
+    await updateDoc(jobRef, {
       status: 'cancelled',
       customerLiveLocation: deleteField(),
       updatedAtMs: nowMs,
       updatedAt: serverTimestamp(),
-    }, { merge: true });
+    });
+    return { ok: true };
   } catch (err) {
     logFirestoreError(err, OperationType.WRITE, `jobs/${jobId}`);
+    return {
+      ok: false,
+      quotaExceeded: isFirestoreQuotaError(err),
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
 // Sync job post to cloud Firestore
-export async function syncJobToFirestore(job: JobPost): Promise<void> {
-  if (!db) return;
+export async function syncJobToFirestore(job: JobPost): Promise<FirestoreWriteResult> {
+  if (!db) return { ok: false, error: 'Firestore unavailable' };
   try {
     const jobRef = doc(db, 'jobs', job.id);
     await setDoc(jobRef, {
       ...stripUndefined(job),
       updatedAt: serverTimestamp(),
     }, { merge: true });
+    return { ok: true };
   } catch (err) {
     console.error('Error syncing job to cloud:', err);
+    return {
+      ok: false,
+      quotaExceeded: isFirestoreQuotaError(err),
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 

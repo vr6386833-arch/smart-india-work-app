@@ -118,7 +118,8 @@ public class MainActivity extends BridgeActivity {
 
         if (scheme.equals("tel") || scheme.equals("mailto")) {
             try {
-                Intent utilityIntent = new Intent(Intent.ACTION_VIEW, uri);
+                String action = scheme.equals("tel") ? Intent.ACTION_DIAL : Intent.ACTION_VIEW;
+                Intent utilityIntent = new Intent(action, uri);
                 utilityIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 startActivity(utilityIntent);
                 return true;

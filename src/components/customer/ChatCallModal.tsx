@@ -327,7 +327,7 @@ export const ChatCallModal: React.FC<ChatCallModalProps> = ({
       : null;
 
   useEffect(() => {
-    if (!trackedSession || activeMode !== 'call') return;
+    if (!trackedSession || (activeMode !== 'call' && trackedSession.id !== localSessionId)) return;
 
     const isCaller = trackedSession.callerRole === currentRole;
     if (
@@ -676,7 +676,7 @@ export const ChatCallModal: React.FC<ChatCallModalProps> = ({
             <button
               type="button"
               onClick={() => {
-                if (activeMode === 'call' && localSessionId) {
+                if (localSessionId && callStatus !== 'ended' && callStatus !== 'failed') {
                   updateCallSessionStatus(localSessionId, 'ended');
                 }
                 cleanupWebrtc();

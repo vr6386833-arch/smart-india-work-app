@@ -86,11 +86,16 @@ export const OtpVerificationDialog: React.FC<OtpVerificationDialogProps> = ({
 
   useEffect(() => {
     if (isOpen) {
+      setDigits(['', '', '', '']);
+      setIsOtpMatched(false);
+      setErrorMsg(null);
+      setUtrNumber('');
+      setIsSubmitting(false);
       setSelectedPayMethod(workerWalletBalance >= fee ? 'wallet' : 'upi_qr');
       setLaunchedUpiApp(null);
       setShowQrCode(false);
     }
-  }, [isOpen, workerWalletBalance, fee]);
+  }, [isOpen, bookingId, workerWalletBalance, fee]);
 
   if (!isOpen) return null;
 

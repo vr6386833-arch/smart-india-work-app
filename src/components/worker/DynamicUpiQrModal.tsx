@@ -23,7 +23,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import confetti from 'canvas-confetti';
 import { WorkerProfile, Booking, Language } from '../../types';
 import { soundManager } from '../../services/soundEffects';
-import { isValidRealUpiUtr } from '../../services/firebase';
+import { isValidRealUpiUtr, normalizeIndianPhone10 } from '../../services/firebase';
 
 interface DynamicUpiQrModalProps {
   isOpen: boolean;
@@ -49,8 +49,10 @@ export const DynamicUpiQrModal: React.FC<DynamicUpiQrModalProps> = ({
   const [materialDescription, setMaterialDescription] = useState<string>('');
   const [extraConvenience, setExtraConvenience] = useState<number>(0);
 
-  // UPI configuration
-  const defaultUpiId = `${worker.phone}@ybl`;
+  // UPI configuration (strip +91 / spaces so VPA is strictly valid NPCI format)
+  const workerPhone10 = normalizeIndianPhone10(worker.phone);
+  const safeNameHandle = (worker.name || 'worker').toLowerCase().replace(/[^a-z0-9]/g, '') || workerPhone10;
+  const defaultUpiId = workerPhone10 ? `${workerPhone10}@ybl` : `${safeNameHandle}@ybl`;
   const [selectedUpiHandle, setSelectedUpiHandle] = useState<string>('phonepe');
   const [customUpiId, setCustomUpiId] = useState<string>(defaultUpiId);
   const [customNote, setCustomNote] = useState<string>(
@@ -68,28 +70,43 @@ export const DynamicUpiQrModal: React.FC<DynamicUpiQrModalProps> = ({
   const [utrError, setUtrError] = useState<string>('');
   const [voiceAnnounced, setVoiceAnnounced] = useState(true);
 
-  // Sync state when booking changes
+  // Sync & reset state whenever modal opens or booking changes
   useEffect(() => {
-    if (booking?.estimatedAmount) {
-      setBaseAmount(booking.estimatedAmount);
-      setCustomNote(`SmartIndia ${booking.serviceCategory} #${booking.id}`);
+    if (!isOpen) return;
+    setBaseAmount(booking?.estimatedAmount || worker.dailyRate || 500);
+    setMaterialAmount(0);
+    setMaterialDescription('');
+    setExtraConvenience(0);
+    setPaymentDone(false);
+    setTxnId('');
+    setCustomerUtr('');
+    setUtrError('');
+    setPaymentMode('upi');
+    setCustomNote(
+      booking
+        ? `SmartIndia ${booking.serviceCategory} #${booking.id}`
+        : `SmartIndia Worker Service - ${worker.name}`
+    );
+    if (workerPhone10) {
+      setCustomUpiId((prev) => (!prev || prev.includes(' ') || prev.startsWith('+')) ? `${workerPhone10}@ybl` : prev);
     }
-  }, [booking]);
+  }, [isOpen, booking?.id, booking?.estimatedAmount, booking?.serviceCategory, worker.dailyRate, worker.name, workerPhone10]);
 
   // Compute Active UPI ID based on preset or custom
   const getComputedUpiId = () => {
+    const cleanPhoneVpaBase = workerPhone10 || safeNameHandle;
     switch (selectedUpiHandle) {
       case 'phonepe':
-        return `${worker.phone}@ybl`;
+        return `${cleanPhoneVpaBase}@ybl`;
       case 'gpay':
-        return `${worker.name.toLowerCase().replace(/[^a-z0-9]/g, '')}@okhdfcbank`;
+        return `${safeNameHandle}@okhdfcbank`;
       case 'paytm':
-        return `${worker.phone}@paytm`;
+        return `${cleanPhoneVpaBase}@paytm`;
       case 'bhim':
-        return `${worker.phone}@upi`;
+        return `${cleanPhoneVpaBase}@upi`;
       case 'custom':
       default:
-        return customUpiId.trim() || `${worker.phone}@upi`;
+        return customUpiId.trim() || `${cleanPhoneVpaBase}@upi`;
     }
   };
 
@@ -408,12 +425,13 @@ export const DynamicUpiQrModal: React.FC<DynamicUpiQrModalProps> = ({
                 <span className="text-[10px] text-slate-400 font-semibold block">
                   Select Worker Receiving Bank / VPA:
                 </span>
-                <div className="grid grid-cols-4 gap-1.5">
+                <div className="grid grid-cols-5 gap-1.5">
                   {[
                     { id: 'phonepe', label: 'PhonePe', icon: '🟣' },
                     { id: 'gpay', label: 'GPay', icon: '🔵' },
                     { id: 'paytm', label: 'Paytm', icon: '🔷' },
-                    { id: 'bhim', label: 'BHIM/Bank', icon: '🟢' },
+                    { id: 'bhim', label: 'BHIM', icon: '🟢' },
+                    { id: 'custom', label: 'Custom', icon: '✏️' },
                   ].map((preset) => (
                     <button
                       key={preset.id}
@@ -432,6 +450,15 @@ export const DynamicUpiQrModal: React.FC<DynamicUpiQrModalProps> = ({
                     </button>
                   ))}
                 </div>
+                {selectedUpiHandle === 'custom' && (
+                  <input
+                    type="text"
+                    value={customUpiId}
+                    onChange={(e) => setCustomUpiId(e.target.value)}
+                    placeholder="e.g. 9876543210@ybl or name@okicici"
+                    className="w-full bg-slate-950 border border-emerald-500/40 rounded-xl px-3 py-2 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400"
+                  />
+                )}
               </div>
 
               {/* Real Customer Settlement Mode (UPI with 12-digit UTR OR Cash) */}

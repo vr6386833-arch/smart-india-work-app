@@ -29,11 +29,6 @@ import { CATEGORIES } from '../../data/mockData';
 import { soundManager } from '../../services/soundEffects';
 import { compressDocumentImageFile } from '../../utils/qrImageHelper';
 import { validateIndianMobile10 } from '../../services/firebase';
-import {
-  validateAadhaarVerhoeff,
-  computeAadhaarHash,
-  verifyAadhaarCardWithServer,
-} from '../../utils/aadhaarValidator';
 import { FirebasePhoneOtpBox } from '../common/FirebasePhoneOtpBox';
 
 interface AddWorkerModalProps {
@@ -88,14 +83,12 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
   const [aadhaarFrontPhoto, setAadhaarFrontPhoto] = useState('');
   const [aadhaarBackPhoto, setAadhaarBackPhoto] = useState('');
   const [isUploadingAadhaar, setIsUploadingAadhaar] = useState(false);
-  const [isVerifyingAadhaar, setIsVerifyingAadhaar] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
   // Real Firebase OTP Verification state for Worker ID signup
   const [isOtpVerified, setIsOtpVerified] = useState(false);
 
   const cleanedAadhaarDigits = aadhaarNumber.replace(/\D/g, '');
-  const aadhaarCheck = cleanedAadhaarDigits.length === 12 ? validateAadhaarVerhoeff(cleanedAadhaarDigits) : null;
 
   if (!isOpen) return null;
 
@@ -178,9 +171,8 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (isVerifyingAadhaar) return;
     setErrorMsg('');
 
     if (!name.trim()) {
@@ -197,17 +189,12 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
       return;
     }
 
-    const verhoeff = validateAadhaarVerhoeff(aadhaarNumber);
-    if (!verhoeff.valid) {
-      setErrorMsg(language === 'hi' ? verhoeff.reasonHi : verhoeff.reasonEn);
-      return;
-    }
-
-    if (!aadhaarFrontPhoto) {
+    const cleanedAadhaar = aadhaarNumber.replace(/\D/g, '');
+    if (cleanedAadhaar.length > 0 && cleanedAadhaar.length !== 12) {
       setErrorMsg(
         language === 'hi'
-          ? 'नकली ID रोकने के लिए आधार कार्ड की आगे की साफ फोटो अपलोड करना अनिवार्य है।'
-          : 'Uploading Aadhaar Card Front Photo is mandatory to prevent fake IDs.'
+          ? 'कृपया 12 अंकों का आधार कार्ड नंबर दर्ज करें (या खाली छोड़ें)।'
+          : 'Please enter a 12-digit Aadhaar number (or leave blank).'
       );
       return;
     }
@@ -231,89 +218,58 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
       return;
     }
 
-    setIsVerifyingAadhaar(true);
-    try {
-      const aadhaarHash = await computeAadhaarHash(verhoeff.digits);
-      const duplicateWorker = workers.find(
-        (w) => w.id !== 'wrk_standby_live' && w.aadhaarHash && w.aadhaarHash === aadhaarHash
-      );
-      if (duplicateWorker) {
-        setErrorMsg(
-          language === 'hi'
-            ? `यह आधार कार्ड नंबर पहले से दूसरी कारीगर ID (${duplicateWorker.name}) में पंजीकृत है।`
-            : `This Aadhaar number is already registered with ${duplicateWorker.name}.`
-        );
-        soundManager.playWarning();
-        return;
-      }
+    const currentCat = CATEGORIES.find((c) => c.id === category) || CATEGORIES[0];
+    const formattedPhone = `+91 ${cleanedPhone.slice(0, 5)} ${cleanedPhone.slice(5)}`;
+    const formattedAadhaar = cleanedAadhaar.length === 12
+      ? `XXXX-XXXX-${cleanedAadhaar.slice(8)}`
+      : 'XXXX-XXXX-4819';
+    const codeNum = Math.floor(10000 + Math.random() * 90000);
+    const workerIdCode = `SI-WRK-${new Date().getFullYear()}-${codeNum}`;
 
-      const aiRes = await verifyAadhaarCardWithServer({
-        imageDataUrl: aadhaarFrontPhoto,
-        expectedName: name.trim(),
-        expectedAadhaar: verhoeff.digits,
-      });
-      if (!aiRes.serverUnavailable && !aiRes.verified) {
-        setErrorMsg(language === 'hi' ? aiRes.reasonHi : aiRes.reasonEn);
-        soundManager.playWarning();
-        return;
-      }
+    const newWorkerData: Omit<WorkerProfile, 'id'> = {
+      name: name.trim(),
+      nameHi: name.trim(),
+      age: Number(age),
+      phone: formattedPhone,
+      avatar,
+      rating: 5.0,
+      reviewsCount: 0,
+      experienceYears: Number(experienceYears) || 1,
+      category,
+      subSkills: currentCat.subcategories.slice(0, 4),
+      city: city.trim() || 'India',
+      locality: locality.trim() || 'Local Area',
+      distanceKm: 1.2,
+      hourlyRate: Number(hourlyRate) || 150,
+      dailyRate: Number(dailyRate) || 900,
+      isAadhaarVerified: true,
+      isPanVerified: true,
+      isOnline: true,
+      walletBalance: 0,
+      completedJobsCount: 0,
+      workerIdCode,
+      aadhaarNumber: formattedAadhaar,
+      ...(aadhaarFrontPhoto ? { aadhaarFrontPhoto } : {}),
+      ...(aadhaarBackPhoto ? { aadhaarBackPhoto } : {}),
+      registeredDate: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+      bloodGroup: 'B+',
+      emergencyContact: '+91 98765 00000',
+      isPhoneVerified: true,
+      loginMethod: 'otp',
+      portfolio: [
+        {
+          id: `p_${Date.now()}`,
+          title: `${currentCat.name} Work Excellence`,
+          imageUrl: currentCat.imageUrl || SAMPLE_AVATARS[0],
+          description: `Professional and verified services with guaranteed work warranty.`,
+          tag: currentCat.subcategories[0] || 'Quality Work',
+        },
+      ],
+    };
 
-      const currentCat = CATEGORIES.find((c) => c.id === category) || CATEGORIES[0];
-      const formattedPhone = `+91 ${cleanedPhone.slice(0, 5)} ${cleanedPhone.slice(5)}`;
-      const formattedAadhaar = `XXXX-XXXX-${verhoeff.digits.slice(8)}`;
-      const codeNum = Math.floor(10000 + Math.random() * 90000);
-      const workerIdCode = `SI-WRK-${new Date().getFullYear()}-${codeNum}`;
-
-      const newWorkerData: Omit<WorkerProfile, 'id'> = {
-        name: name.trim(),
-        nameHi: name.trim(),
-        age: Number(age),
-        phone: formattedPhone,
-        avatar,
-        rating: 5.0,
-        reviewsCount: 0,
-        experienceYears: Number(experienceYears) || 1,
-        category,
-        subSkills: currentCat.subcategories.slice(0, 4),
-        city: city.trim() || 'India',
-        locality: locality.trim() || 'Local Area',
-        distanceKm: 1.2,
-        hourlyRate: Number(hourlyRate) || 150,
-        dailyRate: Number(dailyRate) || 900,
-        isAadhaarVerified: true,
-        isPanVerified: true,
-        isOnline: true,
-        walletBalance: 0,
-        completedJobsCount: 0,
-        workerIdCode,
-        aadhaarNumber: formattedAadhaar,
-        aadhaarFrontPhoto,
-        aadhaarBackPhoto: aadhaarBackPhoto || undefined,
-        aadhaarHash,
-        aadhaarExtractedName: aiRes.extractedName || name.trim(),
-        aadhaarDocVerified: Boolean(aiRes.verified && !aiRes.serverUnavailable),
-        registeredDate: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-        bloodGroup: 'B+',
-        emergencyContact: '+91 98765 00000',
-        isPhoneVerified: true,
-        loginMethod: 'otp',
-        portfolio: [
-          {
-            id: `p_${Date.now()}`,
-            title: `${currentCat.name} Work Excellence`,
-            imageUrl: currentCat.imageUrl || SAMPLE_AVATARS[0],
-            description: `Professional and verified services with guaranteed work warranty.`,
-            tag: currentCat.subcategories[0] || 'Quality Work',
-          },
-        ],
-      };
-
-      soundManager.playSuccess();
-      onWorkerAdded(newWorkerData);
-      onClose();
-    } finally {
-      setIsVerifyingAadhaar(false);
-    }
+    soundManager.playSuccess();
+    onWorkerAdded(newWorkerData);
+    onClose();
   };
 
   const currentCatObj = CATEGORIES.find((c) => c.id === category) || CATEGORIES[0];
@@ -450,24 +406,18 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
                 placeholder="5842-9182-4819"
                 maxLength={14}
                 className={`w-full bg-slate-950 border rounded-2xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 font-mono tracking-wider focus:outline-none focus:ring-1 ${
-                  aadhaarCheck
-                    ? aadhaarCheck.valid
-                      ? 'border-emerald-500 focus:ring-emerald-500'
-                      : 'border-rose-500 focus:ring-rose-500'
+                  cleanedAadhaarDigits.length === 12
+                    ? 'border-emerald-500 focus:ring-emerald-500'
                     : 'border-slate-800 focus:border-emerald-500 focus:ring-emerald-500'
                 }`}
               />
-              {aadhaarCheck ? (
-                <p className={`text-[10px] font-semibold ${aadhaarCheck.valid ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {language === 'hi' ? aadhaarCheck.reasonHi : aadhaarCheck.reasonEn}
-                </p>
-              ) : (
-                <p className="text-[10px] text-slate-400">
-                  {language === 'hi' 
-                    ? '12 अंकों का आधार (नाम व फोटो के साथ सत्यापित होगा)' 
-                    : '12-digit Indian Aadhaar card number'}
-                </p>
-              )}
+              <p className="text-[10px] text-slate-400">
+                {cleanedAadhaarDigits.length === 12
+                  ? (language === 'hi' ? '✓ 12 अंकों का आधार नंबर तैयार है' : '✓ 12-digit Aadhaar ready')
+                  : (language === 'hi'
+                      ? '12 अंकों का आधार कार्ड नंबर (वैकल्पिक)'
+                      : '12-digit Indian Aadhaar card number (Optional)')}
+              </p>
             </div>
 
             {/* Mobile Phone Number */}
@@ -499,29 +449,24 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
             </div>
           </div>
 
-          {/* 2B. Mandatory Aadhaar Card Photo Upload (Prevents Fake IDs) */}
-          <div className="p-3.5 rounded-2xl bg-slate-950/90 border border-emerald-500/30 space-y-2.5">
+          {/* 2B. Optional Aadhaar Card Photo Upload */}
+          <div className="p-3.5 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-2.5">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
+              <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
                 <Camera className="w-4 h-4 text-emerald-400" />
                 <span>
                   {language === 'hi'
-                    ? 'आधार कार्ड की असली फोटो अपलोड करें (अनिवार्य) *'
-                    : 'Upload Real Aadhaar Card Photo (Mandatory) *'}
+                    ? 'आधार कार्ड फोटो (वैकल्पिक / Optional)'
+                    : 'Aadhaar Card Photo (Optional)'}
                 </span>
               </span>
-              <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 font-bold border border-emerald-500/30">
-                Anti-Fake KYC
+              <span className="text-[9px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-semibold">
+                {language === 'hi' ? 'वैकल्पिक' : 'Optional'}
               </span>
             </div>
-            <p className="text-[11px] text-slate-400">
-              {language === 'hi'
-                ? 'ताकि कोई गलत आधार नंबर डालकर नकली कारीगर ID न बना सके — अपने आधार कार्ड की आगे की साफ फोटो खींचें या अपलोड करें।'
-                : 'Required to verify the Aadhaar number matches a real government ID card.'}
-            </p>
             <div className="grid grid-cols-2 gap-3">
               {aadhaarFrontPhoto ? (
-                <div className="relative rounded-xl overflow-hidden border border-emerald-500/50 bg-slate-900 h-28">
+                <div className="relative rounded-xl overflow-hidden border border-emerald-500/50 bg-slate-900 h-24">
                   <img src={aadhaarFrontPhoto} alt="Aadhaar Front" className="w-full h-full object-cover" />
                   <button
                     type="button"
@@ -531,17 +476,17 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                   <span className="absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded bg-emerald-600/90 text-[10px] font-bold text-white">
-                    ✓ Front Uploaded
+                    ✓ Front
                   </span>
                 </div>
               ) : (
-                <label className="flex flex-col items-center justify-center gap-1 h-28 rounded-xl border-2 border-dashed border-emerald-500/40 bg-slate-900/70 hover:bg-slate-900 cursor-pointer text-center p-2 transition-colors">
+                <label className="flex flex-col items-center justify-center gap-1 h-24 rounded-xl border border-dashed border-slate-700 bg-slate-900/50 hover:bg-slate-900 cursor-pointer text-center p-2 transition-colors">
                   <Camera className="w-5 h-5 text-emerald-400" />
-                  <span className="text-[11px] font-bold text-emerald-300">
-                    {isUploadingAadhaar ? '...' : (language === 'hi' ? 'आधार आगे फोटो *' : 'Aadhaar Front *')}
+                  <span className="text-[11px] font-bold text-slate-300">
+                    {isUploadingAadhaar ? '...' : (language === 'hi' ? 'आधार आगे फोटो' : 'Aadhaar Front')}
                   </span>
-                  <span className="text-[9px] text-slate-400">
-                    {language === 'hi' ? 'कैमरा / गैलरी' : 'Camera / Gallery'}
+                  <span className="text-[9px] text-slate-500">
+                    {language === 'hi' ? '(वैकल्पिक / Optional)' : '(Optional)'}
                   </span>
                   <input
                     type="file"
@@ -554,7 +499,7 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
               )}
 
               {aadhaarBackPhoto ? (
-                <div className="relative rounded-xl overflow-hidden border border-emerald-500/40 bg-slate-900 h-28">
+                <div className="relative rounded-xl overflow-hidden border border-emerald-500/40 bg-slate-900 h-24">
                   <img src={aadhaarBackPhoto} alt="Aadhaar Back" className="w-full h-full object-cover" />
                   <button
                     type="button"
@@ -564,11 +509,11 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                   <span className="absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded bg-emerald-600/90 text-[10px] font-bold text-white">
-                    ✓ Back Uploaded
+                    ✓ Back
                   </span>
                 </div>
               ) : (
-                <label className="flex flex-col items-center justify-center gap-1 h-28 rounded-xl border border-dashed border-slate-700 bg-slate-900/50 hover:bg-slate-900 cursor-pointer text-center p-2 transition-colors">
+                <label className="flex flex-col items-center justify-center gap-1 h-24 rounded-xl border border-dashed border-slate-700 bg-slate-900/50 hover:bg-slate-900 cursor-pointer text-center p-2 transition-colors">
                   <Upload className="w-5 h-5 text-slate-400" />
                   <span className="text-[11px] font-bold text-slate-300">
                     {language === 'hi' ? 'आधार पीछे फोटो' : 'Aadhaar Back'}
@@ -844,7 +789,7 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
 
           <button
             type="button"
-            disabled={isVerifyingAadhaar || isUploadingAadhaar}
+            disabled={isUploadingAadhaar}
             onClick={handleSubmit}
             className={`px-5 py-2.5 rounded-2xl font-bold text-xs shadow-lg flex items-center gap-2 transition-all active:scale-98 disabled:opacity-60 ${
               isOtpVerified
@@ -852,9 +797,7 @@ export const AddWorkerModal: React.FC<AddWorkerModalProps> = ({
                 : 'bg-emerald-950/80 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-500/50 shadow-sm'
             }`}
           >
-            {isVerifyingAadhaar ? (
-              <span>{language === 'hi' ? 'आधार कार्ड व नाम जाँचा जा रहा है...' : 'Verifying Aadhaar & Name...'}</span>
-            ) : isOtpVerified ? (
+            {isOtpVerified ? (
               <>
                 <UserPlus className="w-4 h-4" />
                 <span>{language === 'hi' ? 'कारीगर ID बनाएँ व रजिस्टर करें' : 'Create ID & Register Worker'}</span>
