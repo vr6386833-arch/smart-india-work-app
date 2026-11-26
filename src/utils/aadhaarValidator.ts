@@ -1,4 +1,5 @@
 // Official UIDAI Verhoeff Checksum Validator + Client Helper for Server-Side Aadhaar Card OCR & Name Match
+import { resolveApiUrl } from './apiConfig';
 
 export interface AadhaarVerificationResult {
   verified: boolean;
@@ -175,7 +176,7 @@ export async function verifyAadhaarCardWithServer(params: {
   const timeoutId = window.setTimeout(() => controller.abort(), 20000);
 
   try {
-    const res = await fetch('/api/verify-aadhaar', {
+    const res = await fetch(resolveApiUrl('/api/verify-aadhaar'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),
@@ -187,7 +188,7 @@ export async function verifyAadhaarCardWithServer(params: {
     if (!res.ok || !data) {
       return {
         verified: false,
-        serverUnavailable: res.status === 503 || res.status === 404 || res.status >= 500,
+        serverUnavailable: res.status === 429 || res.status === 503 || res.status === 404 || res.status >= 500,
         isAadhaarCard: false,
         nameMatches: false,
         numberMatches: false,

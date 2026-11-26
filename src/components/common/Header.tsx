@@ -1,54 +1,37 @@
 import React from 'react';
 import { 
-  Smartphone, 
   Layers, 
-  Code2, 
   Volume2, 
   VolumeX, 
   RotateCcw, 
   User, 
   HardHat, 
   ShieldCheck,
-  Sparkles,
   UserPlus,
   Building2,
-  IndianRupee,
   FileText,
-  Cloud,
-  Server,
   ShieldAlert,
-  Zap,
-  Crown,
-  Globe
+  Crown
 } from 'lucide-react';
 import { Language } from '../../types';
 import { soundManager } from '../../services/soundEffects';
-import { PWAInstallHeaderButton } from './PWAInstallHeaderButton';
 
 interface HeaderProps {
-  activeView: 'dual' | 'customer' | 'worker' | 'owner' | 'admin' | 'studio';
-  setActiveView: (view: 'dual' | 'customer' | 'worker' | 'owner' | 'admin' | 'studio') => void;
+  activeView: 'dual' | 'customer' | 'worker' | 'owner' | 'admin';
+  setActiveView: (view: 'dual' | 'customer' | 'worker' | 'owner' | 'admin') => void;
   language: Language;
   setLanguage: (lang: Language) => void;
   onResetData: () => void;
   workerOnline: boolean;
   walletBalance: number;
   onOpenWorkerIdCard?: () => void;
-  onOpenShareLink?: () => void;
   onOpenAddCustomer?: () => void;
   onOpenAddWorker?: () => void;
   onOpenAppOwnerEarnings?: () => void;
   onOpenLegalTerms?: () => void;
-  onOpenAndroidGuide?: () => void;
-  onOpenAwsServer?: () => void;
-  onOpenProductionServices?: () => void;
   onOpenSos?: () => void;
-  onOpenTestGuide?: () => void;
   onOpenSecurityShield?: () => void;
-  onOpenApkDownload?: () => void;
-  isCloudConnected?: boolean;
   totalCommissionEarned?: number;
-  activeCustomerName?: string;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -60,21 +43,13 @@ export const Header: React.FC<HeaderProps> = ({
   workerOnline,
   walletBalance,
   onOpenWorkerIdCard,
-  onOpenShareLink,
   onOpenAddCustomer,
   onOpenAddWorker,
   onOpenAppOwnerEarnings,
   onOpenLegalTerms,
-  onOpenAndroidGuide,
-  onOpenAwsServer,
-  onOpenProductionServices,
   onOpenSos,
-  onOpenTestGuide,
   onOpenSecurityShield,
-  onOpenApkDownload,
-  isCloudConnected = true,
   totalCommissionEarned,
-  activeCustomerName,
 }) => {
   const [isMuted, setIsMuted] = React.useState(soundManager.getMuted());
 
@@ -187,21 +162,6 @@ export const Header: React.FC<HeaderProps> = ({
                 ₹{totalCommissionEarned}
               </span>
             )}
-          </button>
-
-          <button
-            onClick={() => {
-              soundManager.playTap();
-              setActiveView('studio');
-            }}
-            className={`hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
-              activeView === 'studio'
-                ? 'bg-purple-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Code2 className="w-3.5 h-3.5" />
-            <span>Flutter & Backend Code</span>
           </button>
         </div>
 
@@ -316,21 +276,6 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <ShieldAlert className="w-3.5 h-3.5" />
               <span>SOS 112</span>
-            </button>
-          )}
-
-          {/* Quick Testing Suite Button */}
-          {onOpenTestGuide && (
-            <button
-              onClick={() => {
-                soundManager.playTap();
-                onOpenTestGuide();
-              }}
-              className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-amber-500/20 hover:bg-amber-500/30 text-amber-300 hover:text-amber-200 text-xs font-bold border border-amber-500/40 shadow-sm transition-all active:scale-95"
-              title={language === 'hi' ? 'टेस्टिंग गाइड व सिमुलेशन' : 'Testing Guide & Simulation'}
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span>{language === 'hi' ? '🧪 टेस्टिंग' : '🧪 Test'}</span>
             </button>
           )}
 

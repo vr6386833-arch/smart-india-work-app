@@ -1,13 +1,36 @@
-// Real Two-Way WebRTC Voice Call Manager using STUN + Firestore Signaling
+// Real Two-Way WebRTC Voice Call Manager using STUN/TURN + Firestore Signaling
 // Provides genuine cross-device voice audio with clean microphone permissions handling
+import { resolveApiUrl } from '../utils/apiConfig';
 
-const ICE_SERVERS: RTCConfiguration = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-  ],
-};
+const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+];
+
+let cachedIceServers: { servers: RTCIceServer[]; fetchedAtMs: number } | null = null;
+
+async function getActiveIceServers(): Promise<RTCIceServer[]> {
+  if (cachedIceServers && Date.now() - cachedIceServers.fetchedAtMs < 5 * 60 * 1000) {
+    return cachedIceServers.servers;
+  }
+  try {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 1800);
+    const res = await fetch(resolveApiUrl('/api/ice-servers'), { signal: controller.signal });
+    window.clearTimeout(timer);
+    if (res.ok) {
+      const data = (await res.json()) as { iceServers?: RTCIceServer[] };
+      if (Array.isArray(data?.iceServers) && data.iceServers.length > 0) {
+        cachedIceServers = { servers: data.iceServers, fetchedAtMs: Date.now() };
+        return data.iceServers;
+      }
+    }
+  } catch {
+    // Fall back to default STUN servers immediately if backend is unreachable
+  }
+  return DEFAULT_ICE_SERVERS;
+}
 
 export interface WebrtcCallbacks {
   onIceCandidate: (candidateJson: string) => void;
@@ -42,14 +65,15 @@ export class WebrtcCallSessionManager {
     return this.localStream;
   }
 
-  private initPeerConnection(callbacks: WebrtcCallbacks): RTCPeerConnection {
+  private async initPeerConnection(callbacks: WebrtcCallbacks): Promise<RTCPeerConnection> {
     if (this.pc) {
       try {
         this.pc.close();
       } catch {}
     }
 
-    this.pc = new RTCPeerConnection(ICE_SERVERS);
+    const iceServers = await getActiveIceServers();
+    this.pc = new RTCPeerConnection({ iceServers });
     this.remoteStream = new MediaStream();
     this.hasRemoteDescription = false;
     this.pendingRemoteCandidates = [];
@@ -89,7 +113,7 @@ export class WebrtcCallSessionManager {
 
   public async createOffer(callbacks: WebrtcCallbacks): Promise<string> {
     await this.acquireMicStream();
-    const pc = this.initPeerConnection(callbacks);
+    const pc = await this.initPeerConnection(callbacks);
     const offer = await pc.createOffer({ offerToReceiveAudio: true });
     await pc.setLocalDescription(offer);
     return JSON.stringify(offer);
@@ -100,7 +124,7 @@ export class WebrtcCallSessionManager {
     callbacks: WebrtcCallbacks
   ): Promise<string> {
     await this.acquireMicStream();
-    const pc = this.initPeerConnection(callbacks);
+    const pc = await this.initPeerConnection(callbacks);
     const offerDesc = JSON.parse(offerSdpJson) as RTCSessionDescriptionInit;
     await pc.setRemoteDescription(new RTCSessionDescription(offerDesc));
     this.hasRemoteDescription = true;

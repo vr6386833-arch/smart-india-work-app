@@ -1,6 +1,9 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import { 
-  getFirestore, 
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   Firestore, 
   collection, 
   doc, 
@@ -24,6 +27,8 @@ import {
   Auth,
   GoogleAuthProvider,
   signInWithPopup,
+  onAuthStateChanged,
+  signOut,
 } from 'firebase/auth';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 import { Booking, WorkerProfile, CustomerProfile, CommissionRecord, OwnerPayoutRecord, JobPost, ChatMessage, AppOwnerPaymentConfig, UpiPaymentRequest, LiveGeoLocation, CallSession, CallSessionStatus } from '../types';
@@ -123,11 +128,29 @@ try {
 
   app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
   auth = getAuth(app);
-  
-  if (firebaseConfigJson.firestoreDatabaseId && firebaseConfigJson.firestoreDatabaseId !== '(default)') {
-    db = getFirestore(app, firebaseConfigJson.firestoreDatabaseId);
+
+  const targetDbId =
+    firebaseConfigJson.firestoreDatabaseId && firebaseConfigJson.firestoreDatabaseId !== '(default)'
+      ? firebaseConfigJson.firestoreDatabaseId
+      : undefined;
+
+  // Enable IndexedDB persistent local cache in browsers so reopened apps don't re-read unchanged docs
+  if (typeof window !== 'undefined' && typeof indexedDB !== 'undefined') {
+    try {
+      db = initializeFirestore(
+        app,
+        {
+          localCache: persistentLocalCache({
+            tabManager: persistentMultipleTabManager(),
+          }),
+        },
+        targetDbId
+      );
+    } catch {
+      db = targetDbId ? getFirestore(app, targetDbId) : getFirestore(app);
+    }
   } else {
-    db = getFirestore(app);
+    db = targetDbId ? getFirestore(app, targetDbId) : getFirestore(app);
   }
 } catch (error) {
   console.warn('Firebase initialization notice:', error);
@@ -151,20 +174,42 @@ export function validateIndianMobile10(digits: string): boolean {
   return true;
 }
 
-// Look up an existing live Customer ID in Firestore by normalized 10-digit mobile number
+// Look up an existing live Customer ID in Firestore by normalized 10-digit mobile number (1-doc fast path first)
 export async function findExistingCustomerByPhone(phoneDigits: string): Promise<CustomerProfile | null> {
   const target10 = normalizeIndianPhone10(phoneDigits);
   if (!db || !target10 || target10.length !== 10) return null;
   try {
-    const snap = await getDocs(collection(db, 'customers'));
-    const matches: CustomerProfile[] = [];
-    snap.forEach((docSnap) => {
-      const raw = docSnap.data() as CustomerProfile;
-      if (!raw || isLegacyDemoCustomer(raw) || raw.id?.startsWith('c_new_guest')) return;
-      if (normalizeIndianPhone10(raw.phone) === target10) {
-        matches.push(raw);
-      }
-    });
+    const phoneVariants = [
+      target10,
+      `+91 ${target10.slice(0, 5)} ${target10.slice(5)}`,
+      `+91 ${target10}`,
+      `+91${target10}`,
+    ];
+    const [fastSnap1, fastSnap2] = await Promise.all([
+      getDocs(query(collection(db, 'customers'), where('phone10', '==', target10), limit(5))),
+      getDocs(query(collection(db, 'customers'), where('phone', 'in', phoneVariants), limit(5))),
+    ]);
+
+    const matchesMap = new Map<string, CustomerProfile>();
+    const collect = (snap: typeof fastSnap1) => {
+      snap.forEach((docSnap) => {
+        const raw = docSnap.data() as CustomerProfile;
+        if (!raw || isLegacyDemoCustomer(raw) || raw.id?.startsWith('c_new_guest')) return;
+        if (normalizeIndianPhone10(raw.phone) === target10) {
+          matchesMap.set(raw.id, raw);
+        }
+      });
+    };
+    collect(fastSnap1);
+    collect(fastSnap2);
+
+    if (matchesMap.size === 0) {
+      // Legacy fallback scan only if fast indexed queries returned nothing
+      const snap = await getDocs(collection(db, 'customers'));
+      collect(snap);
+    }
+
+    const matches = Array.from(matchesMap.values());
     if (matches.length === 0) return null;
     matches.sort((a, b) => (b.totalBookingsCount || 0) - (a.totalBookingsCount || 0) || extractRecordTimeMs(b.id) - extractRecordTimeMs(a.id));
     return matches[0];
@@ -174,20 +219,42 @@ export async function findExistingCustomerByPhone(phoneDigits: string): Promise<
   }
 }
 
-// Look up an existing live Worker ID in Firestore by normalized 10-digit mobile number
+// Look up an existing live Worker ID in Firestore by normalized 10-digit mobile number (1-doc fast path first)
 export async function findExistingWorkerByPhone(phoneDigits: string): Promise<WorkerProfile | null> {
   const target10 = normalizeIndianPhone10(phoneDigits);
   if (!db || !target10 || target10.length !== 10) return null;
   try {
-    const snap = await getDocs(collection(db, 'workers'));
-    const matches: WorkerProfile[] = [];
-    snap.forEach((docSnap) => {
-      const raw = docSnap.data() as WorkerProfile;
-      if (!raw || isLegacyDemoWorker(raw)) return;
-      if (normalizeIndianPhone10(raw.phone) === target10) {
-        matches.push(raw);
-      }
-    });
+    const phoneVariants = [
+      target10,
+      `+91 ${target10.slice(0, 5)} ${target10.slice(5)}`,
+      `+91 ${target10}`,
+      `+91${target10}`,
+    ];
+    const [fastSnap1, fastSnap2] = await Promise.all([
+      getDocs(query(collection(db, 'workers'), where('phone10', '==', target10), limit(5))),
+      getDocs(query(collection(db, 'workers'), where('phone', 'in', phoneVariants), limit(5))),
+    ]);
+
+    const matchesMap = new Map<string, WorkerProfile>();
+    const collect = (snap: typeof fastSnap1) => {
+      snap.forEach((docSnap) => {
+        const raw = docSnap.data() as WorkerProfile;
+        if (!raw || isLegacyDemoWorker(raw)) return;
+        if (normalizeIndianPhone10(raw.phone) === target10) {
+          matchesMap.set(raw.id, raw);
+        }
+      });
+    };
+    collect(fastSnap1);
+    collect(fastSnap2);
+
+    if (matchesMap.size === 0) {
+      // Legacy fallback scan only if fast indexed queries returned nothing
+      const snap = await getDocs(collection(db, 'workers'));
+      collect(snap);
+    }
+
+    const matches = Array.from(matchesMap.values());
     if (matches.length === 0) return null;
     // Prefer locked record (cannot bypass unpaid fee) or highest completed jobs / most recent ID
     matches.sort(
@@ -226,12 +293,75 @@ export function mapFirebaseAuthError(err: unknown, language: 'hi' | 'en'): strin
     : `Authentication notice (${code || 'error'}): ${msg}`;
 }
 
+export const OWNER_ADMIN_EMAIL = 'vr6386833@gmail.com';
+
+export function isCurrentAuthVerifiedOwner(): boolean {
+  if (!auth?.currentUser) return false;
+  return (
+    auth.currentUser.email?.toLowerCase() === OWNER_ADMIN_EMAIL &&
+    Boolean(auth.currentUser.emailVerified)
+  );
+}
+
+export function listenToOwnerAuthState(
+  callback: (state: { verified: boolean; email: string | null }) => void
+): () => void {
+  if (!auth) {
+    callback({ verified: false, email: null });
+    return () => {};
+  }
+  return onAuthStateChanged(auth, (user) => {
+    const email = user?.email ?? null;
+    const verified = Boolean(
+      email && email.toLowerCase() === OWNER_ADMIN_EMAIL && user?.emailVerified
+    );
+    callback({ verified, email });
+  });
+}
+
 export async function signInCustomerWithGoogle() {
   if (!auth) throw new Error('Firebase Auth is not initialized.');
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
   const cred = await signInWithPopup(auth, provider);
   return cred.user;
+}
+
+export async function signInOwnerWithGoogle(): Promise<{ ok: boolean; email?: string; errorHi?: string }> {
+  if (!auth) return { ok: false, errorHi: 'Firebase Auth उपलब्ध नहीं है।' };
+  try {
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({
+      prompt: 'select_account',
+      login_hint: OWNER_ADMIN_EMAIL,
+    });
+    const cred = await signInWithPopup(auth, provider);
+    const signedEmail = (cred.user.email || '').toLowerCase();
+    if (signedEmail !== OWNER_ADMIN_EMAIL || !cred.user.emailVerified) {
+      await signOut(auth).catch(() => {});
+      return {
+        ok: false,
+        email: cred.user.email || undefined,
+        errorHi: `केवल ओनर Gmail (${OWNER_ADMIN_EMAIL}) से ही लॉगिन मान्य है। आपने ${cred.user.email || 'गलत ईमेल'} चुना है।`,
+      };
+    }
+    return { ok: true, email: cred.user.email || OWNER_ADMIN_EMAIL };
+  } catch (err) {
+    const code = (err as { code?: string })?.code || '';
+    if (code === 'auth/popup-closed-by-user') {
+      return { ok: false, errorHi: 'Gmail वेरिफिकेशन बीच में रद्द किया गया।' };
+    }
+    if (code === 'auth/unauthorized-domain' || code === 'auth/popup-blocked') {
+      return {
+        ok: false,
+        errorHi: `इस ब्राउज़र/ऐप में पॉपअप ब्लॉक है — कृपया अपने फोन के Chrome ब्राउज़र में वेब लिंक खोलकर ${OWNER_ADMIN_EMAIL} से वेरिफाई करें।`,
+      };
+    }
+    return {
+      ok: false,
+      errorHi: err instanceof Error ? err.message : 'Gmail वेरिफिकेशन विफल रहा।',
+    };
+  }
 }
 
 // Connection test as required by skill guidelines
@@ -297,6 +427,7 @@ function logFirestoreError(error: unknown, operationType: OperationType, path: s
 export interface FirestoreWriteResult {
   ok: boolean;
   quotaExceeded?: boolean;
+  permissionDenied?: boolean;
   error?: string;
 }
 
@@ -309,6 +440,12 @@ export function isFirestoreQuotaError(err: unknown): boolean {
     msg.includes('quota exceeded') ||
     msg.includes('quota limit exceeded')
   );
+}
+
+export function isFirestorePermissionError(err: unknown): boolean {
+  const code = (err as { code?: string })?.code || '';
+  const msg = (err instanceof Error ? err.message : String(err || '')).toLowerCase();
+  return code === 'permission-denied' || msg.includes('permission_denied') || msg.includes('insufficient permissions');
 }
 
 // Sync booking to cloud Firestore
@@ -333,6 +470,7 @@ export async function syncBookingToFirestore(booking: Booking): Promise<Firestor
     return {
       ok: false,
       quotaExceeded: isFirestoreQuotaError(err),
+      permissionDenied: isFirestorePermissionError(err),
       error: err instanceof Error ? err.message : String(err),
     };
   }
@@ -657,87 +795,196 @@ export async function syncJobToFirestore(job: JobPost): Promise<FirestoreWriteRe
 }
 
 // Sync worker profile & lock status to cloud
-export async function syncWorkerToFirestore(worker: WorkerProfile): Promise<void> {
-  if (!db) return;
+export async function syncWorkerToFirestore(worker: WorkerProfile): Promise<FirestoreWriteResult> {
+  if (!db) return { ok: false, error: 'Firestore unavailable' };
   try {
     const workerRef = doc(db, 'workers', worker.id);
+    const phone10 = normalizeIndianPhone10(worker.phone);
     await setDoc(workerRef, {
       ...stripUndefined(worker),
+      ...(phone10.length === 10 ? { phone10 } : {}),
       updatedAt: serverTimestamp(),
     }, { merge: true });
+    return { ok: true };
   } catch (err) {
-    console.error('Error syncing worker to cloud:', err);
+    logFirestoreError(err, OperationType.WRITE, `workers/${worker.id}`);
+    return {
+      ok: false,
+      quotaExceeded: isFirestoreQuotaError(err),
+      permissionDenied: isFirestorePermissionError(err),
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
 // Sync customer profile to cloud Firestore
-export async function syncCustomerToFirestore(customer: CustomerProfile): Promise<void> {
-  if (!db) return;
+export async function syncCustomerToFirestore(customer: CustomerProfile): Promise<FirestoreWriteResult> {
+  if (!db) return { ok: false, error: 'Firestore unavailable' };
   try {
     const custRef = doc(db, 'customers', customer.id);
+    const phone10 = normalizeIndianPhone10(customer.phone);
     await setDoc(custRef, {
       ...stripUndefined(customer),
+      ...(phone10.length === 10 ? { phone10 } : {}),
       updatedAt: serverTimestamp(),
     }, { merge: true });
+    return { ok: true };
   } catch (err) {
-    console.error('Error syncing customer to cloud:', err);
+    logFirestoreError(err, OperationType.WRITE, `customers/${customer.id}`);
+    return {
+      ok: false,
+      quotaExceeded: isFirestoreQuotaError(err),
+      permissionDenied: isFirestorePermissionError(err),
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
 // Permanently delete a worker profile from Firestore (Owner control)
-export async function deleteWorkerFromFirestore(workerId: string): Promise<void> {
-  if (!db || !workerId) return;
+export async function deleteWorkerFromFirestore(workerId: string): Promise<FirestoreWriteResult> {
+  if (!db || !workerId) return { ok: false, error: 'Unavailable' };
   try {
     await deleteDoc(doc(db, 'workers', workerId));
+    return { ok: true };
   } catch (err) {
     logFirestoreError(err, OperationType.DELETE, `workers/${workerId}`);
+    return {
+      ok: false,
+      quotaExceeded: isFirestoreQuotaError(err),
+      permissionDenied: isFirestorePermissionError(err),
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
 // Permanently delete a customer profile from Firestore (Owner control)
-export async function deleteCustomerFromFirestore(customerId: string): Promise<void> {
-  if (!db || !customerId) return;
+export async function deleteCustomerFromFirestore(customerId: string): Promise<FirestoreWriteResult> {
+  if (!db || !customerId) return { ok: false, error: 'Unavailable' };
   try {
     await deleteDoc(doc(db, 'customers', customerId));
+    return { ok: true };
   } catch (err) {
     logFirestoreError(err, OperationType.DELETE, `customers/${customerId}`);
+    return {
+      ok: false,
+      quotaExceeded: isFirestoreQuotaError(err),
+      permissionDenied: isFirestorePermissionError(err),
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
 // Sync platform fee commission record (₹10 fee) to cloud
-export async function syncCommissionToFirestore(record: CommissionRecord): Promise<void> {
-  if (!db) return;
+export async function syncCommissionToFirestore(record: CommissionRecord): Promise<FirestoreWriteResult> {
+  if (!db) return { ok: false, error: 'Firestore unavailable' };
   try {
     const commRef = doc(db, 'commissions', record.id);
     await setDoc(commRef, {
       ...stripUndefined(record),
       createdAt: serverTimestamp(),
     }, { merge: true });
+    return { ok: true };
   } catch (err) {
-    console.error('Error syncing commission to cloud:', err);
+    logFirestoreError(err, OperationType.WRITE, `commissions/${record.id}`);
+    return {
+      ok: false,
+      quotaExceeded: isFirestoreQuotaError(err),
+      permissionDenied: isFirestorePermissionError(err),
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
 // Sync owner bank payout record to cloud
-export async function syncPayoutToFirestore(payout: OwnerPayoutRecord): Promise<void> {
-  if (!db) return;
+export async function syncPayoutToFirestore(payout: OwnerPayoutRecord): Promise<FirestoreWriteResult> {
+  if (!db) return { ok: false, error: 'Firestore unavailable' };
   try {
     const payoutRef = doc(db, 'owner_payouts', payout.id);
     await setDoc(payoutRef, {
       ...stripUndefined(payout),
       createdAt: serverTimestamp(),
     }, { merge: true });
+    return { ok: true };
   } catch (err) {
-    console.error('Error syncing payout to cloud:', err);
+    logFirestoreError(err, OperationType.WRITE, `owner_payouts/${payout.id}`);
+    return {
+      ok: false,
+      quotaExceeded: isFirestoreQuotaError(err),
+      permissionDenied: isFirestorePermissionError(err),
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
-// Real-time listener for Workers in Firestore
-export function listenToWorkers(callback: (workers: WorkerProfile[]) => void, cutoffMs: number = CLEAN_LAUNCH_CUTOFF_MS): () => void {
-  if (!db) return () => {};
+// One-time catalog fetch of Workers for Customer view (supports optional single-field filter & limit cap)
+export async function fetchWorkersOnce(
+  cutoffMs: number = CLEAN_LAUNCH_CUTOFF_MS,
+  options?: { category?: string; city?: string; maxResults?: number }
+): Promise<WorkerProfile[]> {
+  if (!db) return [];
   try {
     const workersCol = collection(db, 'workers');
-    const unsub = onSnapshot(workersCol, (snapshot) => {
+    const maxDocs = Math.min(Math.max(options?.maxResults ?? 150, 10), 400);
+    // Keep strictly single-field where() + limit() so zero Firestore composite indexes are ever required
+    const targetQuery = options?.category
+      ? query(workersCol, where('category', '==', options.category), limit(maxDocs))
+      : options?.city
+      ? query(workersCol, where('city', '==', options.city), limit(maxDocs))
+      : query(workersCol, limit(maxDocs));
+    const snap = await getDocs(targetQuery);
+    const list: WorkerProfile[] = [];
+    snap.forEach((docSnap) => {
+      const raw = docSnap.data() as WorkerProfile & { updatedAt?: unknown; createdAt?: unknown };
+      if (isLegacyDemoWorker(raw)) return;
+      const tsMs = extractRecordTimeMs(raw.id, raw.createdAt, raw.updatedAt);
+      if (cutoffMs <= 0 || tsMs >= cutoffMs) {
+        list.push(raw);
+      }
+    });
+    return list;
+  } catch (e) {
+    console.warn('Unable to fetch workers catalog:', e);
+    return [];
+  }
+}
+
+// Listen strictly to a SINGLE Worker document (1 doc read instead of all workers)
+export function listenToWorkerDoc(
+  workerId: string,
+  callback: (worker: WorkerProfile | null) => void
+): () => void {
+  if (!db || !workerId || workerId === 'wrk_standby_live') return () => {};
+  try {
+    return onSnapshot(
+      doc(db, 'workers', workerId),
+      (docSnap) => {
+        if (!docSnap.exists()) {
+          callback(null);
+          return;
+        }
+        const raw = docSnap.data() as WorkerProfile;
+        if (isLegacyDemoWorker(raw)) return;
+        callback(raw);
+      },
+      (err) => {
+        console.warn('Firestore single-worker subscription notice:', err);
+      }
+    );
+  } catch {
+    return () => {};
+  }
+}
+
+// Real-time listener for Workers in Firestore (Owner / Dual view, capped at maxResults)
+export function listenToWorkers(
+  callback: (workers: WorkerProfile[]) => void,
+  cutoffMs: number = CLEAN_LAUNCH_CUTOFF_MS,
+  maxResults: number = 250
+): () => void {
+  if (!db) return () => {};
+  try {
+    const workersQuery = query(collection(db, 'workers'), limit(Math.min(Math.max(maxResults, 20), 500)));
+    const unsub = onSnapshot(workersQuery, (snapshot) => {
       const list: WorkerProfile[] = [];
       snapshot.forEach((docSnap) => {
         const raw = docSnap.data() as WorkerProfile & { updatedAt?: unknown; createdAt?: unknown };
@@ -758,12 +1005,43 @@ export function listenToWorkers(callback: (workers: WorkerProfile[]) => void, cu
   }
 }
 
-// Real-time listener for Customers in Firestore
-export function listenToCustomers(callback: (customers: CustomerProfile[]) => void, cutoffMs: number = CLEAN_LAUNCH_CUTOFF_MS): () => void {
+// Listen strictly to a SINGLE Customer document (1 doc read instead of all customers)
+export function listenToCustomerDoc(
+  customerId: string,
+  callback: (customer: CustomerProfile | null) => void
+): () => void {
+  if (!db || !customerId || customerId.startsWith('c_new_guest')) return () => {};
+  try {
+    return onSnapshot(
+      doc(db, 'customers', customerId),
+      (docSnap) => {
+        if (!docSnap.exists()) {
+          callback(null);
+          return;
+        }
+        const raw = docSnap.data() as CustomerProfile;
+        if (isLegacyDemoCustomer(raw)) return;
+        callback(raw);
+      },
+      (err) => {
+        console.warn('Firestore single-customer subscription notice:', err);
+      }
+    );
+  } catch {
+    return () => {};
+  }
+}
+
+// Real-time listener for Customers in Firestore (Owner / Dual view, capped at maxResults)
+export function listenToCustomers(
+  callback: (customers: CustomerProfile[]) => void,
+  cutoffMs: number = CLEAN_LAUNCH_CUTOFF_MS,
+  maxResults: number = 250
+): () => void {
   if (!db) return () => {};
   try {
-    const custCol = collection(db, 'customers');
-    const unsub = onSnapshot(custCol, (snapshot) => {
+    const custQuery = query(collection(db, 'customers'), limit(Math.min(Math.max(maxResults, 20), 500)));
+    const unsub = onSnapshot(custQuery, (snapshot) => {
       const list: CustomerProfile[] = [];
       snapshot.forEach((docSnap) => {
         const raw = docSnap.data() as CustomerProfile & { updatedAt?: unknown; createdAt?: unknown };
@@ -784,12 +1062,22 @@ export function listenToCustomers(callback: (customers: CustomerProfile[]) => vo
   }
 }
 
-// Real-time listener for Jobs in Firestore
-export function listenToJobs(callback: (jobs: JobPost[]) => void, cutoffMs: number = CLEAN_LAUNCH_CUTOFF_MS): () => void {
+// Real-time listener for Jobs in Firestore (optionally filtered to open-only or single customer + capped)
+export function listenToJobs(
+  callback: (jobs: JobPost[]) => void,
+  cutoffMs: number = CLEAN_LAUNCH_CUTOFF_MS,
+  options?: { openOnly?: boolean; customerId?: string; maxResults?: number }
+): () => void {
   if (!db) return () => {};
   try {
-    const jobsCol = collection(db, 'jobs');
-    const unsub = onSnapshot(jobsCol, (snapshot) => {
+    const baseCol = collection(db, 'jobs');
+    const maxDocs = Math.min(Math.max(options?.maxResults ?? 120, 10), 300);
+    const targetQuery = options?.openOnly
+      ? query(baseCol, where('status', '==', 'open'), limit(maxDocs))
+      : options?.customerId
+      ? query(baseCol, where('customerId', '==', options.customerId), limit(maxDocs))
+      : query(baseCol, limit(maxDocs));
+    const unsub = onSnapshot(targetQuery, (snapshot) => {
       const list: JobPost[] = [];
       snapshot.forEach((docSnap) => {
         const raw = docSnap.data() as JobPost & { updatedAt?: unknown; createdAt?: unknown };
@@ -810,12 +1098,61 @@ export function listenToJobs(callback: (jobs: JobPost[]) => void, cutoffMs: numb
   }
 }
 
-// Real-time listener for Bookings in Firestore (cross-device live sync)
-export function listenToBookings(callback: (bookings: Booking[]) => void): () => void {
+// Single-booking document listener (lets Worker detect cancellation/completion without subscribing to historical bookings)
+export function listenToBookingById(
+  bookingId: string,
+  callback: (booking: Booking | null) => void
+): () => void {
+  if (!db || !bookingId) return () => {};
+  try {
+    return onSnapshot(
+      doc(db, 'bookings', bookingId),
+      (docSnap) => {
+        if (!docSnap.exists()) {
+          callback(null);
+          return;
+        }
+        const data = docSnap.data() as Booking;
+        if (isLegacyDemoBooking(data)) return;
+        callback(data);
+      },
+      (err) => {
+        console.warn('Firestore single-booking subscription notice:', err);
+      }
+    );
+  } catch {
+    return () => {};
+  }
+}
+
+// Real-time listener for Bookings in Firestore (role-scoped & capped to minimize read quota usage at 1,000+ user scale)
+export function listenToBookings(
+  callback: (bookings: Booking[]) => void,
+  options?: { customerId?: string; activeOnly?: boolean; recentLimit?: number }
+): () => void {
   if (!db) return () => {};
   try {
     const bookingsCol = collection(db, 'bookings');
-    const unsub = onSnapshot(bookingsCol, (snapshot) => {
+    const maxDocs = Math.min(Math.max(options?.recentLimit ?? 120, 10), 300);
+    const targetQuery = options?.customerId
+      ? query(bookingsCol, where('customerId', '==', options.customerId), limit(Math.min(maxDocs, 60)))
+      : options?.activeOnly
+      ? query(
+          bookingsCol,
+          where('status', 'in', [
+            'searching',
+            'requested',
+            'accepted',
+            'worker_en_route',
+            'arrived',
+            'arrived_at_door',
+            'in_progress',
+          ]),
+          limit(maxDocs)
+        )
+      : query(bookingsCol, limit(maxDocs));
+
+    const unsub = onSnapshot(targetQuery, (snapshot) => {
       const list: Booking[] = [];
       snapshot.forEach((docSnap) => {
         const data = docSnap.data() as Booking & { updatedAtMs?: number };
@@ -969,11 +1306,15 @@ export async function addCallIceCandidate(
   }
 }
 
-export function listenToCallSessions(callback: (sessions: CallSession[]) => void): () => void {
+export function listenToCallSessions(
+  callback: (sessions: CallSession[]) => void,
+  bookingId?: string
+): () => void {
   if (!db) return () => {};
   try {
     const colRef = collection(db, 'call_sessions');
-    const unsub = onSnapshot(colRef, (snapshot) => {
+    const targetQuery = bookingId ? query(colRef, where('bookingId', '==', bookingId)) : colRef;
+    const unsub = onSnapshot(targetQuery, (snapshot) => {
       const list: CallSession[] = [];
       snapshot.forEach((docSnap) => {
         list.push(docSnap.data() as CallSession);
@@ -990,12 +1331,16 @@ export function listenToCallSessions(callback: (sessions: CallSession[]) => void
   }
 }
 
-// Real-time listener for Chat Messages in Firestore
-export function listenToChatMessages(callback: (messages: ChatMessage[]) => void): () => void {
+// Real-time listener for Chat Messages in Firestore (scoped to active bookingId to avoid cross-user reads)
+export function listenToChatMessages(
+  callback: (messages: ChatMessage[]) => void,
+  bookingId?: string
+): () => void {
   if (!db) return () => {};
   try {
     const msgCol = collection(db, 'chat_messages');
-    const unsub = onSnapshot(msgCol, (snapshot) => {
+    const targetQuery = bookingId ? query(msgCol, where('bookingId', '==', bookingId)) : msgCol;
+    const unsub = onSnapshot(targetQuery, (snapshot) => {
       const list: (ChatMessage & { createdAtMs?: number })[] = [];
       snapshot.forEach((docSnap) => {
         list.push(docSnap.data() as ChatMessage & { createdAtMs?: number });
@@ -1013,32 +1358,41 @@ export function listenToChatMessages(callback: (messages: ChatMessage[]) => void
 }
 
 // Sync App Owner config (UPI, Bank, Fee settings) to Firestore
-export async function syncAppConfigToFirestore(config: AppOwnerPaymentConfig): Promise<void> {
-  if (!db) return;
+export async function syncAppConfigToFirestore(config: AppOwnerPaymentConfig): Promise<FirestoreWriteResult> {
+  if (!db) return { ok: false, error: 'Firestore unavailable' };
   try {
     const cfgRef = doc(db, 'app_config', 'owner_settings');
     await setDoc(cfgRef, {
-      ownerName: config.ownerName,
-      businessName: config.businessName,
-      upiId: config.upiId,
-      customQrImage: config.customQrImage || '',
-      phone: config.phone,
-      bankAccountName: config.bankAccountName,
-      bankAccountNumber: config.bankAccountNumber,
-      ifscCode: config.ifscCode,
-      bankName: config.bankName,
-      feeModel: config.feeModel,
-      perJobFeeRupees: config.perJobFeeRupees,
-      commissionRatePercent: config.commissionRatePercent,
-      autoDeductFromWallet: config.autoDeductFromWallet,
-      totalWithdrawnToBank: config.totalWithdrawnToBank || 0,
-      cleanResetAtMs: config.cleanResetAtMs || 0,
-      removedWorkerIds: Array.isArray(config.removedWorkerIds) ? config.removedWorkerIds : [],
-      removedCustomerIds: Array.isArray(config.removedCustomerIds) ? config.removedCustomerIds : [],
+      ...stripUndefined({
+        ownerName: config.ownerName,
+        businessName: config.businessName,
+        upiId: config.upiId,
+        customQrImage: config.customQrImage || '',
+        phone: config.phone,
+        bankAccountName: config.bankAccountName,
+        bankAccountNumber: config.bankAccountNumber,
+        ifscCode: config.ifscCode,
+        bankName: config.bankName,
+        feeModel: config.feeModel,
+        perJobFeeRupees: config.perJobFeeRupees,
+        commissionRatePercent: config.commissionRatePercent ?? 0,
+        autoDeductFromWallet: config.autoDeductFromWallet,
+        totalWithdrawnToBank: config.totalWithdrawnToBank || 0,
+        cleanResetAtMs: config.cleanResetAtMs || 0,
+        removedWorkerIds: Array.isArray(config.removedWorkerIds) ? config.removedWorkerIds : [],
+        removedCustomerIds: Array.isArray(config.removedCustomerIds) ? config.removedCustomerIds : [],
+      }),
       updatedAt: serverTimestamp(),
     }, { merge: true });
+    return { ok: true };
   } catch (err) {
-    console.error('Error syncing app config to cloud:', err);
+    logFirestoreError(err, OperationType.WRITE, 'app_config/owner_settings');
+    return {
+      ok: false,
+      quotaExceeded: isFirestoreQuotaError(err),
+      permissionDenied: isFirestorePermissionError(err),
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
@@ -1062,27 +1416,36 @@ export function listenToAppConfig(callback: (config: Partial<AppOwnerPaymentConf
 }
 
 // Sync & listen to Worker-to-Owner UPI Payment Verification Claims
-export async function syncUpiPaymentClaimToFirestore(claim: UpiPaymentRequest): Promise<void> {
-  if (!db) return;
+export async function syncUpiPaymentClaimToFirestore(claim: UpiPaymentRequest): Promise<FirestoreWriteResult> {
+  if (!db) return { ok: false, error: 'Firestore unavailable' };
   try {
     const claimRef = doc(db, 'upi_payment_claims', claim.id);
     await setDoc(claimRef, {
       ...stripUndefined(claim),
       updatedAt: serverTimestamp(),
     }, { merge: true });
+    return { ok: true };
   } catch (err) {
-    console.error('Error syncing UPI payment claim to cloud:', err);
+    logFirestoreError(err, OperationType.WRITE, `upi_payment_claims/${claim.id}`);
+    return {
+      ok: false,
+      quotaExceeded: isFirestoreQuotaError(err),
+      permissionDenied: isFirestorePermissionError(err),
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
 export function listenToUpiPaymentClaims(
   callback: (claims: UpiPaymentRequest[]) => void,
-  cutoffMs: number = CLEAN_LAUNCH_CUTOFF_MS
+  cutoffMs: number = CLEAN_LAUNCH_CUTOFF_MS,
+  workerId?: string
 ): () => void {
   if (!db) return () => {};
   try {
     const colRef = collection(db, 'upi_payment_claims');
-    const unsub = onSnapshot(colRef, (snapshot) => {
+    const targetQuery = workerId ? query(colRef, where('workerId', '==', workerId)) : colRef;
+    const unsub = onSnapshot(targetQuery, (snapshot) => {
       const list: UpiPaymentRequest[] = [];
       snapshot.forEach((docSnap) => {
         const raw = docSnap.data() as UpiPaymentRequest & { updatedAt?: unknown };
@@ -1103,9 +1466,22 @@ export function listenToUpiPaymentClaims(
   }
 }
 
+// Fast 1-read duplicate UTR guard against cloud records without streaming all workers' claims 24/7
+export async function checkUtrExistsInFirestore(cleanUtr: string): Promise<boolean> {
+  if (!db || !cleanUtr) return false;
+  try {
+    const snap = await getDocs(
+      query(collection(db, 'upi_payment_claims'), where('utrNumber', '==', cleanUtr), limit(1))
+    );
+    return !snap.empty;
+  } catch {
+    return false;
+  }
+}
+
 // Purge all test/demo documents from Firestore collections while preserving app_config/owner_settings
-export async function purgeAllFirestoreData(): Promise<void> {
-  if (!db) return;
+export async function purgeAllFirestoreData(): Promise<FirestoreWriteResult> {
+  if (!db) return { ok: false, error: 'Firestore unavailable' };
   const collectionsToClear = [
     'workers',
     'customers',
@@ -1126,7 +1502,14 @@ export async function purgeAllFirestoreData(): Promise<void> {
         );
       })
     );
+    return { ok: true };
   } catch (err) {
-    console.error('Error purging Firestore collections:', err);
+    logFirestoreError(err, OperationType.DELETE, 'purge_all');
+    return {
+      ok: false,
+      quotaExceeded: isFirestoreQuotaError(err),
+      permissionDenied: isFirestorePermissionError(err),
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }

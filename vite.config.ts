@@ -23,6 +23,18 @@ export default defineConfig(({mode}) => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    build: {
+      chunkSizeWarningLimit: 900,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            firebase: ['firebase/app', 'firebase/firestore', 'firebase/auth'],
+            maps: ['leaflet', '@vis.gl/react-google-maps'],
+            vendor: ['react', 'react-dom', 'lucide-react', 'motion'],
+          },
+        },
+      },
+    },
     server: {
       port: 3000,
       host: '0.0.0.0',

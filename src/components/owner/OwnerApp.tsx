@@ -93,6 +93,9 @@ interface OwnerAppProps {
   onRejectUpiClaim?: (claimId: string, reason?: string) => void;
   onResetAllData?: () => void;
   onExitOwnerMode?: () => void;
+  ownerAuthVerified?: boolean;
+  ownerAuthEmail?: string | null;
+  onVerifyOwnerGoogle?: () => Promise<void>;
 }
 
 export const OwnerApp: React.FC<OwnerAppProps> = ({
@@ -116,6 +119,9 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
   onRejectUpiClaim,
   onResetAllData,
   onExitOwnerMode,
+  ownerAuthVerified = false,
+  ownerAuthEmail = null,
+  onVerifyOwnerGoogle,
 }) => {
   // View mode toggle: 'dashboard' (wide full-screen) vs 'phone' (mobile app simulation)
   const [viewLayout, setViewLayout] = useState<'dashboard' | 'phone'>('dashboard');
@@ -2537,6 +2543,55 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Database Owner Security Verification Bar */}
+      {onVerifyOwnerGoogle && (
+        <div
+          className={`flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 px-4 py-3 rounded-2xl border text-xs ${
+            ownerAuthVerified
+              ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
+              : 'bg-amber-950/40 border-amber-500/50 text-amber-200'
+          }`}
+        >
+          <div className="flex items-center gap-2.5">
+            <ShieldCheck
+              className={`w-4 h-4 shrink-0 ${ownerAuthVerified ? 'text-emerald-400' : 'text-amber-400'}`}
+            />
+            <div>
+              <p className="font-bold">
+                {ownerAuthVerified
+                  ? language === 'hi'
+                    ? `🛡️ डेटाबेस ओनर सुरक्षा लॉक सक्रिय (${ownerAuthEmail || 'vr6386833@gmail.com'})`
+                    : `🛡️ Database Owner Security Lock Active (${ownerAuthEmail || 'vr6386833@gmail.com'})`
+                  : language === 'hi'
+                    ? '🔒 डेटाबेस सुरक्षा लॉक लगा है (Play Store के लिए सुरक्षित)'
+                    : '🔒 Database Security Lock Enabled (Play Store Protected)'}
+              </p>
+              <p className="text-[11px] opacity-85">
+                {ownerAuthVerified
+                  ? language === 'hi'
+                    ? 'UPI बदलना, UTR अप्रूव करना, बैंक पेआउट और डेटा हटाना अब केवल आपके खाते से सुरक्षित है।'
+                    : 'Changing UPI, approving UTRs, bank payouts, and deletions are locked strictly to your verified Gmail.'
+                  : language === 'hi'
+                    ? 'बाहरी लोग आपकी UPI/डेटा नहीं बदल सकते। सेव/अप्रूव करने के लिए vr6386833@gmail.com से 1-टैप वेरिफाई करें।'
+                    : 'Only vr6386833@gmail.com can modify UPI settings, approve claims, or delete records. Tap to verify.'}
+              </p>
+            </div>
+          </div>
+          {!ownerAuthVerified && (
+            <button
+              type="button"
+              onClick={() => {
+                soundManager.playTap();
+                void onVerifyOwnerGoogle();
+              }}
+              className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs whitespace-nowrap shadow-md active:scale-95 transition-all"
+            >
+              {language === 'hi' ? 'Gmail से ओनर वेरिफाई करें' : 'Verify Owner Gmail'}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Main Content: Render in Mobile Phone Simulator OR Wide Dashboard View */}
       {viewLayout === 'phone' ? (

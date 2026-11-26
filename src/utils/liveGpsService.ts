@@ -1,6 +1,8 @@
 import { Capacitor } from '@capacitor/core';
 import { Geolocation, Position } from '@capacitor/geolocation';
 import { LiveGeoLocation } from '../types';
+import { resolveApiUrl } from './apiConfig';
+import { safeStorage } from '../services/safeStorage';
 
 export interface ReverseGeocodedPlace {
   city: string;
@@ -8,7 +10,53 @@ export interface ReverseGeocodedPlace {
   fullAddress: string;
 }
 
+const GEO_STORAGE_KEY = 'smart_india_geo_cache_v1';
+const GEO_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const geoCache = new Map<string, ReverseGeocodedPlace>();
+const inFlightGeoLookups = new Map<string, Promise<ReverseGeocodedPlace | null>>();
+
+function readStoredGeoCache(key: string): ReverseGeocodedPlace | null {
+  try {
+    const raw = safeStorage.getItem(GEO_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Record<string, { place: ReverseGeocodedPlace; ts: number }>;
+    const entry = parsed?.[key];
+    if (entry && entry.place && Date.now() - entry.ts < GEO_CACHE_TTL_MS) {
+      return entry.place;
+    }
+  } catch {}
+  return null;
+}
+
+function writeStoredGeoCache(key: string, place: ReverseGeocodedPlace): void {
+  try {
+    const raw = safeStorage.getItem(GEO_STORAGE_KEY);
+    const parsed: Record<string, { place: ReverseGeocodedPlace; ts: number }> = raw ? JSON.parse(raw) : {};
+    const now = Date.now();
+    parsed[key] = { place, ts: now };
+    const entries = Object.entries(parsed)
+      .filter(([, v]) => v && now - v.ts < GEO_CACHE_TTL_MS)
+      .sort((a, b) => b[1].ts - a[1].ts)
+      .slice(0, 80);
+    safeStorage.setItem(GEO_STORAGE_KEY, JSON.stringify(Object.fromEntries(entries)));
+  } catch {}
+}
+
+export function haversineDistanceKm(
+  a?: Pick<LiveGeoLocation, 'lat' | 'lng'> | null,
+  b?: Pick<LiveGeoLocation, 'lat' | 'lng'> | null
+): number | null {
+  if (!a || !b) return null;
+  const R = 6371;
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const sinLat = Math.sin(dLat / 2);
+  const sinLng = Math.sin(dLng / 2);
+  const h =
+    sinLat * sinLat +
+    Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * sinLng * sinLng;
+  return 2 * R * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
 
 function toLiveGeoLocation(lat: number, lng: number, coords: Position['coords'] | GeolocationCoordinates): LiveGeoLocation {
   const rawSpeed = coords.speed;
@@ -298,58 +346,83 @@ export async function reverseGeocodePhoneCoords(
   lng: number
 ): Promise<ReverseGeocodedPlace | null> {
   const key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
-  const cached = geoCache.get(key);
-  if (cached) return cached;
+  const memCached = geoCache.get(key);
+  if (memCached) return memCached;
 
-  // 1. Try local backend proxy first (avoids browser CORS issues in web mode)
-  try {
-    const controller = new AbortController();
-    const t = window.setTimeout(() => controller.abort(), 4500);
-    const res = await fetch(`/api/reverse-geocode?lat=${lat}&lng=${lng}`, {
-      signal: controller.signal,
-    });
-    window.clearTimeout(t);
-    if (res.ok) {
-      const json = (await res.json()) as Partial<ReverseGeocodedPlace>;
-      if (json.fullAddress || json.locality) {
-        const result: ReverseGeocodedPlace = {
-          city: json.city || 'India',
-          locality: json.locality || json.fullAddress || key,
-          fullAddress: json.fullAddress || json.locality || key,
-        };
-        geoCache.set(key, result);
-        return result;
-      }
-    }
-  } catch {
-    // Running inside bundled static APK or offline; try direct Nominatim below
+  const diskCached = readStoredGeoCache(key);
+  if (diskCached) {
+    geoCache.set(key, diskCached);
+    return diskCached;
   }
 
-  // 2. Direct OpenStreetMap Nominatim lookup (works inside Android Capacitor APK)
-  try {
-    const controller = new AbortController();
-    const t = window.setTimeout(() => controller.abort(), 5000);
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(
-        lat
-      )}&lon=${encodeURIComponent(lng)}&zoom=18&addressdetails=1`,
-      {
-        headers: { 'Accept-Language': 'en-IN,en,hi' },
-        signal: controller.signal,
-      }
-    );
-    window.clearTimeout(t);
-    if (res.ok) {
-      const data = await res.json();
-      const parsed = parseOsmNominatimPlace(data, lat, lng);
-      if (parsed) {
-        geoCache.set(key, parsed);
-        return parsed;
-      }
-    }
-  } catch {
-    // Graceful fallback
-  }
+  const existingPromise = inFlightGeoLookups.get(key);
+  if (existingPromise) return existingPromise;
 
-  return null;
+  const lookupPromise = (async (): Promise<ReverseGeocodedPlace | null> => {
+    let backendFallback: ReverseGeocodedPlace | null = null;
+    // 1. Try cached backend proxy first (handles 5,000+ concurrent users via shared server cache + optional Google Maps)
+    try {
+      const controller = new AbortController();
+      const t = window.setTimeout(() => controller.abort(), 4500);
+      const res = await fetch(
+        resolveApiUrl(`/api/reverse-geocode?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`),
+        { signal: controller.signal }
+      );
+      window.clearTimeout(t);
+      if (res.ok) {
+        const json = (await res.json()) as Partial<ReverseGeocodedPlace> & { fallback?: boolean };
+        if (json.fullAddress || json.locality) {
+          const result: ReverseGeocodedPlace = {
+            city: json.city || 'India',
+            locality: json.locality || json.fullAddress || key,
+            fullAddress: json.fullAddress || json.locality || key,
+          };
+          if (!json.fallback) {
+            geoCache.set(key, result);
+            writeStoredGeoCache(key, result);
+            return result;
+          }
+          backendFallback = result;
+        }
+      }
+    } catch {
+      // Running inside offline APK or backend unreachable; try direct Nominatim fallback below
+    }
+
+    // 2. Direct OpenStreetMap Nominatim fallback
+    try {
+      const controller = new AbortController();
+      const t = window.setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(
+          lat
+        )}&lon=${encodeURIComponent(lng)}&zoom=18&addressdetails=1`,
+        {
+          headers: { 'Accept-Language': 'en-IN,en,hi' },
+          signal: controller.signal,
+        }
+      );
+      window.clearTimeout(t);
+      if (res.ok) {
+        const data = await res.json();
+        const parsed = parseOsmNominatimPlace(data, lat, lng);
+        if (parsed) {
+          geoCache.set(key, parsed);
+          writeStoredGeoCache(key, parsed);
+          return parsed;
+        }
+      }
+    } catch {
+      // Graceful fallback
+    }
+
+    return backendFallback;
+  })();
+
+  inFlightGeoLookups.set(key, lookupPromise);
+  try {
+    return await lookupPromise;
+  } finally {
+    inFlightGeoLookups.delete(key);
+  }
 }

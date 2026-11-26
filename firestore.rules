@@ -1,116 +1,444 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Global Security Helper Functions
+
+    // 0. Global Default-Deny Safety Net (blocks any unknown/shadow collections)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 1. Hardened Global Primitives
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Strict verified App Owner identity lock (prevents UPI hijacking, fake approvals, and database wipes)
+    function isVerifiedOwner() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email == 'vr6386833@gmail.com';
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 2 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isNonEmptyBounded(val, maxLen) {
+      return val is string && val.size() > 0 && val.size() <= maxLen;
+    }
+
+    function isOptionalStringBounded(data, field, maxLen) {
+      return !(field in data) || (data[field] is string && data[field].size() <= maxLen);
+    }
+
     function isValidPhone(phone) {
       return phone is string && phone.size() >= 10 && phone.size() <= 20;
     }
 
-    function isPositiveAmount(amount) {
-      return amount is number && amount >= 0;
+    function isNonNegativeBoundedNum(val, maxVal) {
+      return (val is int || val is float) && val >= 0 && val <= maxVal;
     }
 
-    function isNonEmptyString(str) {
-      return str is string && str.size() > 0 && str.size() < 1000;
+    function isOptionalNumBounded(data, field, minVal, maxVal) {
+      return !(field in data)
+        || ((data[field] is int || data[field] is float) && data[field] >= minVal && data[field] <= maxVal);
     }
 
-    // 1. Bookings Collection: Real customer bookings with status lifecycle
+    function isOptionalBool(data, field) {
+      return !(field in data) || data[field] is bool;
+    }
+
+    // 2. Entity Blueprint Validators (Anti-Update-Gap & Anti-Resource-Poisoning)
+    function isValidBooking(data, bookingId) {
+      return data.keys().hasAll(['id', 'customerName', 'status'])
+        && data.id == bookingId
+        && isNonEmptyBounded(data.customerName, 120)
+        && data.status in [
+          'requested', 'searching', 'accepted', 'worker_en_route',
+          'arrived', 'arrived_at_door', 'otp_verified', 'in_progress',
+          'completed', 'cancelled'
+        ]
+        && isOptionalStringBounded(data, 'customerId', 128)
+        && isOptionalStringBounded(data, 'customerPhone', 25)
+        && isOptionalStringBounded(data, 'customerAddress', 400)
+        && isOptionalStringBounded(data, 'customerLocality', 160)
+        && isOptionalStringBounded(data, 'workerId', 128)
+        && isOptionalStringBounded(data, 'workerName', 120)
+        && isOptionalStringBounded(data, 'workerPhone', 25)
+        && isOptionalStringBounded(data, 'workerAvatar', 60000)
+        && isOptionalStringBounded(data, 'serviceCategory', 80)
+        && isOptionalStringBounded(data, 'serviceSubCategory', 120)
+        && isOptionalStringBounded(data, 'arrivalOtp', 12)
+        && isOptionalStringBounded(data, 'customerReview', 600)
+        && isOptionalStringBounded(data, 'commissionTxnId', 120)
+        && isOptionalStringBounded(data, 'meetingFeeTxnId', 120)
+        && isOptionalNumBounded(data, 'estimatedAmount', 0, 500000)
+        && isOptionalNumBounded(data, 'finalAmount', 0, 500000)
+        && isOptionalNumBounded(data, 'paidAmount', 0, 500000)
+        && isOptionalNumBounded(data, 'customerRating', 1, 5)
+        && isOptionalBool(data, 'isOtpVerified')
+        && isOptionalBool(data, 'isLocationShared')
+        && isOptionalBool(data, 'isCustomerSharingLiveLocation');
+    }
+
+    function isValidWorker(data, workerId) {
+      return data.keys().hasAll(['id', 'name', 'phone'])
+        && data.id == workerId
+        && isNonEmptyBounded(data.name, 120)
+        && isValidPhone(data.phone)
+        && isOptionalStringBounded(data, 'nameHi', 120)
+        && isOptionalStringBounded(data, 'phone10', 10)
+        && isOptionalStringBounded(data, 'category', 80)
+        && isOptionalStringBounded(data, 'city', 80)
+        && isOptionalStringBounded(data, 'locality', 160)
+        && isOptionalStringBounded(data, 'workerIdCode', 64)
+        && isOptionalStringBounded(data, 'aadhaarNumber', 32)
+        && isOptionalStringBounded(data, 'aadhaarFrontPhoto', 450000)
+        && isOptionalStringBounded(data, 'aadhaarBackPhoto', 450000)
+        && isOptionalStringBounded(data, 'avatar', 100000)
+        && isOptionalNumBounded(data, 'walletBalance', 0, 500000)
+        && isOptionalNumBounded(data, 'unpaidFeeAmount', 0, 100000)
+        && isOptionalNumBounded(data, 'pendingCommissionDues', 0, 100000)
+        && isOptionalNumBounded(data, 'totalCommissionPaid', 0, 10000000)
+        && isOptionalNumBounded(data, 'completedJobsCount', 0, 1000000)
+        && isOptionalNumBounded(data, 'rating', 0, 5)
+        && isOptionalBool(data, 'isOnline')
+        && isOptionalBool(data, 'isIdPaused')
+        && isOptionalBool(data, 'isBlockedDueToUnpaidFee')
+        && isOptionalBool(data, 'isSuspendedByOwner')
+        && (!('subSkills' in data) || (data.subSkills is list && data.subSkills.size() <= 20))
+        && (!('portfolio' in data) || (data.portfolio is list && data.portfolio.size() <= 25));
+    }
+
+    function isValidCustomer(data, customerId) {
+      return data.keys().hasAll(['id', 'name'])
+        && data.id == customerId
+        && isNonEmptyBounded(data.name, 120)
+        && isOptionalStringBounded(data, 'phone', 20)
+        && isOptionalStringBounded(data, 'phone10', 10)
+        && isOptionalStringBounded(data, 'email', 160)
+        && isOptionalStringBounded(data, 'city', 80)
+        && isOptionalStringBounded(data, 'locality', 160)
+        && isOptionalStringBounded(data, 'address', 400)
+        && isOptionalStringBounded(data, 'avatar', 100000)
+        && isOptionalBool(data, 'isSuspendedByOwner')
+        && (!('savedAddresses' in data) || (data.savedAddresses is list && data.savedAddresses.size() <= 15));
+    }
+
+    function isValidJob(data, jobId) {
+      return data.keys().hasAll(['id', 'title', 'category', 'status'])
+        && data.id == jobId
+        && isNonEmptyBounded(data.title, 200)
+        && isNonEmptyBounded(data.category, 80)
+        && data.status in ['open', 'assigned', 'in_progress', 'completed', 'cancelled']
+        && isOptionalStringBounded(data, 'customerId', 128)
+        && isOptionalStringBounded(data, 'customerName', 120)
+        && isOptionalStringBounded(data, 'customerPhone', 25)
+        && isOptionalStringBounded(data, 'customerAddress', 400)
+        && isOptionalStringBounded(data, 'customerLocality', 160)
+        && isOptionalStringBounded(data, 'description', 1000)
+        && isOptionalStringBounded(data, 'assignedWorkerId', 128)
+        && isOptionalStringBounded(data, 'assignedWorkerName', 120)
+        && isOptionalNumBounded(data, 'budget', 0, 500000)
+        && (!('photos' in data) || (data.photos is list && data.photos.size() <= 8));
+    }
+
+    function isValidCommission(data, commissionId) {
+      return data.keys().hasAll(['id', 'workerId', 'commissionAmount', 'bookingId'])
+        && data.id == commissionId
+        && isNonEmptyBounded(data.workerId, 128)
+        && isNonEmptyBounded(data.bookingId, 128)
+        && isNonNegativeBoundedNum(data.commissionAmount, 100000)
+        && isOptionalStringBounded(data, 'workerName', 120)
+        && isOptionalStringBounded(data, 'upiTxnId', 120)
+        && (!('status' in data) || data.status in ['paid', 'pending', 'rejected']);
+    }
+
+    function isValidUpiClaim(data, claimId) {
+      return data.keys().hasAll(['id', 'workerId', 'purpose', 'amount', 'utrNumber', 'status'])
+        && data.id == claimId
+        && isNonEmptyBounded(data.workerId, 128)
+        && data.purpose in ['unpaid_fee', 'wallet', 'wallet_recharge', 'kyc', 'pro', 'lead_fee', 'custom']
+        && (data.amount is int || data.amount is float) && data.amount > 0 && data.amount <= 100000
+        && data.utrNumber is string && data.utrNumber.matches('^[0-9]{12}$')
+        && data.status in ['pending_verification', 'approved', 'rejected']
+        && isOptionalStringBounded(data, 'workerName', 120)
+        && isOptionalStringBounded(data, 'workerPhone', 25)
+        && isOptionalStringBounded(data, 'receiverUpiId', 100)
+        && isOptionalStringBounded(data, 'note', 400)
+        && isOptionalStringBounded(data, 'rejectionReason', 300)
+        && isOptionalStringBounded(data, 'screenshotUrl', 450000)
+        && isOptionalStringBounded(data, 'paymentScreenshot', 450000);
+    }
+
+    function isValidOwnerPayout(data, payoutId) {
+      return data.keys().hasAll(['id', 'amount', 'utrNumber'])
+        && data.id == payoutId
+        && (data.amount is int || data.amount is float) && data.amount > 0 && data.amount <= 10000000
+        && isNonEmptyBounded(data.utrNumber, 64)
+        && isOptionalStringBounded(data, 'destinationBank', 120)
+        && isOptionalStringBounded(data, 'accountNumber', 40)
+        && isOptionalStringBounded(data, 'accountHolderName', 120)
+        && isOptionalStringBounded(data, 'ifscCode', 20);
+    }
+
+    function isValidAppConfig(data) {
+      return data.keys().hasAll(['upiId'])
+        && data.upiId is string && data.upiId.size() >= 4 && data.upiId.size() <= 100
+        && isOptionalStringBounded(data, 'ownerName', 120)
+        && isOptionalStringBounded(data, 'businessName', 160)
+        && isOptionalStringBounded(data, 'customQrImage', 350000)
+        && isOptionalStringBounded(data, 'phone', 25)
+        && isOptionalStringBounded(data, 'bankAccountName', 120)
+        && isOptionalStringBounded(data, 'bankAccountNumber', 40)
+        && isOptionalStringBounded(data, 'ifscCode', 20)
+        && isOptionalStringBounded(data, 'bankName', 120)
+        && isOptionalNumBounded(data, 'perJobFeeRupees', 0, 5000)
+        && isOptionalNumBounded(data, 'commissionRatePercent', 0, 50)
+        && (!('removedWorkerIds' in data) || (data.removedWorkerIds is list && data.removedWorkerIds.size() <= 1000))
+        && (!('removedCustomerIds' in data) || (data.removedCustomerIds is list && data.removedCustomerIds.size() <= 1000));
+    }
+
+    function isValidChatMessage(data, messageId) {
+      return data.keys().hasAll(['id', 'bookingId', 'senderRole', 'text'])
+        && data.id == messageId
+        && data.senderRole in ['customer', 'worker']
+        && isNonEmptyBounded(data.bookingId, 128)
+        && isNonEmptyBounded(data.text, 1000)
+        && isOptionalStringBounded(data, 'senderName', 120)
+        && isOptionalStringBounded(data, 'imageUrl', 450000)
+        && isOptionalStringBounded(data, 'audioDataUrl', 450000);
+    }
+
+    function isValidCallSession(data, sessionId) {
+      return data.keys().hasAll(['id', 'bookingId', 'callerRole', 'calleeRole', 'status', 'startedAtMs'])
+        && data.id == sessionId
+        && isNonEmptyBounded(data.bookingId, 128)
+        && data.callerRole in ['customer', 'worker']
+        && data.calleeRole in ['customer', 'worker']
+        && data.status in ['ringing', 'connected', 'ended', 'rejected', 'missed']
+        && (data.startedAtMs is int || data.startedAtMs is float)
+        && isOptionalStringBounded(data, 'callerName', 120)
+        && isOptionalStringBounded(data, 'calleeName', 120)
+        && isOptionalStringBounded(data, 'offerSdp', 20000)
+        && isOptionalStringBounded(data, 'answerSdp', 20000)
+        && (!('callerCandidates' in data) || (data.callerCandidates is list && data.callerCandidates.size() <= 100))
+        && (!('calleeCandidates' in data) || (data.calleeCandidates is list && data.calleeCandidates.size() <= 100));
+    }
+
+    // 3. Bookings Collection (Terminal-state & immutable-customer locked, Owner-only delete)
     match /bookings/{bookingId} {
-      allow read: if true;
-      allow create: if request.resource.data.keys().hasAll(['id', 'customerName', 'status'])
-                    && isNonEmptyString(request.resource.data.customerName)
-                    && request.resource.data.status in ['requested', 'searching', 'accepted', 'worker_en_route', 'arrived', 'arrived_at_door', 'in_progress', 'completed', 'cancelled'];
-      allow update: if request.resource.data.status in ['requested', 'searching', 'accepted', 'worker_en_route', 'arrived', 'arrived_at_door', 'in_progress', 'completed', 'cancelled'];
-      allow delete: if true;
+      allow list: if true;
+      allow get: if isValidId(bookingId);
+      allow create: if isValidId(bookingId)
+        && isValidBooking(incoming(), bookingId)
+        && incoming().status in ['requested', 'searching', 'accepted'];
+      allow update: if isValidId(bookingId)
+        && isValidBooking(incoming(), bookingId)
+        && incoming().id == existing().id
+        && (!('customerId' in existing()) || incoming().customerId == existing().customerId)
+        && (
+          isVerifiedOwner() || (
+            existing().status != 'cancelled'
+            && (
+              existing().status != 'completed'
+              || (
+                incoming().status == 'completed'
+                && incoming().diff(existing()).affectedKeys().hasOnly([
+                  'customerRating',
+                  'customerReview',
+                  'commissionPaymentStatus',
+                  'commissionTxnId',
+                  'commissionPaidAt',
+                  'meetingFeePaid',
+                  'meetingFeeTxnId',
+                  'meetingFeeMethod',
+                  'updatedAt',
+                  'updatedAtMs'
+                ])
+              )
+            )
+          )
+        );
+      allow delete: if isValidId(bookingId) && isVerifiedOwner();
     }
-    
-    // 2. Workers Collection: Worker profile and registration
+
+    // 4. Workers Collection (Self-recharge & un-suspend tampering blocked; Owner-only delete)
     match /workers/{workerId} {
-      allow read: if true;
-      allow create: if request.resource.data.keys().hasAll(['id', 'name', 'phone'])
-                    && isValidPhone(request.resource.data.phone);
-      allow update: if true;
-      allow delete: if true;
+      allow list: if true;
+      allow get: if isValidId(workerId);
+      allow create: if isValidId(workerId)
+        && isValidWorker(incoming(), workerId)
+        && (
+          isVerifiedOwner() || (
+            (!('walletBalance' in incoming()) || incoming().walletBalance == 0)
+            && (!('isSuspendedByOwner' in incoming()) || incoming().isSuspendedByOwner == false)
+            && (!('isBlockedDueToUnpaidFee' in incoming()) || incoming().isBlockedDueToUnpaidFee == false)
+          )
+        );
+      allow update: if isValidId(workerId)
+        && isValidWorker(incoming(), workerId)
+        && incoming().id == existing().id
+        && (
+          isVerifiedOwner() || (
+            (!('walletBalance' in existing()) || !('walletBalance' in incoming()) || incoming().walletBalance <= existing().walletBalance)
+            && (
+              (!('isSuspendedByOwner' in existing()) && (!('isSuspendedByOwner' in incoming()) || incoming().isSuspendedByOwner == false))
+              || (('isSuspendedByOwner' in existing()) && ('isSuspendedByOwner' in incoming()) && incoming().isSuspendedByOwner == existing().isSuspendedByOwner)
+            )
+            && (
+              !('isBlockedDueToUnpaidFee' in existing())
+              || existing().isBlockedDueToUnpaidFee == false
+              || (('isBlockedDueToUnpaidFee' in incoming()) && incoming().isBlockedDueToUnpaidFee == true)
+              || (
+                ('walletBalance' in existing()) && ('walletBalance' in incoming())
+                && ('unpaidFeeAmount' in existing()) && existing().unpaidFeeAmount > 0
+                && (existing().walletBalance - incoming().walletBalance) >= existing().unpaidFeeAmount
+              )
+            )
+          )
+        );
+      allow delete: if isValidId(workerId) && isVerifiedOwner();
     }
 
-    // 2a. Customers Collection: Customer profile registration
+    // 5. Customers Collection (Hold/Suspension protected; Owner-only delete)
     match /customers/{customerId} {
-      allow read: if true;
-      allow create: if request.resource.data.keys().hasAll(['id', 'name'])
-                    && isNonEmptyString(request.resource.data.name);
-      allow update: if true;
-      allow delete: if true;
+      allow list: if true;
+      allow get: if isValidId(customerId);
+      allow create: if isValidId(customerId)
+        && isValidCustomer(incoming(), customerId)
+        && (isVerifiedOwner() || !('isSuspendedByOwner' in incoming()) || incoming().isSuspendedByOwner == false);
+      allow update: if isValidId(customerId)
+        && isValidCustomer(incoming(), customerId)
+        && incoming().id == existing().id
+        && (
+          isVerifiedOwner() || (
+            (!('isSuspendedByOwner' in existing()) && (!('isSuspendedByOwner' in incoming()) || incoming().isSuspendedByOwner == false))
+            || (('isSuspendedByOwner' in existing()) && ('isSuspendedByOwner' in incoming()) && incoming().isSuspendedByOwner == existing().isSuspendedByOwner)
+          )
+        );
+      allow delete: if isValidId(customerId) && isVerifiedOwner();
     }
 
-    // 2b. Jobs Broadcast Collection: Customer broadcast leads
+    // 6. Jobs Broadcast Collection (Terminal-state locked; Owner-only delete)
     match /jobs/{jobId} {
-      allow read: if true;
-      allow create, update: if request.resource.data.keys().hasAll(['id', 'title', 'category']);
-      allow delete: if true;
+      allow list: if true;
+      allow get: if isValidId(jobId);
+      allow create: if isValidId(jobId)
+        && isValidJob(incoming(), jobId)
+        && incoming().status == 'open';
+      allow update: if isValidId(jobId)
+        && isValidJob(incoming(), jobId)
+        && incoming().id == existing().id
+        && (!('customerId' in existing()) || incoming().customerId == existing().customerId)
+        && (isVerifiedOwner() || existing().status in ['open', 'assigned', 'in_progress']);
+      allow delete: if isValidId(jobId) && isVerifiedOwner();
     }
-    
-    // 3. Platform Commissions: Supports pending -> paid / rejected verification lifecycle
+
+    // 7. Platform Commissions (Amount & ID immutable; paid/rejected locked; Owner-only delete)
     match /commissions/{commissionId} {
-      allow read: if true;
-      allow create: if request.resource.data.keys().hasAll(['id', 'workerId', 'commissionAmount', 'bookingId'])
-                    && isPositiveAmount(request.resource.data.commissionAmount);
-      allow update: if request.resource.data.status in ['paid', 'pending', 'rejected'];
-      allow delete: if true;
+      allow list: if true;
+      allow get: if isValidId(commissionId);
+      allow create: if isValidId(commissionId)
+        && isValidCommission(incoming(), commissionId)
+        && (!('status' in incoming()) || incoming().status in ['paid', 'pending']);
+      allow update: if isValidId(commissionId)
+        && isValidCommission(incoming(), commissionId)
+        && (
+          isVerifiedOwner() || (
+            existing().status == 'pending'
+            && incoming().id == existing().id
+            && incoming().workerId == existing().workerId
+            && incoming().bookingId == existing().bookingId
+            && incoming().commissionAmount == existing().commissionAmount
+          )
+        );
+      allow delete: if isValidId(commissionId) && isVerifiedOwner();
     }
 
-    // 3a. Worker-to-Owner UPI Payment Verification Claims (12-digit UTR proof)
+    // 8. Worker-to-Owner UPI Payment Verification Claims (STRICTLY Owner-only approve/reject & delete)
     match /upi_payment_claims/{claimId} {
-      allow read: if true;
-      allow create: if request.resource.data.keys().hasAll(['id', 'workerId', 'purpose', 'amount', 'utrNumber', 'status'])
-                    && isPositiveAmount(request.resource.data.amount)
-                    && isNonEmptyString(request.resource.data.utrNumber)
-                    && request.resource.data.utrNumber.matches('^[0-9]{12}$')
-                    && request.resource.data.status == 'pending_verification';
-      allow update: if request.resource.data.status in ['pending_verification', 'approved', 'rejected'];
-      allow delete: if true;
+      allow list: if true;
+      allow get: if isValidId(claimId);
+      allow create: if isValidId(claimId)
+        && isValidUpiClaim(incoming(), claimId)
+        && incoming().status == 'pending_verification';
+      allow update: if isValidId(claimId)
+        && isVerifiedOwner()
+        && isValidUpiClaim(incoming(), claimId)
+        && existing().status == 'pending_verification'
+        && incoming().id == existing().id
+        && incoming().workerId == existing().workerId
+        && incoming().amount == existing().amount
+        && incoming().utrNumber == existing().utrNumber
+        && incoming().purpose == existing().purpose;
+      allow delete: if isValidId(claimId) && isVerifiedOwner();
     }
-    
-    // 4. Owner Payouts: Bank Withdrawals
+
+    // 9. Owner Bank Payouts (STRICTLY Owner-only create/delete, immutable forever)
     match /owner_payouts/{payoutId} {
-      allow read: if true;
-      allow create: if isPositiveAmount(request.resource.data.amount);
+      allow list: if true;
+      allow get: if isValidId(payoutId);
+      allow create: if isValidId(payoutId)
+        && isVerifiedOwner()
+        && isValidOwnerPayout(incoming(), payoutId);
       allow update: if false;
-      allow delete: if true;
+      allow delete: if isValidId(payoutId) && isVerifiedOwner();
     }
 
-    // 5. App Owner Config (UPI & Commission Settings)
+    // 10. App Owner Settings (STRICTLY Owner-only write — prevents UPI ID hijacking)
     match /app_config/{configId} {
-      allow read: if true;
-      allow write: if request.resource.data.upiId is string && request.resource.data.upiId.size() > 3;
+      allow get: if configId == 'owner_settings';
+      allow list: if false;
+      allow create, update: if configId == 'owner_settings'
+        && isVerifiedOwner()
+        && isValidAppConfig(incoming());
+      allow delete: if configId == 'owner_settings' && isVerifiedOwner();
     }
 
-    // 6. Real-Time Booking Chat Messages
+    // 11. Real-Time Booking Chat Messages (Strictly immutable once sent; Owner-only delete)
     match /chat_messages/{messageId} {
-      allow read: if true;
-      allow create: if request.resource.data.keys().hasAll(['id', 'bookingId', 'senderRole', 'text'])
-                    && request.resource.data.senderRole in ['customer', 'worker']
-                    && isNonEmptyString(request.resource.data.bookingId)
-                    && isNonEmptyString(request.resource.data.text);
+      allow list: if true;
+      allow get: if isValidId(messageId);
+      allow create: if isValidId(messageId) && isValidChatMessage(incoming(), messageId);
       allow update: if false;
-      allow delete: if true;
+      allow delete: if isValidId(messageId) && isVerifiedOwner();
     }
 
-    // 6a. Real-Time WebRTC Call Signaling Sessions
+    // 12. Real-Time WebRTC Call Signaling Sessions (Terminal-state locked; Owner-only delete)
     match /call_sessions/{sessionId} {
-      allow read: if true;
-      allow create: if request.resource.data.keys().hasAll(['id', 'bookingId', 'callerRole', 'calleeRole', 'status', 'startedAtMs'])
-                    && request.resource.data.callerRole in ['customer', 'worker']
-                    && request.resource.data.calleeRole in ['customer', 'worker']
-                    && request.resource.data.status in ['ringing', 'connected', 'ended', 'rejected', 'missed']
-                    && isNonEmptyString(request.resource.data.bookingId);
-      allow update: if request.resource.data.status in ['ringing', 'connected', 'ended', 'rejected', 'missed'];
-      allow delete: if true;
+      allow list: if true;
+      allow get: if isValidId(sessionId);
+      allow create: if isValidId(sessionId)
+        && isValidCallSession(incoming(), sessionId)
+        && incoming().status == 'ringing';
+      allow update: if isValidId(sessionId)
+        && isValidCallSession(incoming(), sessionId)
+        && incoming().id == existing().id
+        && incoming().bookingId == existing().bookingId
+        && incoming().callerRole == existing().callerRole
+        && incoming().calleeRole == existing().calleeRole
+        && incoming().startedAtMs == existing().startedAtMs
+        && (
+          isVerifiedOwner()
+          || existing().status in ['ringing', 'connected']
+          || incoming().status == existing().status
+        );
+      allow delete: if isValidId(sessionId) && isVerifiedOwner();
     }
 
-    // 7. Connection test ping
+    // 13. Connection health ping
     match /_connection_test/{docId} {
-      allow read, write: if true;
+      allow get: if isValidId(docId);
+      allow list, write: if false;
     }
   }
 }

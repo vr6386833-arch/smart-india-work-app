@@ -10,6 +10,7 @@
  * - Service Worker Background Push sync
  */
 
+import { Capacitor } from '@capacitor/core';
 import { soundManager } from './soundEffects';
 
 export interface PushChannelConfig {
@@ -29,19 +30,17 @@ export class PushNotificationService {
   private static wakeLock: any = null;
 
   /**
-   * Initialize Service Worker and Push Notification Channel
+   * Initialize Service Worker (Web/PWA only) and Push Notification Channel
    */
   public static async init(): Promise<boolean> {
     if (typeof window === 'undefined') return false;
 
-    // 1. Register Service Worker
-    if ('serviceWorker' in navigator) {
+    if (!Capacitor.isNativePlatform() && 'serviceWorker' in navigator) {
       try {
         const reg = await navigator.serviceWorker.register('/sw.js');
         this.swRegistration = reg;
-        console.log('[PushService] ServiceWorker registered with scope:', reg.scope);
-      } catch (err) {
-        console.warn('[PushService] ServiceWorker registration error:', err);
+      } catch {
+        // Ignore service worker registration errors in embedded environments
       }
     }
 

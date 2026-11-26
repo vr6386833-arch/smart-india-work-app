@@ -5,128 +5,204 @@
       "description": "Customer service booking and worker dispatch with OTP verification",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "customerId": { "type": "string" },
-        "customerName": { "type": "string" },
-        "customerPhone": { "type": "string" },
-        "customerAddress": { "type": "string" },
-        "workerId": { "type": "string" },
-        "workerName": { "type": "string" },
-        "serviceCategory": { "type": "string" },
-        "status": { "type": "string", "enum": ["requested", "searching", "accepted", "arrived", "in_progress", "completed", "cancelled"] },
-        "arrivalOtp": { "type": "string" },
+        "id": { "type": "string", "minLength": 2, "maxLength": 128 },
+        "jobId": { "type": "string", "maxLength": 128 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "customerName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "customerPhone": { "type": "string", "maxLength": 25 },
+        "customerAddress": { "type": "string", "maxLength": 400 },
+        "customerLocality": { "type": "string", "maxLength": 160 },
+        "workerId": { "type": "string", "maxLength": 128 },
+        "workerName": { "type": "string", "maxLength": 120 },
+        "workerPhone": { "type": "string", "maxLength": 25 },
+        "serviceCategory": { "type": "string", "maxLength": 80 },
+        "serviceSubCategory": { "type": "string", "maxLength": 120 },
+        "status": {
+          "type": "string",
+          "enum": [
+            "requested",
+            "searching",
+            "accepted",
+            "worker_en_route",
+            "arrived",
+            "arrived_at_door",
+            "otp_verified",
+            "in_progress",
+            "completed",
+            "cancelled"
+          ]
+        },
+        "arrivalOtp": { "type": "string", "maxLength": 12 },
         "isOtpVerified": { "type": "boolean" },
+        "estimatedAmount": { "type": "number" },
+        "finalAmount": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "customerRating": { "type": "number" },
+        "customerReview": { "type": "string", "maxLength": 600 },
         "customerLiveLocation": { "type": "object" },
         "workerLiveLocation": { "type": "object" },
-        "createdAt": { "type": "string" }
+        "createdAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["id", "customerName", "status"]
     },
     "WorkerProfile": {
       "title": "WorkerProfile",
-      "description": "Registered worker profile with wallet, verification, and lock state",
+      "description": "Registered worker profile with wallet, verification, and owner control state",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "phone": { "type": "string" },
-        "category": { "type": "string" },
+        "id": { "type": "string", "minLength": 2, "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "phone": { "type": "string", "minLength": 10, "maxLength": 20 },
+        "phone10": { "type": "string", "pattern": "^[0-9]{10}$" },
+        "category": { "type": "string", "maxLength": 80 },
+        "city": { "type": "string", "maxLength": 80 },
+        "locality": { "type": "string", "maxLength": 160 },
         "walletBalance": { "type": "number" },
         "isBlockedDueToUnpaidFee": { "type": "boolean" },
+        "isSuspendedByOwner": { "type": "boolean" },
         "unpaidFeeAmount": { "type": "number" },
         "isAadhaarVerified": { "type": "boolean" }
       },
       "required": ["id", "name", "phone"]
-    },
-    "CommissionRecord": {
-      "title": "CommissionRecord",
-      "description": "₹10 per job fee paid by worker via company QR or wallet",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "workerId": { "type": "string" },
-        "workerName": { "type": "string" },
-        "bookingId": { "type": "string" },
-        "commissionAmount": { "type": "number" },
-        "paymentMethod": { "type": "string" },
-        "upiTxnId": { "type": "string" },
-        "paidAt": { "type": "string" }
-      },
-      "required": ["id", "workerId", "commissionAmount", "bookingId"]
-    },
-    "OwnerPayout": {
-      "title": "OwnerPayout",
-      "description": "Earnings transferred by app owner to their bank account",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "amount": { "type": "number" },
-        "destinationBank": { "type": "string" },
-        "accountNumber": { "type": "string" },
-        "utrNumber": { "type": "string" },
-        "status": { "type": "string" },
-        "date": { "type": "string" }
-      },
-      "required": ["id", "amount"]
     },
     "CustomerProfile": {
       "title": "CustomerProfile",
       "description": "Registered customer profile",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "phone": { "type": "string" },
-        "city": { "type": "string" },
-        "locality": { "type": "string" },
-        "address": { "type": "string" }
+        "id": { "type": "string", "minLength": 2, "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "phone": { "type": "string", "maxLength": 20 },
+        "phone10": { "type": "string", "pattern": "^[0-9]{10}$" },
+        "email": { "type": "string", "maxLength": 160 },
+        "city": { "type": "string", "maxLength": 80 },
+        "locality": { "type": "string", "maxLength": 160 },
+        "address": { "type": "string", "maxLength": 400 },
+        "isSuspendedByOwner": { "type": "boolean" }
       },
       "required": ["id", "name"]
+    },
+    "JobPost": {
+      "title": "JobPost",
+      "description": "Customer broadcast job lead visible to nearby workers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "customerName": { "type": "string", "maxLength": 120 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "category": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "budget": { "type": "number" },
+        "status": { "type": "string", "enum": ["open", "assigned", "in_progress", "completed", "cancelled"] },
+        "assignedWorkerId": { "type": "string", "maxLength": 128 },
+        "assignedWorkerName": { "type": "string", "maxLength": 120 }
+      },
+      "required": ["id", "title", "category", "status"]
+    },
+    "CommissionRecord": {
+      "title": "CommissionRecord",
+      "description": "Platform per-job fee paid by worker via company QR or wallet",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128 },
+        "workerId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "workerName": { "type": "string", "maxLength": 120 },
+        "bookingId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "commissionAmount": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["upi_direct", "wallet_deduct", "cash_settled"] },
+        "upiTxnId": { "type": "string", "maxLength": 120 },
+        "status": { "type": "string", "enum": ["paid", "pending", "rejected"] }
+      },
+      "required": ["id", "workerId", "commissionAmount", "bookingId"]
+    },
+    "OwnerPayout": {
+      "title": "OwnerPayout",
+      "description": "Earnings transferred by app owner to their bank account (Owner-only write)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128 },
+        "amount": { "type": "number" },
+        "destinationBank": { "type": "string", "maxLength": 120 },
+        "accountNumber": { "type": "string", "maxLength": 40 },
+        "utrNumber": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["completed", "processing"] },
+        "date": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "amount", "utrNumber"]
     },
     "UpiPaymentRequest": {
       "title": "UpiPaymentRequest",
       "description": "Worker-to-Owner real UPI payment verification request awaiting Owner confirmation",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "workerId": { "type": "string" },
-        "workerName": { "type": "string" },
-        "workerPhone": { "type": "string" },
-        "purpose": { "type": "string", "enum": ["wallet", "unpaid_fee", "lead_fee", "kyc", "pro"] },
+        "id": { "type": "string", "minLength": 2, "maxLength": 128 },
+        "workerId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "workerName": { "type": "string", "maxLength": 120 },
+        "workerPhone": { "type": "string", "maxLength": 25 },
+        "purpose": { "type": "string", "enum": ["wallet", "wallet_recharge", "unpaid_fee", "lead_fee", "kyc", "pro", "custom"] },
         "amount": { "type": "number" },
-        "utrNumber": { "type": "string", "minLength": 12, "maxLength": 12, "pattern": "^\\d{12}$" },
-        "screenshotUrl": { "type": "string" },
-        "bookingId": { "type": "string" },
-        "commissionId": { "type": "string" },
-        "note": { "type": "string" },
+        "utrNumber": { "type": "string", "minLength": 12, "maxLength": 12, "pattern": "^[0-9]{12}$" },
+        "screenshotUrl": { "type": "string", "maxLength": 400000 },
+        "bookingId": { "type": "string", "maxLength": 128 },
+        "commissionId": { "type": "string", "maxLength": 128 },
+        "note": { "type": "string", "maxLength": 400 },
         "status": { "type": "string", "enum": ["pending_verification", "approved", "rejected"] },
-        "rejectionReason": { "type": "string" },
+        "rejectionReason": { "type": "string", "maxLength": 300 },
         "submittedAtMs": { "type": "number" },
-        "submittedAtText": { "type": "string" },
-        "reviewedAtText": { "type": "string" }
+        "submittedAtText": { "type": "string", "maxLength": 80 }
       },
       "required": ["id", "workerId", "purpose", "amount", "utrNumber", "status"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Immutable booking-scoped chat message between customer and worker",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128 },
+        "bookingId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "senderRole": { "type": "string", "enum": ["customer", "worker"] },
+        "senderName": { "type": "string", "maxLength": 120 },
+        "text": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "createdAtMs": { "type": "number" }
+      },
+      "required": ["id", "bookingId", "senderRole", "text"]
     },
     "CallSession": {
       "title": "CallSession",
       "description": "Real-time cross-device WebRTC voice call signaling session between customer and worker",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "bookingId": { "type": "string" },
+        "id": { "type": "string", "minLength": 2, "maxLength": 128 },
+        "bookingId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "callerRole": { "type": "string", "enum": ["customer", "worker"] },
-        "callerName": { "type": "string" },
+        "callerName": { "type": "string", "maxLength": 120 },
         "calleeRole": { "type": "string", "enum": ["customer", "worker"] },
-        "calleeName": { "type": "string" },
+        "calleeName": { "type": "string", "maxLength": 120 },
         "status": { "type": "string", "enum": ["ringing", "connected", "ended", "rejected", "missed"] },
-        "offerSdp": { "type": "string" },
-        "answerSdp": { "type": "string" },
+        "offerSdp": { "type": "string", "maxLength": 20000 },
+        "answerSdp": { "type": "string", "maxLength": 20000 },
         "callerCandidates": { "type": "array" },
         "calleeCandidates": { "type": "array" },
         "startedAtMs": { "type": "number" },
         "updatedAtMs": { "type": "number" }
       },
       "required": ["id", "bookingId", "callerRole", "calleeRole", "status", "startedAtMs"]
+    },
+    "AppOwnerConfig": {
+      "title": "AppOwnerConfig",
+      "description": "Owner-locked payment UPI, QR, fee settings, and removed account lists",
+      "type": "object",
+      "properties": {
+        "ownerName": { "type": "string", "maxLength": 120 },
+        "businessName": { "type": "string", "maxLength": 160 },
+        "upiId": { "type": "string", "minLength": 4, "maxLength": 100 },
+        "customQrImage": { "type": "string", "maxLength": 300000 },
+        "perJobFeeRupees": { "type": "number" },
+        "removedWorkerIds": { "type": "array" },
+        "removedCustomerIds": { "type": "array" }
+      },
+      "required": ["upiId"]
     }
   },
   "firestore": {
@@ -142,21 +218,33 @@
       "schema": { "$ref": "#/entities/CustomerProfile" },
       "description": "Collection of customer profiles"
     },
+    "/jobs/{jobId}": {
+      "schema": { "$ref": "#/entities/JobPost" },
+      "description": "Collection of broadcast job posts"
+    },
     "/commissions/{commissionId}": {
       "schema": { "$ref": "#/entities/CommissionRecord" },
       "description": "Collection of platform fee records"
     },
     "/owner_payouts/{payoutId}": {
       "schema": { "$ref": "#/entities/OwnerPayout" },
-      "description": "Collection of owner bank withdrawals"
+      "description": "Collection of owner bank withdrawals (Owner-only writes)"
     },
     "/upi_payment_claims/{claimId}": {
       "schema": { "$ref": "#/entities/UpiPaymentRequest" },
-      "description": "Collection of worker UPI UTR payment claims pending owner bank verification"
+      "description": "Collection of worker UPI UTR payment claims pending owner verification"
+    },
+    "/chat_messages/{messageId}": {
+      "schema": { "$ref": "#/entities/ChatMessage" },
+      "description": "Collection of immutable booking chat messages"
     },
     "/call_sessions/{sessionId}": {
       "schema": { "$ref": "#/entities/CallSession" },
       "description": "Collection of live WebRTC voice call signaling sessions"
+    },
+    "/app_config/{configId}": {
+      "schema": { "$ref": "#/entities/AppOwnerConfig" },
+      "description": "Singleton owner payment config document (Owner-only writes)"
     }
   }
 }

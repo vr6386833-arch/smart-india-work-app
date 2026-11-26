@@ -35,7 +35,7 @@ import {
 } from './types';
 import { StorageService } from './services/storageService';
 import { safeStorage } from './services/safeStorage';
-import { getFreshPhoneGps, watchExactPhoneGps } from './utils/liveGpsService';
+import { getFreshPhoneGps, watchExactPhoneGps, haversineDistanceKm } from './utils/liveGpsService';
 import { 
   CLEAN_LAUNCH_CUTOFF_MS,
   extractRecordTimeMs,
@@ -44,7 +44,6 @@ import {
   isLegacyDemoJob,
   isLegacyDemoBooking,
   isValidRealUpiUtr,
-  testFirestoreConnection, 
   normalizeIndianPhone10,
   findExistingCustomerByPhone,
   findExistingWorkerByPhone,
@@ -67,9 +66,13 @@ import {
   syncAppConfigToFirestore,
   syncUpiPaymentClaimToFirestore,
   listenToWorkers,
+  listenToWorkerDoc,
+  fetchWorkersOnce,
   listenToCustomers,
+  listenToCustomerDoc,
   listenToJobs,
   listenToBookings,
+  listenToBookingById,
   listenToCommissions,
   listenToPayouts,
   listenToChatMessages,
@@ -77,37 +80,33 @@ import {
   updateCallSessionStatus,
   listenToAppConfig,
   listenToUpiPaymentClaims,
-  purgeAllFirestoreData
+  purgeAllFirestoreData,
+  listenToOwnerAuthState,
+  signInOwnerWithGoogle,
+  OWNER_ADMIN_EMAIL
 } from './services/firebase';
-import { Header } from './components/common/Header';
-import { haversineDistanceKm } from './components/common/GoogleLiveMap';
-import { PhoneFrame } from './components/common/PhoneFrame';
-import { CustomerApp } from './components/customer/CustomerApp';
-import { SendMessageOptions } from './components/customer/ChatCallModal';
-import { WorkerApp } from './components/worker/WorkerApp';
-import { WorkerIdCardModal } from './components/worker/WorkerIdCardModal';
-import { AddCustomerModal } from './components/customer/AddCustomerModal';
-import { AddWorkerModal } from './components/worker/AddWorkerModal';
-import { AppOwnerEarningsModal } from './components/admin/AppOwnerEarningsModal';
-import { AdminPanelOverview } from './components/admin/AdminPanelOverview';
-import { OwnerApp } from './components/owner/OwnerApp';
-import { LegalTermsModal } from './components/legal/LegalTermsModal';
-import { AndroidBuildGuideModal } from './components/legal/AndroidBuildGuideModal';
-import { AwsServerModal } from './components/admin/AwsServerModal';
-import { ProductionServicesModal } from './components/admin/ProductionServicesModal';
-import { SosEmergencyModal } from './components/common/SosEmergencyModal';
-import { WorkerReviewsModal } from './components/customer/WorkerReviewsModal';
-import { BackendFlutterStudio } from './components/devstudio/BackendFlutterStudio';
-import { TestingGuideModal } from './components/common/TestingGuideModal';
-import { SecurityShieldModal } from './components/common/SecurityShieldModal';
-import { OnboardingAuthScreen } from './components/common/OnboardingAuthScreen';
-import { OwnerPinModal } from './components/common/OwnerPinModal';
+import type { SendMessageOptions } from './components/customer/ChatCallModal';
 import { SecurityShieldService } from './services/securityShieldService';
-import { AwsCloudService } from './services/awsCloudService';
 import { soundManager } from './services/soundEffects';
 import { PushNotificationService } from './services/pushNotificationService';
 import { IndexedDbSyncService } from './services/indexedDbSyncService';
-import { Sparkles, RefreshCw, Zap, ShieldCheck, PhoneIncoming, PhoneOff, AlertTriangle } from 'lucide-react';
+import { PhoneIncoming, PhoneOff, AlertTriangle } from 'lucide-react';
+
+const Header = React.lazy(() => import('./components/common/Header').then((m) => ({ default: m.Header })));
+const PhoneFrame = React.lazy(() => import('./components/common/PhoneFrame').then((m) => ({ default: m.PhoneFrame })));
+const CustomerApp = React.lazy(() => import('./components/customer/CustomerApp').then((m) => ({ default: m.CustomerApp })));
+const WorkerApp = React.lazy(() => import('./components/worker/WorkerApp').then((m) => ({ default: m.WorkerApp })));
+const OwnerApp = React.lazy(() => import('./components/owner/OwnerApp').then((m) => ({ default: m.OwnerApp })));
+const OnboardingAuthScreen = React.lazy(() => import('./components/common/OnboardingAuthScreen').then((m) => ({ default: m.OnboardingAuthScreen })));
+const OwnerPinModal = React.lazy(() => import('./components/common/OwnerPinModal').then((m) => ({ default: m.OwnerPinModal })));
+const WorkerIdCardModal = React.lazy(() => import('./components/worker/WorkerIdCardModal').then((m) => ({ default: m.WorkerIdCardModal })));
+const AddCustomerModal = React.lazy(() => import('./components/customer/AddCustomerModal').then((m) => ({ default: m.AddCustomerModal })));
+const AddWorkerModal = React.lazy(() => import('./components/worker/AddWorkerModal').then((m) => ({ default: m.AddWorkerModal })));
+const AppOwnerEarningsModal = React.lazy(() => import('./components/admin/AppOwnerEarningsModal').then((m) => ({ default: m.AppOwnerEarningsModal })));
+const LegalTermsModal = React.lazy(() => import('./components/legal/LegalTermsModal').then((m) => ({ default: m.LegalTermsModal })));
+const SosEmergencyModal = React.lazy(() => import('./components/common/SosEmergencyModal').then((m) => ({ default: m.SosEmergencyModal })));
+const WorkerReviewsModal = React.lazy(() => import('./components/customer/WorkerReviewsModal').then((m) => ({ default: m.WorkerReviewsModal })));
+const SecurityShieldModal = React.lazy(() => import('./components/common/SecurityShieldModal').then((m) => ({ default: m.SecurityShieldModal })));
 
 // One-time synchronous migration to wipe pre-launch test records from localStorage before first render
 function ensureCleanLaunchV5Migration() {
@@ -135,6 +134,11 @@ function ensureCleanLaunchV5Migration() {
       'smart_india_tickets',
       'smart_india_commission_records',
       'smart_india_owner_payouts',
+      'aws_bookings',
+      'aws_workers',
+      'aws_commission_ledger',
+      'aws_payouts',
+      'smart_india_aws_config_v1',
     ];
     keysToPurge.forEach((k) => safeStorage.removeItem(k));
 
@@ -176,7 +180,7 @@ function getOrCreateDeviceGuestCustomer(): CustomerProfile {
 const DEVICE_GUEST_CUSTOMER = getOrCreateDeviceGuestCustomer();
 
 export default function App() {
-  const [activeView, setActiveView] = useState<'dual' | 'customer' | 'worker' | 'owner' | 'admin' | 'studio'>(() => {
+  const [activeView, setActiveView] = useState<'dual' | 'customer' | 'worker' | 'owner' | 'admin'>(() => {
     try {
       const preferred = safeStorage.getItem('smart_india_preferred_role_v4');
       if (preferred === 'worker') return 'worker';
@@ -201,14 +205,7 @@ export default function App() {
   const [selectedReviewWorker, setSelectedReviewWorker] = useState<WorkerProfile | null>(null);
   const [isAppOwnerEarningsOpen, setIsAppOwnerEarningsOpen] = useState(false);
   const [isLegalTermsOpen, setIsLegalTermsOpen] = useState(false);
-  const [isAndroidGuideOpen, setIsAndroidGuideOpen] = useState(false);
-  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
-  const [isAwsServerOpen, setIsAwsServerOpen] = useState(false);
-  const [isProductionServicesOpen, setIsProductionServicesOpen] = useState(false);
-  const [isTestingGuideOpen, setIsTestingGuideOpen] = useState(false);
   const [isSecurityShieldOpen, setIsSecurityShieldOpen] = useState(false);
-  const [isApkDownloadOpen, setIsApkDownloadOpen] = useState(false);
-  const [isCloudConnected, setIsCloudConnected] = useState(true);
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [isGmpQuotaExceeded, setIsGmpQuotaExceeded] = useState(false);
   const [isFirestoreQuotaExceeded, setIsFirestoreQuotaExceeded] = useState(false);
@@ -223,9 +220,34 @@ export default function App() {
     }, 4500);
   }, []);
 
+  const [ownerAuthState, setOwnerAuthState] = React.useState<{ verified: boolean; email: string | null }>({
+    verified: false,
+    email: null,
+  });
+
+  React.useEffect(() => {
+    return listenToOwnerAuthState(setOwnerAuthState);
+  }, []);
+
+  const handleVerifyOwnerGoogle = React.useCallback(async () => {
+    const res = await signInOwnerWithGoogle();
+    if (res.ok) {
+      soundManager.playSuccessCoin();
+      showToast(
+        language === 'hi'
+          ? `🛡️ ओनर सुरक्षा लॉक खुल गया (${res.email || OWNER_ADMIN_EMAIL})`
+          : `🛡️ Owner security verified (${res.email || OWNER_ADMIN_EMAIL})`,
+        'success'
+      );
+    } else {
+      soundManager.playWarning();
+      showToast(res.errorHi || 'Gmail verification failed.', 'warning');
+    }
+  }, [language, showToast]);
+
   const handleFirestoreWriteOutcome = React.useCallback(
     (
-      res: { ok: boolean; quotaExceeded?: boolean } | undefined,
+      res: { ok: boolean; quotaExceeded?: boolean; permissionDenied?: boolean } | undefined,
       actionLabelHi: string,
       actionLabelEn: string
     ): boolean => {
@@ -233,7 +255,15 @@ export default function App() {
         if (res?.ok) setIsFirestoreQuotaExceeded(false);
         return true;
       }
-      if (res.quotaExceeded) {
+      if (res.permissionDenied) {
+        soundManager.playWarning();
+        showToast(
+          language === 'hi'
+            ? `🔒 डेटाबेस सुरक्षा लॉक: ${actionLabelHi} के लिए पहले ऊपर "Gmail से ओनर वेरिफाई करें" (${OWNER_ADMIN_EMAIL}) से लॉगिन करें।`
+            : `🔒 Security Lock: Verify Owner Gmail (${OWNER_ADMIN_EMAIL}) before ${actionLabelEn}.`,
+          'warning'
+        );
+      } else if (res.quotaExceeded) {
         setIsFirestoreQuotaExceeded(true);
         soundManager.playWarning();
         showToast(
@@ -265,10 +295,6 @@ export default function App() {
 
   // Initialize background push notifications and local offline IndexedDB auto-sync
   React.useEffect(() => {
-    testFirestoreConnection().then((connected) => {
-      setIsCloudConnected(connected);
-    });
-
     PushNotificationService.init();
     IndexedDbSyncService.init();
 
@@ -332,10 +358,7 @@ export default function App() {
         isReviewsModalOpen ||
         isAppOwnerEarningsOpen ||
         isLegalTermsOpen ||
-        isAndroidGuideOpen ||
-        isAwsServerOpen ||
-        isProductionServicesOpen ||
-        isTestingGuideOpen
+        isSecurityShieldOpen
       ) {
         setIsGlobalIdCardOpen(false);
         setIsGlobalAddCustomerOpen(false);
@@ -344,14 +367,11 @@ export default function App() {
         setIsReviewsModalOpen(false);
         setIsAppOwnerEarningsOpen(false);
         setIsLegalTermsOpen(false);
-        setIsAndroidGuideOpen(false);
-        setIsAwsServerOpen(false);
-        setIsProductionServicesOpen(false);
-        setIsTestingGuideOpen(false);
+        setIsSecurityShieldOpen(false);
         return;
       }
 
-      if (isOwnerSession && (activeView === 'worker' || activeView === 'customer' || activeView === 'dual' || activeView === 'admin' || activeView === 'studio')) {
+      if (isOwnerSession && (activeView === 'worker' || activeView === 'customer' || activeView === 'dual' || activeView === 'admin')) {
         setActiveView('owner');
       }
     };
@@ -366,10 +386,7 @@ export default function App() {
     isReviewsModalOpen,
     isAppOwnerEarningsOpen,
     isLegalTermsOpen,
-    isAndroidGuideOpen,
-    isAwsServerOpen,
-    isProductionServicesOpen,
-    isTestingGuideOpen,
+    isSecurityShieldOpen,
     activeView,
     isOwnerSession,
   ]);
@@ -681,13 +698,55 @@ export default function App() {
     return () => unsubConfig();
   }, []);
 
-  // Real-time Firestore sync listeners (cross-device live sync, clock-safe filtering)
+  const lastCustomerWorkersFetchRef = React.useRef<number>(0);
+
+  // 1. Role-scoped Workers sync (Owner/Dual = full list; Worker = own 1 doc; Customer = throttled catalog fetch)
   React.useEffect(() => {
     const passesCutoff = (tsMs: number) => effectiveCutoffMs <= 0 || tsMs >= effectiveCutoffMs;
+    const isFullManagerView =
+      isOwnerSession || activeView === 'owner' || activeView === 'admin' || activeView === 'dual';
 
-    const unsubWorkers = listenToWorkers((cloudWorkers) => {
+    if (isFullManagerView) {
+      return listenToWorkers((cloudWorkers) => {
+        const removedW = removedWorkerIdsRef.current;
+        const cleanCloud = (cloudWorkers || []).filter((w) => !isLegacyDemoWorker(w) && !removedW.includes(w.id));
+        setWorkers((prev) => {
+          const recentLocal = prev.filter(
+            (w) => !isLegacyDemoWorker(w) && !removedW.includes(w.id) && passesCutoff(extractRecordTimeMs(w.id))
+          );
+          const map = new Map(recentLocal.map((w) => [w.id, w]));
+          cleanCloud.forEach((w) => map.set(w.id, { ...map.get(w.id), ...w }));
+          return Array.from(map.values());
+        });
+      }, effectiveCutoffMs);
+    }
+
+    if (activeView === 'worker') {
+      if (!activeWorkerId || activeWorkerId === DEFAULT_STANDBY_WORKER.id) return;
+      return listenToWorkerDoc(activeWorkerId, (cloudWorker) => {
+        if (!cloudWorker) return;
+        const removedW = removedWorkerIdsRef.current;
+        if (removedW.includes(cloudWorker.id)) return;
+        setWorkers((prev) => {
+          const idx = prev.findIndex((w) => w.id === cloudWorker.id);
+          if (idx === -1) return [cloudWorker, ...prev];
+          return prev.map((w) => (w.id === cloudWorker.id ? { ...w, ...cloudWorker } : w));
+        });
+      });
+    }
+
+    // Customer view: one-time catalog fetch (avoids live broadcast reads across 1,000-5,000 users whenever a worker updates wallet/status)
+    const nowMs = Date.now();
+    if (nowMs - lastCustomerWorkersFetchRef.current < 180000 && workers.some((w) => w.id !== DEFAULT_STANDBY_WORKER.id)) {
+      return;
+    }
+    lastCustomerWorkersFetchRef.current = nowMs;
+    let cancelled = false;
+    void fetchWorkersOnce(effectiveCutoffMs, { maxResults: 120 }).then((cloudWorkers) => {
+      if (cancelled) return;
       const removedW = removedWorkerIdsRef.current;
       const cleanCloud = (cloudWorkers || []).filter((w) => !isLegacyDemoWorker(w) && !removedW.includes(w.id));
+      if (cleanCloud.length === 0) return;
       setWorkers((prev) => {
         const recentLocal = prev.filter(
           (w) => !isLegacyDemoWorker(w) && !removedW.includes(w.id) && passesCutoff(extractRecordTimeMs(w.id))
@@ -696,31 +755,108 @@ export default function App() {
         cleanCloud.forEach((w) => map.set(w.id, { ...map.get(w.id), ...w }));
         return Array.from(map.values());
       });
-    }, effectiveCutoffMs);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveCutoffMs, activeView, isOwnerSession, activeWorkerId]);
 
-    const unsubCustomers = listenToCustomers((cloudCustomers) => {
-      const removedC = removedCustomerIdsRef.current;
-      const cleanCloud = (cloudCustomers || []).filter((c) => !isLegacyDemoCustomer(c) && !removedC.includes(c.id));
-      setCustomers((prev) => {
-        const recentLocal = prev.filter(
-          (c) => !isLegacyDemoCustomer(c) && !removedC.includes(c.id) && passesCutoff(extractRecordTimeMs(c.id))
-        );
-        const map = new Map(recentLocal.map((c) => [c.id, c]));
-        cleanCloud.forEach((c) => map.set(c.id, { ...map.get(c.id), ...c }));
-        return Array.from(map.values());
+  // 2. Role-scoped Customers sync (Owner/Dual = full list; Customer = own 1 doc; Worker = 0 reads)
+  React.useEffect(() => {
+    const passesCutoff = (tsMs: number) => effectiveCutoffMs <= 0 || tsMs >= effectiveCutoffMs;
+    const isFullManagerView =
+      isOwnerSession || activeView === 'owner' || activeView === 'admin' || activeView === 'dual';
+
+    if (isFullManagerView) {
+      return listenToCustomers((cloudCustomers) => {
+        const removedC = removedCustomerIdsRef.current;
+        const cleanCloud = (cloudCustomers || []).filter((c) => !isLegacyDemoCustomer(c) && !removedC.includes(c.id));
+        setCustomers((prev) => {
+          const recentLocal = prev.filter(
+            (c) => !isLegacyDemoCustomer(c) && !removedC.includes(c.id) && passesCutoff(extractRecordTimeMs(c.id))
+          );
+          const map = new Map(recentLocal.map((c) => [c.id, c]));
+          cleanCloud.forEach((c) => map.set(c.id, { ...map.get(c.id), ...c }));
+          return Array.from(map.values());
+        });
+      }, effectiveCutoffMs);
+    }
+
+    if (activeView === 'customer' && activeCustomerId && !activeCustomerId.startsWith('c_new_guest')) {
+      return listenToCustomerDoc(activeCustomerId, (cloudCustomer) => {
+        if (!cloudCustomer) return;
+        const removedC = removedCustomerIdsRef.current;
+        if (removedC.includes(cloudCustomer.id)) return;
+        setCustomers((prev) => {
+          const idx = prev.findIndex((c) => c.id === cloudCustomer.id);
+          if (idx === -1) return [cloudCustomer, ...prev];
+          return prev.map((c) => (c.id === cloudCustomer.id ? { ...c, ...cloudCustomer } : c));
+        });
       });
-    }, effectiveCutoffMs);
+    }
+  }, [effectiveCutoffMs, activeView, isOwnerSession, activeCustomerId]);
 
-    const unsubJobs = listenToJobs((cloudJobs) => {
-      setJobs((prev) => {
-        const recentLocal = prev.filter((j) => !isLegacyDemoJob(j) && passesCutoff(extractRecordTimeMs(j.id)));
-        const map = new Map(recentLocal.map((j) => [j.id, j]));
-        (cloudJobs || []).forEach((j) => map.set(j.id, { ...map.get(j.id), ...j }));
-        return Array.from(map.values());
-      });
-    }, effectiveCutoffMs);
+  // 3. Role-scoped Jobs sync (Worker = open jobs only; Customer = own posted jobs only; Owner/Dual = all)
+  React.useEffect(() => {
+    const passesCutoff = (tsMs: number) => effectiveCutoffMs <= 0 || tsMs >= effectiveCutoffMs;
+    const isFullManagerView =
+      isOwnerSession || activeView === 'owner' || activeView === 'admin' || activeView === 'dual';
 
-    const unsubBookings = listenToBookings((cloudBookings) => {
+    if (isFullManagerView) {
+      return listenToJobs((cloudJobs) => {
+        setJobs((prev) => {
+          const recentLocal = prev.filter((j) => !isLegacyDemoJob(j) && passesCutoff(extractRecordTimeMs(j.id)));
+          const map = new Map(recentLocal.map((j) => [j.id, j]));
+          (cloudJobs || []).forEach((j) => map.set(j.id, { ...map.get(j.id), ...j }));
+          return Array.from(map.values());
+        });
+      }, effectiveCutoffMs);
+    }
+
+    if (activeView === 'worker') {
+      return listenToJobs(
+        (cloudJobs) => {
+          setJobs(cloudJobs || []);
+        },
+        effectiveCutoffMs,
+        { openOnly: true, maxResults: 80 }
+      );
+    }
+
+    if (activeView === 'customer' && activeCustomerId && !activeCustomerId.startsWith('c_new_guest')) {
+      return listenToJobs(
+        (cloudJobs) => {
+          setJobs((prev) => {
+            const recentLocal = prev.filter((j) => !isLegacyDemoJob(j) && passesCutoff(extractRecordTimeMs(j.id)));
+            const map = new Map(recentLocal.map((j) => [j.id, j]));
+            (cloudJobs || []).forEach((j) => map.set(j.id, { ...map.get(j.id), ...j }));
+            return Array.from(map.values());
+          });
+        },
+        effectiveCutoffMs,
+        { customerId: activeCustomerId, maxResults: 50 }
+      );
+    }
+  }, [effectiveCutoffMs, activeView, isOwnerSession, activeCustomerId]);
+
+  // 4. Role-scoped Bookings sync (Customer = own bookings only; Worker = active-lifecycle only; Owner/Dual = recent capped)
+  React.useEffect(() => {
+    const passesCutoff = (tsMs: number) => effectiveCutoffMs <= 0 || tsMs >= effectiveCutoffMs;
+    const isFullDual = activeView === 'dual';
+    const isWorkerScope = activeView === 'worker';
+    const isOwnerOnly = activeView === 'owner' || activeView === 'admin';
+
+    // Pure Owner dashboard does not display live bookings feed
+    if (isOwnerOnly) return;
+
+    const queryOptions = isFullDual
+      ? { recentLimit: 120 }
+      : isWorkerScope
+      ? { activeOnly: true, recentLimit: 80 }
+      : { customerId: activeCustomerId, recentLimit: 40 };
+
+    return listenToBookings((cloudBookings) => {
       const allCloud = cloudBookings || [];
       const cancelledIds = new Set(
         allCloud.filter((b) => b.status === 'cancelled').map((b) => b.id)
@@ -746,9 +882,40 @@ export default function App() {
         );
       }
 
+      const curWorkerId = activeWorkerIdRef.current;
+      const curCustId = activeCustomerIdRef.current;
+      const curView = activeViewRef.current;
+      const prevActive = activeBookingRef.current;
+
+      // In Worker activeOnly scope, a booking leaving the active set while status !== 'completed' means cancelled/removed
+      if (
+        isWorkerScope &&
+        prevActive &&
+        prevActive.workerId === curWorkerId &&
+        prevActive.status !== 'completed' &&
+        !sorted.some((b) => b.id === prevActive.id)
+      ) {
+        setWorkerNotifications((prev) => prev.filter((n) => !n.bookingId || n.bookingId !== prevActive.id));
+        if (!notifiedCancelledIdsRef.current.has(prevActive.id)) {
+          notifiedCancelledIdsRef.current.add(prevActive.id);
+          soundManager.playWarning();
+          showToast(
+            language === 'hi'
+              ? `❌ ग्राहक (${prevActive.customerName}) ने बुकिंग #${prevActive.id} रद्द कर दी है — काम हटा दिया गया।`
+              : `❌ Customer cancelled booking #${prevActive.id} — removed from your screen.`,
+            'info'
+          );
+        }
+      }
+
       if (freshBookings.length === 0) {
         setBroadcastBookings([]);
-        setActiveBooking(null);
+        setActiveBooking((prev) => {
+          if (curView === 'worker' && prev && prev.status === 'completed' && !dismissedCompletedIdsRef.current.includes(prev.id)) {
+            return prev;
+          }
+          return null;
+        });
         setIncomingBookingAlert(null);
         return;
       }
@@ -779,12 +946,7 @@ export default function App() {
         return latestCopy;
       });
 
-      const curWorkerId = activeWorkerIdRef.current;
-      const curCustId = activeCustomerIdRef.current;
-      const curView = activeViewRef.current;
-
-      // Notify worker once if their previously active booking was cancelled by customer
-      const prevActive = activeBookingRef.current;
+      // Notify worker once if their previously active booking was marked cancelled explicitly
       if (
         curView === 'worker' &&
         prevActive &&
@@ -818,7 +980,8 @@ export default function App() {
           if (!prev) return null;
           if (cancelledIds.has(prev.id)) return null;
           if (prev.status === 'completed' && dismissedCompletedIdsRef.current.includes(prev.id)) return null;
-          // For worker screen, if cloud has zero active bookings assigned to this worker, clear any cached booking immediately
+          // Preserve freshly completed booking card on Worker until dismissed (since activeOnly skips completed docs)
+          if (curView === 'worker' && prev.status === 'completed' && prev.workerId === curWorkerId) return prev;
           if (curView === 'worker') return null;
           const prevInCloud = sorted.find((b) => b.id === prev.id);
           if (prevInCloud && prevInCloud.status === 'cancelled') return null;
@@ -905,25 +1068,54 @@ export default function App() {
           soundManager.playIncomingJobAlert();
         }
       }
+    }, queryOptions);
+  }, [effectiveCutoffMs, activeView, activeCustomerId, activeWorkerId, language, showToast]);
+
+  // 4b. Single-doc watch for Worker's current assigned booking (catches completion/rating/cancel without scanning old history)
+  React.useEffect(() => {
+    if (activeView !== 'worker' || !activeBooking?.id) return;
+    const watchedId = activeBooking.id;
+    return listenToBookingById(watchedId, (cloudDoc) => {
+      if (!cloudDoc || cloudDoc.status === 'cancelled') {
+        setWorkerNotifications((prev) => prev.filter((n) => !n.bookingId || n.bookingId !== watchedId));
+        if (cloudDoc?.status === 'cancelled' && !notifiedCancelledIdsRef.current.has(watchedId)) {
+          notifiedCancelledIdsRef.current.add(watchedId);
+          soundManager.playWarning();
+          showToast(
+            language === 'hi'
+              ? `❌ ग्राहक ने बुकिंग #${watchedId} रद्द कर दी है — काम हटा दिया गया।`
+              : `❌ Customer cancelled booking #${watchedId} — removed from your screen.`,
+            'info'
+          );
+        }
+        setActiveBooking((prev) => (prev?.id === watchedId ? null : prev));
+        return;
+      }
+      if (cloudDoc.status === 'completed' && dismissedCompletedIdsRef.current.includes(cloudDoc.id)) {
+        setActiveBooking((prev) => (prev?.id === watchedId ? null : prev));
+        return;
+      }
+      setActiveBooking((prev) => (prev?.id === watchedId ? { ...prev, ...cloudDoc } : prev));
     });
+  }, [activeView, activeBooking?.id, language, showToast]);
 
-    const unsubCommissions = listenToCommissions((cloudRecords) => {
-      setCommissionRecords((prev) => {
-        const recentLocal = prev.filter((r) => passesCutoff(extractRecordTimeMs(r.id)) && r.commissionAmount !== 95);
-        const map = new Map(recentLocal.map((r) => [r.id, r]));
-        (cloudRecords || []).forEach((r) => map.set(r.id, { ...map.get(r.id), ...r }));
-        return Array.from(map.values());
-      });
-    }, effectiveCutoffMs);
+  // 5. Chat & Call Signaling listeners — strictly scoped ONLY to the active assigned bookingId!
+  const scopedCommBookingId =
+    activeBooking &&
+    activeBooking.id &&
+    activeBooking.workerId !== 'OPEN_BROADCAST' &&
+    activeBooking.status !== 'searching' &&
+    activeBooking.status !== 'cancelled'
+      ? activeBooking.id
+      : undefined;
 
-    const unsubPayouts = listenToPayouts((cloudPayouts) => {
-      setOwnerPayouts((prev) => {
-        const recentLocal = prev.filter((p) => passesCutoff(extractRecordTimeMs(p.id)));
-        const map = new Map(recentLocal.map((p) => [p.id, p]));
-        (cloudPayouts || []).forEach((p) => map.set(p.id, { ...map.get(p.id), ...p }));
-        return Array.from(map.values());
-      });
-    }, effectiveCutoffMs);
+  React.useEffect(() => {
+    if (!scopedCommBookingId) {
+      setChatMessages([]);
+      setCallSessions([]);
+      return;
+    }
+    const passesCutoff = (tsMs: number) => effectiveCutoffMs <= 0 || tsMs >= effectiveCutoffMs;
 
     const unsubChat = listenToChatMessages((cloudMsgs) => {
       const freshMsgs = (cloudMsgs || []).filter((m: ChatMessage & { createdAtMs?: number }) => {
@@ -968,33 +1160,78 @@ export default function App() {
           showToast(`💬 ${latestMsg.senderName}: ${latestMsg.text.slice(0, 60)}`, 'info');
         }
       }
-    });
+    }, scopedCommBookingId);
 
     const unsubCalls = listenToCallSessions((sessions) => {
       setCallSessions(sessions || []);
-    });
-
-    const unsubUpiClaims = listenToUpiPaymentClaims((cloudClaims) => {
-      setUpiPaymentClaims((prev) => {
-        const recentLocal = prev.filter((c) => passesCutoff(c.submittedAtMs || extractRecordTimeMs(c.id)));
-        const map = new Map(recentLocal.map((c) => [c.id, c]));
-        (cloudClaims || []).forEach((c) => map.set(c.id, { ...map.get(c.id), ...c }));
-        return Array.from(map.values()).sort((a, b) => (b.submittedAtMs || 0) - (a.submittedAtMs || 0));
-      });
-    }, effectiveCutoffMs);
+    }, scopedCommBookingId);
 
     return () => {
-      unsubWorkers();
-      unsubCustomers();
-      unsubJobs();
-      unsubBookings();
-      unsubCommissions();
-      unsubPayouts();
       unsubChat();
       unsubCalls();
-      unsubUpiClaims();
     };
-  }, [effectiveCutoffMs, showToast]);
+  }, [effectiveCutoffMs, scopedCommBookingId, showToast]);
+
+  // 6. Financial Ledger & UTR Claims — scoped strictly to Owner or Worker's own claims (0 reads on Customers)
+  React.useEffect(() => {
+    const passesCutoff = (tsMs: number) => effectiveCutoffMs <= 0 || tsMs >= effectiveCutoffMs;
+    const isFullManagerView =
+      isOwnerSession || activeView === 'owner' || activeView === 'admin' || activeView === 'dual';
+
+    const unsubs: Array<() => void> = [];
+
+    if (isFullManagerView) {
+      unsubs.push(
+        listenToCommissions((cloudRecords) => {
+          setCommissionRecords((prev) => {
+            const recentLocal = prev.filter((r) => passesCutoff(extractRecordTimeMs(r.id)) && r.commissionAmount !== 95);
+            const map = new Map(recentLocal.map((r) => [r.id, r]));
+            (cloudRecords || []).forEach((r) => map.set(r.id, { ...map.get(r.id), ...r }));
+            return Array.from(map.values());
+          });
+        }, effectiveCutoffMs)
+      );
+      unsubs.push(
+        listenToPayouts((cloudPayouts) => {
+          setOwnerPayouts((prev) => {
+            const recentLocal = prev.filter((p) => passesCutoff(extractRecordTimeMs(p.id)));
+            const map = new Map(recentLocal.map((p) => [p.id, p]));
+            (cloudPayouts || []).forEach((p) => map.set(p.id, { ...map.get(p.id), ...p }));
+            return Array.from(map.values());
+          });
+        }, effectiveCutoffMs)
+      );
+      unsubs.push(
+        listenToUpiPaymentClaims((cloudClaims) => {
+          setUpiPaymentClaims((prev) => {
+            const recentLocal = prev.filter((c) => passesCutoff(c.submittedAtMs || extractRecordTimeMs(c.id)));
+            const map = new Map(recentLocal.map((c) => [c.id, c]));
+            (cloudClaims || []).forEach((c) => map.set(c.id, { ...map.get(c.id), ...c }));
+            return Array.from(map.values()).sort((a, b) => (b.submittedAtMs || 0) - (a.submittedAtMs || 0));
+          });
+        }, effectiveCutoffMs)
+      );
+    } else if (activeView === 'worker' && activeWorkerId && activeWorkerId !== DEFAULT_STANDBY_WORKER.id) {
+      unsubs.push(
+        listenToUpiPaymentClaims(
+          (cloudClaims) => {
+            setUpiPaymentClaims((prev) => {
+              const recentLocal = prev.filter((c) => passesCutoff(c.submittedAtMs || extractRecordTimeMs(c.id)));
+              const map = new Map(recentLocal.map((c) => [c.id, c]));
+              (cloudClaims || []).forEach((c) => map.set(c.id, { ...map.get(c.id), ...c }));
+              return Array.from(map.values()).sort((a, b) => (b.submittedAtMs || 0) - (a.submittedAtMs || 0));
+            });
+          },
+          effectiveCutoffMs,
+          activeWorkerId
+        )
+      );
+    }
+
+    return () => {
+      unsubs.forEach((u) => u());
+    };
+  }, [effectiveCutoffMs, activeView, isOwnerSession, activeWorkerId]);
 
   // Surface pending Open Broadcast leads immediately whenever worker profile/view becomes active
   React.useEffect(() => {
@@ -1065,7 +1302,7 @@ export default function App() {
 
   const incomingRingingCall = React.useMemo(() => {
     if (!activeBooking) return null;
-    if (activeView === 'dual' || activeView === 'owner' || activeView === 'admin' || activeView === 'studio') {
+    if (activeView === 'dual' || activeView === 'owner' || activeView === 'admin') {
       return null;
     }
     const myRole: 'customer' | 'worker' = activeView === 'worker' ? 'worker' : 'customer';
@@ -1536,7 +1773,6 @@ export default function App() {
         handleFirestoreWriteOutcome(res, 'बुकिंग', 'booking');
       }
     })();
-    AwsCloudService.syncBookingToAws(newBooking);
     return true;
   };
 
@@ -1667,7 +1903,6 @@ export default function App() {
     });
 
     IndexedDbSyncService.saveBookingLocally(newBooking);
-    AwsCloudService.syncBookingToAws(newBooking);
 
     void (async () => {
       if (prevBookingIds.length > 0 || customer.id) {
@@ -1763,7 +1998,6 @@ export default function App() {
     }
 
     const claimedBooking: Booking = claimResult.booking;
-    AwsCloudService.syncBookingToAws(claimedBooking);
     IndexedDbSyncService.saveBookingLocally(claimedBooking);
 
     setActiveBooking(claimedBooking);
@@ -1924,7 +2158,6 @@ export default function App() {
         handleFirestoreWriteOutcome(res, 'बुकिंग निर्माण', 'booking sync');
       }
     });
-    AwsCloudService.syncBookingToAws(newBooking);
     soundManager.playSuccessCoin();
     showToast(
       language === 'hi'
@@ -2119,7 +2352,6 @@ export default function App() {
 
     setCommissionRecords((prev) => [finalRecord, ...prev]);
     syncCommissionToFirestore(finalRecord);
-    AwsCloudService.syncCommissionToAws(finalRecord);
 
     if (isPendingUpi) {
       const cleanUtr = finalRecord.upiTxnId.replace(/\D/g, '').slice(-12);
@@ -2239,7 +2471,6 @@ export default function App() {
 
     setCommissionRecords((prev) => [clearanceRecord, ...prev]);
     syncCommissionToFirestore(clearanceRecord);
-    AwsCloudService.syncCommissionToAws(clearanceRecord);
 
     // Unlock worker from lockout
     setWorkers((prev) =>
@@ -2326,7 +2557,11 @@ export default function App() {
   const handleRemoveWorkerByOwner = (workerId: string) => {
     const target = workers.find((w) => w.id === workerId);
     setWorkers((prev) => prev.filter((w) => w.id !== workerId));
-    deleteWorkerFromFirestore(workerId);
+    void deleteWorkerFromFirestore(workerId).then((res) => {
+      if (res.permissionDenied) {
+        handleFirestoreWriteOutcome(res, 'वर्कर हटाना', 'remove worker');
+      }
+    });
 
     const nextRemovedWorkers = Array.from(new Set([...(appOwnerConfig.removedWorkerIds || []), workerId]));
     removedWorkerIdsRef.current = nextRemovedWorkers;
@@ -2335,7 +2570,11 @@ export default function App() {
       removedWorkerIds: nextRemovedWorkers,
     };
     setAppOwnerConfig(updatedCfg);
-    syncAppConfigToFirestore(updatedCfg);
+    void syncAppConfigToFirestore(updatedCfg).then((res) => {
+      if (res.permissionDenied) {
+        handleFirestoreWriteOutcome(res, 'ओनर सेटिंग अपडेट', 'update owner config');
+      }
+    });
 
     if (activeWorkerId === workerId) {
       setActiveWorkerId(DEFAULT_STANDBY_WORKER.id);
@@ -2394,7 +2633,11 @@ export default function App() {
   const handleRemoveCustomerByOwner = (customerId: string) => {
     const target = customers.find((c) => c.id === customerId);
     setCustomers((prev) => prev.filter((c) => c.id !== customerId));
-    deleteCustomerFromFirestore(customerId);
+    void deleteCustomerFromFirestore(customerId).then((res) => {
+      if (res.permissionDenied) {
+        handleFirestoreWriteOutcome(res, 'ग्राहक हटाना', 'remove customer');
+      }
+    });
 
     const nextRemovedCustomers = Array.from(new Set([...(appOwnerConfig.removedCustomerIds || []), customerId]));
     removedCustomerIdsRef.current = nextRemovedCustomers;
@@ -2403,7 +2646,11 @@ export default function App() {
       removedCustomerIds: nextRemovedCustomers,
     };
     setAppOwnerConfig(updatedCfg);
-    syncAppConfigToFirestore(updatedCfg);
+    void syncAppConfigToFirestore(updatedCfg).then((res) => {
+      if (res.permissionDenied) {
+        handleFirestoreWriteOutcome(res, 'ओनर सेटिंग अपडेट', 'update owner config');
+      }
+    });
 
     if (activeCustomerId === customerId) {
       setActiveCustomerId(DEVICE_GUEST_CUSTOMER.id);
@@ -2448,14 +2695,17 @@ export default function App() {
     };
 
     setOwnerPayouts((prev) => [newPayout, ...prev]);
-    syncPayoutToFirestore(newPayout);
-    AwsCloudService.syncPayoutToAws(newPayout);
+    void syncPayoutToFirestore(newPayout).then((res) => {
+      if (res.permissionDenied) {
+        handleFirestoreWriteOutcome(res, 'बैंक पेआउट रिकॉर्ड', 'save payout');
+      }
+    });
     setAppOwnerConfig((prev) => {
       const updated = {
         ...prev,
         totalWithdrawnToBank: (prev.totalWithdrawnToBank || 0) + amount,
       };
-      syncAppConfigToFirestore(updated);
+      void syncAppConfigToFirestore(updated);
       return updated;
     });
     soundManager.playSuccessCoin();
@@ -2521,7 +2771,6 @@ export default function App() {
     // Add to Commission Ledger
     setCommissionRecords((prev) => [record, ...prev]);
     syncCommissionToFirestore(record);
-    AwsCloudService.syncCommissionToAws(record);
 
     // Update active booking status
     if (activeBooking) {
@@ -2670,7 +2919,11 @@ export default function App() {
     };
 
     setUpiPaymentClaims((prev) => prev.map((c) => (c.id === claimId ? approvedClaim : c)));
-    syncUpiPaymentClaimToFirestore(approvedClaim);
+    void syncUpiPaymentClaimToFirestore(approvedClaim).then((res) => {
+      if (!res.ok) {
+        handleFirestoreWriteOutcome(res, 'UTR स्वीकृति', 'approve UPI claim');
+      }
+    });
 
     const targetWorker = workers.find((w) => w.id === targetClaim.workerId);
 
@@ -2728,7 +2981,6 @@ export default function App() {
       };
       setCommissionRecords((prev) => [clrRec, ...prev]);
       syncCommissionToFirestore(clrRec);
-      AwsCloudService.syncCommissionToAws(clrRec);
     } else if (targetClaim.purpose === 'lead_fee') {
       if (targetClaim.commissionId) {
         setCommissionRecords((prev) =>
@@ -2852,7 +3104,11 @@ export default function App() {
       reviewedAt: reviewedText,
     };
     setUpiPaymentClaims((prev) => prev.map((c) => (c.id === claimId ? rejectedClaim : c)));
-    syncUpiPaymentClaimToFirestore(rejectedClaim);
+    void syncUpiPaymentClaimToFirestore(rejectedClaim).then((res) => {
+      if (!res.ok) {
+        handleFirestoreWriteOutcome(res, 'UTR अस्वीकृति', 'reject UPI claim');
+      }
+    });
 
     if (targetClaim.commissionId) {
       setCommissionRecords((prev) =>
@@ -3303,6 +3559,11 @@ export default function App() {
       'smart_india_active_customer_id_v4',
       'smart_india_active_worker_id_v4',
       'smart_india_upi_claims_v1',
+      'aws_bookings',
+      'aws_workers',
+      'aws_commission_ledger',
+      'aws_payouts',
+      'smart_india_aws_config_v1',
     ];
     keysToRemove.forEach((k) => safeStorage.removeItem(k));
     setWorkers(INITIAL_WORKERS);
@@ -3420,48 +3681,25 @@ export default function App() {
     soundManager.playSuccess();
   };
 
-  // Quick Testing Action Handlers
-  const handleTestBookWorker = () => {
-    const testWorker = workers.find((w) => w.category === 'electrician' || w.category === 'mistry') || workers[0];
-    if (!testWorker) {
-      showToast(
-        language === 'hi'
-          ? 'टेस्ट बुकिंग से पहले कम से कम 1 कारीगर ID बनाएं।'
-          : 'Please register at least 1 worker first.',
-        'warning'
-      );
-      return;
-    }
-    handleBookWorker(testWorker);
-  };
-
-  const handleTestAcceptBooking = () => {
-    handleAcceptIncomingBooking();
-  };
-
-  const handleTestRateWorker = () => {
-    if (activeBooking) {
-      handleRateWorker(
-        activeBooking.id, 
-        5, 
-        language === 'hi' 
-          ? 'शानदार व त्वरित कार्य! कारीगर बहुत कुशल और समय के पाबंद हैं।' 
-          : 'Excellent and prompt service! Very professional and punctual.'
-      );
-    }
-  };
+  const viewLoadingFallback = (
+    <div className="flex-1 min-h-0 flex items-center justify-center bg-slate-950 text-slate-400 text-xs font-semibold gap-2">
+      <div className="w-4 h-4 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" />
+      <span>{language === 'hi' ? 'लोड हो रहा है...' : 'Loading...'}</span>
+    </div>
+  );
 
   return (
     <div
       className={
-        activeView === 'dual' || activeView === 'studio'
+        activeView === 'dual'
           ? "min-h-screen bg-slate-950 flex flex-col font-['Plus_Jakarta_Sans',sans-serif] text-slate-100 antialiased selection:bg-orange-500 selection:text-slate-950"
           : "h-[100dvh] max-h-[100dvh] bg-slate-950 flex flex-col overflow-hidden font-['Plus_Jakarta_Sans',sans-serif] text-slate-100 antialiased selection:bg-orange-500 selection:text-slate-950"
       }
     >
       {/* First-Install Onboarding Screen: Choose, Create, or Recover Customer/Worker ID */}
       {showOnboarding && (
-        <OnboardingAuthScreen
+        <React.Suspense fallback={viewLoadingFallback}>
+          <OnboardingAuthScreen
           language={language}
           onToggleLanguage={(lang) => setLanguage(lang)}
           workers={workers}
@@ -3541,30 +3779,35 @@ export default function App() {
           }}
           onOpenOwnerPortal={() => setIsOnboardingOwnerPinOpen(true)}
         />
+        </React.Suspense>
       )}
 
       {/* Owner PIN Modal accessible from First-Install Onboarding */}
-      <OwnerPinModal
-        isOpen={isOnboardingOwnerPinOpen}
-        onClose={() => setIsOnboardingOwnerPinOpen(false)}
-        onSuccess={() => {
-          try {
-            safeStorage.setItem('smart_india_onboarded_v4', 'true');
-          } catch {}
-          setShowOnboarding(false);
-          setIsOwnerSession(true);
-          setActiveView('owner');
-        }}
-        language={language}
-        ownerPin={appOwnerConfig.ownerSecurityPin || '123456'}
-        onUpdatePin={(newPin) => {
-          setAppOwnerConfig((prev) => ({ ...prev, ownerSecurityPin: newPin }));
-          try {
-            safeStorage.setItem('smart_india_owner_pin', newPin);
-            SecurityShieldService.setMasterPin(newPin);
-          } catch {}
-        }}
-      />
+      {isOnboardingOwnerPinOpen && (
+        <React.Suspense fallback={null}>
+          <OwnerPinModal
+            isOpen={isOnboardingOwnerPinOpen}
+            onClose={() => setIsOnboardingOwnerPinOpen(false)}
+            onSuccess={() => {
+              try {
+                safeStorage.setItem('smart_india_onboarded_v4', 'true');
+              } catch {}
+              setShowOnboarding(false);
+              setIsOwnerSession(true);
+              setActiveView('owner');
+            }}
+            language={language}
+            ownerPin={appOwnerConfig.ownerSecurityPin || '123456'}
+            onUpdatePin={(newPin) => {
+              setAppOwnerConfig((prev) => ({ ...prev, ownerSecurityPin: newPin }));
+              try {
+                safeStorage.setItem('smart_india_owner_pin', newPin);
+                SecurityShieldService.setMasterPin(newPin);
+              } catch {}
+            }}
+          />
+        </React.Suspense>
+      )}
 
       {/* Firestore Daily Write Quota Exceeded Banner */}
       {isFirestoreQuotaExceeded && (
@@ -3690,77 +3933,54 @@ export default function App() {
         </div>
       )}
 
-      {/* Top Navbar: Only shown in Desktop Dual Simulator or Studio mode */}
-      {(activeView === 'dual' || activeView === 'studio') && (
-        <Header
-          activeView={activeView}
-          setActiveView={setActiveView}
-          language={language}
-          setLanguage={setLanguage}
-          onResetData={handleResetData}
-          workerOnline={activeWorker.isOnline}
-          walletBalance={activeWorker.walletBalance}
-          activeCustomerName={customer.name}
-          totalCommissionEarned={commissionRecords.reduce((acc, r) => acc + (r.status === 'paid' ? r.commissionAmount : 0), 0)}
-          onOpenAppOwnerEarnings={() => {
-            soundManager.playTap();
-            setIsAppOwnerEarningsOpen(true);
-          }}
-          onOpenAddCustomer={() => {
-            soundManager.playTap();
-            setIsGlobalAddCustomerOpen(true);
-          }}
-          onOpenAddWorker={() => {
-            soundManager.playTap();
-            setIsGlobalAddWorkerOpen(true);
-          }}
-          onOpenWorkerIdCard={() => {
-            soundManager.playTap();
-            setIsGlobalIdCardOpen(true);
-          }}
-          onOpenShareLink={() => {
-            soundManager.playTap();
-            setIsShareModalOpen(true);
-          }}
-          onOpenLegalTerms={() => {
-            soundManager.playTap();
-            setIsLegalTermsOpen(true);
-          }}
-          onOpenAndroidGuide={() => {
-            soundManager.playTap();
-            setIsAndroidGuideOpen(true);
-          }}
-          onOpenAwsServer={() => {
-            soundManager.playTap();
-            setIsAwsServerOpen(true);
-          }}
-          onOpenProductionServices={() => {
-            soundManager.playTap();
-            setIsProductionServicesOpen(true);
-          }}
-          onOpenSos={() => {
-            soundManager.playTap();
-            setIsSosModalOpen(true);
-          }}
-          onOpenTestGuide={() => {
-            soundManager.playTap();
-            setIsTestingGuideOpen(true);
-          }}
-          onOpenSecurityShield={() => {
-            soundManager.playTap();
-            setIsSecurityShieldOpen(true);
-          }}
-          onOpenApkDownload={() => {
-            soundManager.playTap();
-            setIsApkDownloadOpen(true);
-          }}
-          isCloudConnected={isCloudConnected}
-        />
+      {/* Top Navbar: Only shown in Desktop Dual mode */}
+      {activeView === 'dual' && (
+        <React.Suspense fallback={null}>
+          <Header
+            activeView={activeView}
+            setActiveView={setActiveView}
+            language={language}
+            setLanguage={setLanguage}
+            onResetData={handleResetData}
+            workerOnline={activeWorker.isOnline}
+            walletBalance={activeWorker.walletBalance}
+            totalCommissionEarned={commissionRecords.reduce((acc, r) => acc + (r.status === 'paid' ? r.commissionAmount : 0), 0)}
+            onOpenAppOwnerEarnings={() => {
+              soundManager.playTap();
+              setIsAppOwnerEarningsOpen(true);
+            }}
+            onOpenAddCustomer={() => {
+              soundManager.playTap();
+              setIsGlobalAddCustomerOpen(true);
+            }}
+            onOpenAddWorker={() => {
+              soundManager.playTap();
+              setIsGlobalAddWorkerOpen(true);
+            }}
+            onOpenWorkerIdCard={() => {
+              soundManager.playTap();
+              setIsGlobalIdCardOpen(true);
+            }}
+            onOpenLegalTerms={() => {
+              soundManager.playTap();
+              setIsLegalTermsOpen(true);
+            }}
+            onOpenSos={() => {
+              soundManager.playTap();
+              setIsSosModalOpen(true);
+            }}
+            onOpenSecurityShield={() => {
+              soundManager.playTap();
+              setIsSecurityShieldOpen(true);
+            }}
+          />
+        </React.Suspense>
       )}
 
       {/* Main Workspace Canvas */}
-      <main className={activeView === 'dual' || activeView === 'studio' ? "flex-1 flex flex-col p-3 md:p-6 overflow-hidden" : "flex-1 min-h-0 flex flex-col w-full overflow-hidden"}>
-        {/* VIEW 1: Dual Mobile Split Simulator */}
+      <main className={activeView === 'dual' ? "flex-1 flex flex-col p-3 md:p-6 overflow-hidden" : "flex-1 min-h-0 flex flex-col w-full overflow-hidden"}>
+        <React.Suspense fallback={viewLoadingFallback}>
+        {/* VIEW 1: Dual Mobile Split View */}
         {activeView === 'dual' && (
           <div className="max-w-7xl mx-auto w-full flex-1 grid grid-cols-1 lg:grid-cols-2 gap-6 items-center justify-center">
             {/* Customer Device (Left) */}
@@ -4084,14 +4304,7 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 4: Backend & Flutter Architecture Export Studio */}
-        {activeView === 'studio' && (
-          <div className="max-w-7xl mx-auto w-full flex-1">
-            <BackendFlutterStudio />
-          </div>
-        )}
-
-        {/* VIEW 5: Owner App (ओनर ऐप - ऐप कितने लोगों ने इस्तेमाल किया व बैंक ट्रांसफर) */}
+        {/* VIEW 4: Owner App (ओनर ऐप - ऐप कितने लोगों ने इस्तेमाल किया व बैंक ट्रांसफर) */}
         {(activeView === 'owner' || activeView === 'admin') && (
           <div
             className="w-full flex-1 min-h-0 overflow-y-auto overscroll-contain px-2 sm:px-4"
@@ -4110,7 +4323,11 @@ export default function App() {
                 language={language}
                 onUpdateConfig={(newCfg) => {
                   setAppOwnerConfig(newCfg);
-                  syncAppConfigToFirestore(newCfg);
+                  void syncAppConfigToFirestore(newCfg).then((res) => {
+                    if (!res.ok) {
+                      handleFirestoreWriteOutcome(res, 'ओनर UPI/बैंक सेटिंग सेव', 'save owner config');
+                    }
+                  });
                   if (newCfg.ownerSecurityPin && /^\d{6}$/.test(newCfg.ownerSecurityPin.trim())) {
                     try {
                       safeStorage.setItem('smart_india_owner_pin', newCfg.ownerSecurityPin.trim());
@@ -4137,6 +4354,9 @@ export default function App() {
                 upiPaymentClaims={upiPaymentClaims}
                 onApproveUpiClaim={handleApproveUpiClaim}
                 onRejectUpiClaim={handleRejectUpiClaim}
+                ownerAuthVerified={ownerAuthState.verified}
+                ownerAuthEmail={ownerAuthState.email}
+                onVerifyOwnerGoogle={handleVerifyOwnerGoogle}
                 onResetAllData={() => {
                   handleResetData();
                   setIncomingBookingAlert(null);
@@ -4146,7 +4366,11 @@ export default function App() {
                   setChatMessages([]);
                   setCallSessions([]);
                   setAnsweredCallSession(null);
-                  purgeAllFirestoreData();
+                  void purgeAllFirestoreData().then((res) => {
+                    if (res.permissionDenied) {
+                      handleFirestoreWriteOutcome(res, 'डेटा रीसेट', 'purge database');
+                    }
+                  });
                   removedWorkerIdsRef.current = [];
                   removedCustomerIdsRef.current = [];
                   const resetCfg: AppOwnerPaymentConfig = {
@@ -4158,163 +4382,144 @@ export default function App() {
                     cleanResetAtMs: Date.now(),
                   };
                   setAppOwnerConfig(resetCfg);
-                  syncAppConfigToFirestore(resetCfg);
+                  void syncAppConfigToFirestore(resetCfg);
                 }}
               />
             </div>
           </div>
         )}
+        </React.Suspense>
       </main>
 
       {/* Global App Owner Earnings & Receiving Account Settings Modal */}
-      <AppOwnerEarningsModal
-        isOpen={isAppOwnerEarningsOpen}
-        onClose={() => setIsAppOwnerEarningsOpen(false)}
-        appOwnerConfig={appOwnerConfig}
-        onUpdateConfig={(newCfg) => {
-          setAppOwnerConfig(newCfg);
-          syncAppConfigToFirestore(newCfg);
-          if (newCfg.ownerSecurityPin && /^\d{6}$/.test(newCfg.ownerSecurityPin.trim())) {
-            try {
-              safeStorage.setItem('smart_india_owner_pin', newCfg.ownerSecurityPin.trim());
-              SecurityShieldService.setMasterPin(newCfg.ownerSecurityPin.trim());
-            } catch {}
-          }
-        }}
-        commissionRecords={commissionRecords}
-        workers={workers}
-        language={language}
-        onUnlockWorker={handleUnlockWorkerByAdmin}
-        onPayoutToBank={handleOwnerWithdrawToBank}
-      />
+      {isAppOwnerEarningsOpen && (
+        <React.Suspense fallback={null}>
+          <AppOwnerEarningsModal
+            isOpen={isAppOwnerEarningsOpen}
+            onClose={() => setIsAppOwnerEarningsOpen(false)}
+            appOwnerConfig={appOwnerConfig}
+            onUpdateConfig={(newCfg) => {
+              setAppOwnerConfig(newCfg);
+              void syncAppConfigToFirestore(newCfg).then((res) => {
+                if (!res.ok) {
+                  handleFirestoreWriteOutcome(res, 'ओनर UPI/बैंक सेटिंग सेव', 'save owner config');
+                }
+              });
+              if (newCfg.ownerSecurityPin && /^\d{6}$/.test(newCfg.ownerSecurityPin.trim())) {
+                try {
+                  safeStorage.setItem('smart_india_owner_pin', newCfg.ownerSecurityPin.trim());
+                  SecurityShieldService.setMasterPin(newCfg.ownerSecurityPin.trim());
+                } catch {}
+              }
+            }}
+            commissionRecords={commissionRecords}
+            workers={workers}
+            language={language}
+            onUnlockWorker={handleUnlockWorkerByAdmin}
+            onPayoutToBank={handleOwnerWithdrawToBank}
+          />
+        </React.Suspense>
+      )}
 
       {/* Global Worker ID Card System Modal */}
-      <WorkerIdCardModal
-        isOpen={isGlobalIdCardOpen}
-        onClose={() => setIsGlobalIdCardOpen(false)}
-        worker={activeWorker}
-        language={language}
-        onSaveWorker={(updated) => {
-          handleUpdateWorker(updated);
-        }}
-      />
+      {isGlobalIdCardOpen && (
+        <React.Suspense fallback={null}>
+          <WorkerIdCardModal
+            isOpen={isGlobalIdCardOpen}
+            onClose={() => setIsGlobalIdCardOpen(false)}
+            worker={activeWorker}
+            language={language}
+            onSaveWorker={(updated) => {
+              handleUpdateWorker(updated);
+            }}
+          />
+        </React.Suspense>
+      )}
 
       {/* Global Add Customer Modal */}
-      <AddCustomerModal
-        isOpen={isGlobalAddCustomerOpen}
-        onClose={() => setIsGlobalAddCustomerOpen(false)}
-        language={language}
-        onCustomerAdded={(newCust) => {
-          handleAddCustomer(newCust);
-          setIsGlobalAddCustomerOpen(false);
-        }}
-      />
+      {isGlobalAddCustomerOpen && (
+        <React.Suspense fallback={null}>
+          <AddCustomerModal
+            isOpen={isGlobalAddCustomerOpen}
+            onClose={() => setIsGlobalAddCustomerOpen(false)}
+            language={language}
+            onCustomerAdded={(newCust) => {
+              handleAddCustomer(newCust);
+              setIsGlobalAddCustomerOpen(false);
+            }}
+          />
+        </React.Suspense>
+      )}
 
       {/* Global Add Worker Modal */}
-      <AddWorkerModal
-        isOpen={isGlobalAddWorkerOpen}
-        onClose={() => setIsGlobalAddWorkerOpen(false)}
-        language={language}
-        workers={workers}
-        onWorkerAdded={(newWorker) => {
-          handleAddWorker(newWorker);
-          setIsGlobalAddWorkerOpen(false);
-        }}
-      />
+      {isGlobalAddWorkerOpen && (
+        <React.Suspense fallback={null}>
+          <AddWorkerModal
+            isOpen={isGlobalAddWorkerOpen}
+            onClose={() => setIsGlobalAddWorkerOpen(false)}
+            language={language}
+            workers={workers}
+            onWorkerAdded={(newWorker) => {
+              handleAddWorker(newWorker);
+              setIsGlobalAddWorkerOpen(false);
+            }}
+          />
+        </React.Suspense>
+      )}
 
       {/* Global Privacy Policy & Play Store Legal Terms Modal */}
-      <LegalTermsModal
-        isOpen={isLegalTermsOpen}
-        onClose={() => setIsLegalTermsOpen(false)}
-        language={language}
-      />
-
-      {/* Global Android APK & AAB Play Store Guide Modal */}
-      <AndroidBuildGuideModal
-        isOpen={isAndroidGuideOpen}
-        onClose={() => setIsAndroidGuideOpen(false)}
-        language={language}
-      />
-
-      {/* Global AWS Cloud Server Manager Modal */}
-      <AwsServerModal
-        isOpen={isAwsServerOpen}
-        onClose={() => setIsAwsServerOpen(false)}
-        language={language}
-      />
-
-      {/* Global Production Services Stack Modal (Fast2SMS DND, APK Push, PG Webhook, Call Masking, IMPS, IndexedDB) */}
-      <ProductionServicesModal
-        isOpen={isProductionServicesOpen}
-        onClose={() => setIsProductionServicesOpen(false)}
-        language={language}
-        worker={activeWorker}
-        onRechargeWallet={() => {
-          showToast(
-            language === 'hi'
-              ? 'नकली ऑटो-क्रेडिट बंद है — कृपया असली 12-अंकों का UPI UTR डालें।'
-              : 'Fake auto-credit disabled — use real 12-digit UPI UTR verification.',
-            'info'
-          );
-        }}
-      />
+      {isLegalTermsOpen && (
+        <React.Suspense fallback={null}>
+          <LegalTermsModal
+            isOpen={isLegalTermsOpen}
+            onClose={() => setIsLegalTermsOpen(false)}
+            language={language}
+          />
+        </React.Suspense>
+      )}
 
       {/* Global 24x7 Safety & Police SOS (112) Modal */}
-      <SosEmergencyModal
-        isOpen={isSosModalOpen}
-        onClose={() => setIsSosModalOpen(false)}
-        language={language}
-        activeBooking={activeBooking}
-        userRole={activeView === 'worker' ? 'worker' : 'customer'}
-        currentLocationText={customer.address}
-      />
+      {isSosModalOpen && (
+        <React.Suspense fallback={null}>
+          <SosEmergencyModal
+            isOpen={isSosModalOpen}
+            onClose={() => setIsSosModalOpen(false)}
+            language={language}
+            activeBooking={activeBooking}
+            userRole={activeView === 'worker' ? 'worker' : 'customer'}
+            currentLocationText={customer.address}
+          />
+        </React.Suspense>
+      )}
 
       {/* Global Worker Public Reviews & Work Gallery Modal */}
-      <WorkerReviewsModal
-        isOpen={isReviewsModalOpen}
-        onClose={() => setIsReviewsModalOpen(false)}
-        worker={selectedReviewWorker || activeWorker}
-        language={language}
-      />
-
-      {/* Global Interactive Testing Guide Modal */}
-      <TestingGuideModal
-        isOpen={isTestingGuideOpen}
-        onClose={() => setIsTestingGuideOpen(false)}
-        language={language}
-        onRunAutoTest={() => {
-          handleTestBookWorker();
-          setTimeout(() => {
-            handleTestAcceptBooking();
-            setTimeout(() => {
-              handleReachLocation();
-              setTimeout(() => {
-                handleVerifyOtp();
-                setTimeout(() => {
-                  handleCompleteJob(activeBooking?.estimatedAmount || 800, 'upi');
-                  setTimeout(() => {
-                    handleTestRateWorker();
-                  }, 1500);
-                }, 2000);
-              }, 1800);
-            }, 1800);
-          }, 1800);
-        }}
-        onResetData={handleResetData}
-      />
+      {isReviewsModalOpen && (
+        <React.Suspense fallback={null}>
+          <WorkerReviewsModal
+            isOpen={isReviewsModalOpen}
+            onClose={() => setIsReviewsModalOpen(false)}
+            worker={selectedReviewWorker || activeWorker}
+            language={language}
+          />
+        </React.Suspense>
+      )}
 
       {/* Global Cyber Security Shield Center Modal */}
-      <SecurityShieldModal
-        isOpen={isSecurityShieldOpen}
-        onClose={() => setIsSecurityShieldOpen(false)}
-        language={language}
-        onPinUpdated={(newPin) => {
-          setAppOwnerConfig((prev) => ({ ...prev, ownerSecurityPin: newPin }));
-          try {
-            safeStorage.setItem('smart_india_owner_pin', newPin);
-          } catch {}
-        }}
-      />
+      {isSecurityShieldOpen && (
+        <React.Suspense fallback={null}>
+          <SecurityShieldModal
+            isOpen={isSecurityShieldOpen}
+            onClose={() => setIsSecurityShieldOpen(false)}
+            language={language}
+            onPinUpdated={(newPin) => {
+              setAppOwnerConfig((prev) => ({ ...prev, ownerSecurityPin: newPin }));
+              try {
+                safeStorage.setItem('smart_india_owner_pin', newPin);
+              } catch {}
+            }}
+          />
+        </React.Suspense>
+      )}
     </div>
   );
 }
