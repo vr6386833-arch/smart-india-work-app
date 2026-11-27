@@ -31,7 +31,7 @@ import {
   signOut,
 } from 'firebase/auth';
 import firebaseConfigJson from '../../firebase-applet-config.json';
-import { Booking, WorkerProfile, CustomerProfile, CommissionRecord, OwnerPayoutRecord, JobPost, ChatMessage, AppOwnerPaymentConfig, UpiPaymentRequest, LiveGeoLocation, CallSession, CallSessionStatus } from '../types';
+import { Booking, WorkerProfile, CustomerProfile, CommissionRecord, OwnerPayoutRecord, JobPost, ChatMessage, AppOwnerPaymentConfig, UpiPaymentRequest, LiveGeoLocation, CallSession, CallSessionStatus, SupportTicket } from '../types';
 
 // Baseline timestamp is 0 by default so live records on any real device clock always sync; legacy demo IDs are filtered explicitly
 export const CLEAN_LAUNCH_CUTOFF_MS = 0;
@@ -368,12 +368,12 @@ export async function signInOwnerWithGoogle(): Promise<{ ok: boolean; email?: st
 export async function testFirestoreConnection(): Promise<boolean> {
   if (!db) return false;
   try {
-    // Attempt a light ping
+    // Attempt a light server ping
     await getDocFromServer(doc(db, '_connection_test', 'status'));
     return true;
   } catch (error) {
-    console.log('Firestore connection active or testing:', error);
-    return true;
+    console.warn('Firestore server connection unreachable:', error);
+    return false;
   }
 }
 
@@ -1146,6 +1146,7 @@ export function listenToBookings(
             'worker_en_route',
             'arrived',
             'arrived_at_door',
+            'otp_verified',
             'in_progress',
           ]),
           limit(maxDocs)
@@ -1479,6 +1480,56 @@ export async function checkUtrExistsInFirestore(cleanUtr: string): Promise<boole
   }
 }
 
+// Sync & listen to Customer Support Tickets / Complaints (Customer -> Owner real-time desk)
+export async function syncSupportTicketToFirestore(ticket: SupportTicket): Promise<FirestoreWriteResult> {
+  if (!db) return { ok: false, error: 'Firestore unavailable' };
+  try {
+    const tckRef = doc(db, 'support_tickets', ticket.id);
+    await setDoc(tckRef, {
+      ...stripUndefined(ticket),
+      updatedAtMs: ticket.updatedAtMs || Date.now(),
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+    return { ok: true };
+  } catch (err) {
+    logFirestoreError(err, OperationType.WRITE, `support_tickets/${ticket.id}`);
+    return {
+      ok: false,
+      quotaExceeded: isFirestoreQuotaError(err),
+      permissionDenied: isFirestorePermissionError(err),
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export function listenToSupportTickets(
+  callback: (tickets: SupportTicket[]) => void,
+  options?: { userId?: string; recentLimit?: number }
+): () => void {
+  if (!db) return () => {};
+  try {
+    const colRef = collection(db, 'support_tickets');
+    const maxDocs = options?.recentLimit ?? 80;
+    const targetQuery = options?.userId
+      ? query(colRef, where('userId', '==', options.userId), limit(maxDocs))
+      : query(colRef, limit(maxDocs));
+    const unsub = onSnapshot(targetQuery, (snapshot) => {
+      const list: SupportTicket[] = [];
+      snapshot.forEach((docSnap) => {
+        list.push(docSnap.data() as SupportTicket);
+      });
+      list.sort((a, b) => (b.updatedAtMs || b.createdAtMs || 0) - (a.updatedAtMs || a.createdAtMs || 0));
+      callback(list);
+    }, (err) => {
+      console.warn('Firestore support_tickets notice:', err);
+    });
+    return unsub;
+  } catch (e) {
+    console.warn('Unable to subscribe to support_tickets:', e);
+    return () => {};
+  }
+}
+
 // Purge all test/demo documents from Firestore collections while preserving app_config/owner_settings
 export async function purgeAllFirestoreData(): Promise<FirestoreWriteResult> {
   if (!db) return { ok: false, error: 'Firestore unavailable' };
@@ -1492,6 +1543,7 @@ export async function purgeAllFirestoreData(): Promise<FirestoreWriteResult> {
     'chat_messages',
     'call_sessions',
     'upi_payment_claims',
+    'support_tickets',
   ];
   try {
     await Promise.all(

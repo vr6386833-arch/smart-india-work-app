@@ -77,6 +77,7 @@ service cloud.firestore {
         && isOptionalStringBounded(data, 'serviceCategory', 80)
         && isOptionalStringBounded(data, 'serviceSubCategory', 120)
         && isOptionalStringBounded(data, 'arrivalOtp', 12)
+        && isOptionalStringBounded(data, 'cancelledBy', 20)
         && isOptionalStringBounded(data, 'customerReview', 600)
         && isOptionalStringBounded(data, 'commissionTxnId', 120)
         && isOptionalStringBounded(data, 'meetingFeeTxnId', 120)
@@ -234,6 +235,21 @@ service cloud.firestore {
         && (!('calleeCandidates' in data) || (data.calleeCandidates is list && data.calleeCandidates.size() <= 100));
     }
 
+    function isValidSupportTicket(data, ticketId) {
+      return data.keys().hasAll(['id', 'userId', 'userName', 'userRole', 'subject', 'category', 'status'])
+        && data.id == ticketId
+        && isNonEmptyBounded(data.userId, 128)
+        && isNonEmptyBounded(data.userName, 120)
+        && isOptionalStringBounded(data, 'userPhone', 25)
+        && data.userRole in ['customer', 'worker', 'admin']
+        && isNonEmptyBounded(data.subject, 600)
+        && data.category in ['wallet_payment', 'worker_conduct', 'job_quality', 'technical_app']
+        && data.status in ['open', 'in_investigation', 'resolved']
+        && (!('priority' in data) || data.priority in ['low', 'medium', 'high'])
+        && isOptionalStringBounded(data, 'createdAt', 64)
+        && (!('messages' in data) || (data.messages is list && data.messages.size() <= 50));
+    }
+
     // 3. Bookings Collection (Terminal-state & immutable-customer locked, Owner-only delete)
     match /bookings/{bookingId} {
       allow list: if true;
@@ -248,6 +264,14 @@ service cloud.firestore {
         && (
           isVerifiedOwner() || (
             existing().status != 'cancelled'
+            && !(
+              incoming().status == 'cancelled'
+              && existing().status in [
+                'accepted', 'worker_en_route', 'arrived',
+                'arrived_at_door', 'otp_verified', 'in_progress'
+              ]
+              && (!('cancelledBy' in incoming()) || incoming().cancelledBy != 'customer')
+            )
             && (
               existing().status != 'completed'
               || (
@@ -435,7 +459,28 @@ service cloud.firestore {
       allow delete: if isValidId(sessionId) && isVerifiedOwner();
     }
 
-    // 13. Connection health ping
+    // 13. Customer & Worker Support Tickets (Routed straight to Owner; status transitions Owner-locked)
+    match /support_tickets/{ticketId} {
+      allow list: if true;
+      allow get: if isValidId(ticketId);
+      allow create: if isValidId(ticketId)
+        && isValidSupportTicket(incoming(), ticketId)
+        && incoming().status == 'open';
+      allow update: if isValidId(ticketId)
+        && isValidSupportTicket(incoming(), ticketId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && (
+          isVerifiedOwner()
+          || (
+            incoming().status == existing().status
+            && incoming().diff(existing()).affectedKeys().hasOnly(['messages', 'updatedAt', 'updatedAtMs'])
+          )
+        );
+      allow delete: if isValidId(ticketId) && isVerifiedOwner();
+    }
+
+    // 14. Connection health ping
     match /_connection_test/{docId} {
       allow get: if isValidId(docId);
       allow list, write: if false;

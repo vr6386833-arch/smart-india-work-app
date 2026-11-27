@@ -33,6 +33,7 @@
           ]
         },
         "arrivalOtp": { "type": "string", "maxLength": 12 },
+        "cancelledBy": { "type": "string", "enum": ["customer", "worker", "owner"] },
         "isOtpVerified": { "type": "boolean" },
         "estimatedAmount": { "type": "number" },
         "finalAmount": { "type": "number" },
@@ -203,6 +204,27 @@
         "removedCustomerIds": { "type": "array" }
       },
       "required": ["upiId"]
+    },
+    "SupportTicket": {
+      "title": "SupportTicket",
+      "description": "Customer complaint and support request routed directly to the App Owner",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128 },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "userName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "userPhone": { "type": "string", "maxLength": 25 },
+        "userRole": { "type": "string", "enum": ["customer", "worker", "admin"] },
+        "subject": { "type": "string", "minLength": 1, "maxLength": 600 },
+        "category": { "type": "string", "enum": ["wallet_payment", "worker_conduct", "job_quality", "technical_app"] },
+        "status": { "type": "string", "enum": ["open", "in_investigation", "resolved"] },
+        "priority": { "type": "string", "enum": ["low", "medium", "high"] },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "createdAtMs": { "type": "number" },
+        "updatedAtMs": { "type": "number" },
+        "messages": { "type": "array" }
+      },
+      "required": ["id", "userId", "userName", "userRole", "subject", "category", "status"]
     }
   },
   "firestore": {
@@ -245,6 +267,10 @@
     "/app_config/{configId}": {
       "schema": { "$ref": "#/entities/AppOwnerConfig" },
       "description": "Singleton owner payment config document (Owner-only writes)"
+    },
+    "/support_tickets/{ticketId}": {
+      "schema": { "$ref": "#/entities/SupportTicket" },
+      "description": "Collection of customer support complaints routed directly to the App Owner"
     }
   }
 }

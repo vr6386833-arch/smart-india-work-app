@@ -255,12 +255,15 @@ export interface SupportTicket {
   id: string;
   userId: string;
   userName: string;
+  userPhone?: string;
   userRole: UserRole;
   subject: string;
   category: 'wallet_payment' | 'worker_conduct' | 'job_quality' | 'technical_app';
   status: 'open' | 'in_investigation' | 'resolved';
   priority: 'low' | 'medium' | 'high';
   createdAt: string;
+  createdAtMs?: number;
+  updatedAtMs?: number;
   messages: {
     sender: 'user' | 'support';
     text: string;

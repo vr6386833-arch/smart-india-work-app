@@ -80,6 +80,8 @@ import {
   updateCallSessionStatus,
   listenToAppConfig,
   listenToUpiPaymentClaims,
+  syncSupportTicketToFirestore,
+  listenToSupportTickets,
   purgeAllFirestoreData,
   listenToOwnerAuthState,
   signInOwnerWithGoogle,
@@ -531,7 +533,16 @@ export default function App() {
   });
 
   const [walletTransactions, setWalletTransactions] = useState<WalletTransaction[]>(INITIAL_WALLET_TRANSACTIONS);
-  const [supportTickets, setSupportTickets] = useState<SupportTicket[]>(INITIAL_TICKETS);
+  const [supportTickets, setSupportTickets] = useState<SupportTicket[]>(() => {
+    try {
+      const saved = safeStorage.getItem('smart_india_support_tickets_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    return INITIAL_TICKETS;
+  });
   
   // Real-time Worker Notifications: Starts empty for new live users
   const [workerNotifications, setWorkerNotifications] = useState<WorkerNotification[]>(() => {
@@ -550,6 +561,7 @@ export default function App() {
   });
   const [incomingBookingAlert, setIncomingBookingAlert] = useState<Booking | null>(null);
   const [broadcastBookings, setBroadcastBookings] = useState<Booking[]>([]);
+  const [ownerBookings, setOwnerBookings] = useState<Booking[]>([]);
   const [dismissedBroadcastIds, setDismissedBroadcastIds] = useState<string[]>([]);
   const [dismissedCompletedIds, setDismissedCompletedIds] = useState<string[]>(() => {
     try {
@@ -847,10 +859,7 @@ export default function App() {
     const isWorkerScope = activeView === 'worker';
     const isOwnerOnly = activeView === 'owner' || activeView === 'admin';
 
-    // Pure Owner dashboard does not display live bookings feed
-    if (isOwnerOnly) return;
-
-    const queryOptions = isFullDual
+    const queryOptions = isFullDual || isOwnerOnly
       ? { recentLimit: 120 }
       : isWorkerScope
       ? { activeOnly: true, recentLimit: 80 }
@@ -874,6 +883,13 @@ export default function App() {
           (a.updatedAtMs || a.createdAtMs || extractRecordTimeMs(a.id) || 0)
       );
       allCloudBookingsRef.current = sorted;
+
+      if (isOwnerOnly || isFullDual) {
+        setOwnerBookings(sorted);
+      }
+      if (isOwnerOnly) {
+        return;
+      }
 
       // Immediately purge notifications belonging to any cancelled booking so Worker never sees stale alerts
       if (cancelledIds.size > 0) {
@@ -1228,10 +1244,30 @@ export default function App() {
       );
     }
 
+    if (isFullManagerView) {
+      unsubs.push(
+        listenToSupportTickets((cloudTickets) => {
+          setSupportTickets(cloudTickets || []);
+          try {
+            safeStorage.setItem('smart_india_support_tickets_v1', JSON.stringify(cloudTickets || []));
+          } catch {}
+        }, { recentLimit: 100 })
+      );
+    } else if (activeView === 'customer' && activeCustomerId) {
+      unsubs.push(
+        listenToSupportTickets((cloudTickets) => {
+          setSupportTickets(cloudTickets || []);
+          try {
+            safeStorage.setItem('smart_india_support_tickets_v1', JSON.stringify(cloudTickets || []));
+          } catch {}
+        }, { userId: activeCustomerId, recentLimit: 30 })
+      );
+    }
+
     return () => {
       unsubs.forEach((u) => u());
     };
-  }, [effectiveCutoffMs, activeView, isOwnerSession, activeWorkerId]);
+  }, [effectiveCutoffMs, activeView, isOwnerSession, activeWorkerId, activeCustomerId]);
 
   // Surface pending Open Broadcast leads immediately whenever worker profile/view becomes active
   React.useEffect(() => {
@@ -1624,6 +1660,17 @@ export default function App() {
 
   // 2. Direct Book a Worker from Directory (Only allowed for real, online, active workers)
   const handleBookWorker = (worker: WorkerProfile): boolean => {
+    if (!SecurityShieldService.checkRateLimit(`booking_${customer.id}`, 6, 60000)) {
+      soundManager.playWarning();
+      showToast(
+        language === 'hi'
+          ? '⚠️ स्पैम सुरक्षा: कृपया 1 मिनट में बार-बार बुकिंग न करें, थोड़ी देर बाद प्रयास करें।'
+          : '⚠️ Rate limit: Please wait a moment before creating another booking.',
+        'warning'
+      );
+      return false;
+    }
+
     if (customer.isSuspendedByOwner) {
       soundManager.playWarning();
       showToast(
@@ -1778,6 +1825,17 @@ export default function App() {
 
   // 2c. Instant Open-Broadcast Booking: blocked if customer on Hold or NO real verified active Worker ID exists
   const handleBookCategory = (categoryId: string): boolean => {
+    if (!SecurityShieldService.checkRateLimit(`booking_${customer.id}`, 6, 60000)) {
+      soundManager.playWarning();
+      showToast(
+        language === 'hi'
+          ? '⚠️ स्पैम सुरक्षा: कृपया 1 मिनट में बार-बार बुकिंग न करें, थोड़ी देर बाद प्रयास करें।'
+          : '⚠️ Rate limit: Please wait a moment before creating another booking.',
+        'warning'
+      );
+      return false;
+    }
+
     if (customer.isSuspendedByOwner) {
       soundManager.playWarning();
       showToast(
@@ -2029,12 +2087,30 @@ export default function App() {
     );
   };
 
-  // 2c. Worker Declines Incoming Booking (Never cancel Open Broadcast for other workers!)
+  // 2c. Worker Declines Unaccepted Booking (Blocked once accepted — ONLY Customer can cancel after accept!)
   const handleDeclineIncomingBooking = (bookingId?: string) => {
     const target =
       (bookingId ? broadcastBookings.find((b) => b.id === bookingId) : null) ||
       (incomingBookingAlert && (!bookingId || incomingBookingAlert.id === bookingId) ? incomingBookingAlert : null) ||
       (activeBooking && (!bookingId || activeBooking.id === bookingId) ? activeBooking : null);
+
+    if (
+      target &&
+      (target.isLocationShared ||
+        target.acceptedAt ||
+        target.isOtpVerified ||
+        (target.status !== 'requested' && target.status !== 'searching'))
+    ) {
+      soundManager.playWarning();
+      setIncomingBookingAlert(null);
+      showToast(
+        language === 'hi'
+          ? '🔒 काम स्वीकार करने के बाद कारीगर इसे कैंसिल नहीं कर सकता — केवल ग्राहक ही काम कैंसिल कर सकते हैं।'
+          : '🔒 Once accepted, a worker cannot cancel this job — only the customer can cancel it.',
+        'warning'
+      );
+      return;
+    }
 
     if (target && (target.workerId === 'OPEN_BROADCAST' || target.status === 'searching')) {
       setDismissedBroadcastIds((prev) => (prev.includes(target.id) ? prev : [...prev, target.id]));
@@ -2449,7 +2525,18 @@ export default function App() {
     txnId?: string
   ) => {
     const targetWorker = workers.find((w) => w.id === workerId) || activeWorker;
-    const generatedTxn = txnId || `UPI/DUE_CLR/${Date.now().toString().slice(-6)}`;
+    if (method === 'wallet_deduct' && (targetWorker.walletBalance || 0) < amount) {
+      soundManager.playWarning();
+      showToast(
+        language === 'hi'
+          ? `वॉलेट में कम से कम ₹${amount} होना ज़रूरी है। कृपया UPI से जमा करें।`
+          : `Insufficient wallet balance (need ₹${amount}).`,
+        'warning'
+      );
+      return;
+    }
+
+    const generatedTxn = txnId || (method === 'wallet_deduct' ? `WALLET/DUE_CLR/${Date.now().toString().slice(-6)}` : `UPI/DUE_CLR/${Date.now().toString().slice(-6)}`);
 
     // Create a commission record for App Owner so funds are accounted in App Owner's balance
     const clearanceRecord: CommissionRecord = {
@@ -2472,18 +2559,25 @@ export default function App() {
     setCommissionRecords((prev) => [clearanceRecord, ...prev]);
     syncCommissionToFirestore(clearanceRecord);
 
-    // Unlock worker from lockout
+    // Unlock worker from lockout (and deduct walletBalance when paying via wallet)
+    const nextBal =
+      method === 'wallet_deduct'
+        ? Math.max(0, (targetWorker.walletBalance || 0) - amount)
+        : targetWorker.walletBalance;
+
     setWorkers((prev) =>
       prev.map((w) => {
         if (w.id === workerId) {
           const updated: WorkerProfile = {
             ...w,
+            walletBalance: method === 'wallet_deduct' ? Math.max(0, (w.walletBalance || 0) - amount) : w.walletBalance,
             isBlockedDueToUnpaidFee: false,
             unpaidFeeAmount: 0,
             unpaidFeeReason: undefined,
             unpaidCustomerName: undefined,
             unpaidBookingId: undefined,
             pendingCommissionDues: Math.max(0, (w.pendingCommissionDues || 0) - amount),
+            totalCommissionPaid: (w.totalCommissionPaid || 0) + amount,
           };
           syncWorkerToFirestore(updated);
           return updated;
@@ -2491,6 +2585,21 @@ export default function App() {
         return w;
       })
     );
+
+    if (method === 'wallet_deduct') {
+      const newTx: WalletTransaction = {
+        id: `tx_${Date.now()}`,
+        workerId: targetWorker.id,
+        amount,
+        type: 'debit',
+        reason: 'commission_fee',
+        description: `Unpaid Fee Clearance (₹${amount})`,
+        date: 'Just now',
+        referenceId: generatedTxn,
+        balanceAfter: nextBal,
+      };
+      setWalletTransactions((prev) => [newTx, ...prev]);
+    }
 
     soundManager.playSuccessCoin();
   };
@@ -3299,6 +3408,17 @@ export default function App() {
       return;
     }
 
+    if (!options?.isCallEvent && !SecurityShieldService.checkRateLimit(`chat_${targetBookingId}`, 25, 60000)) {
+      soundManager.playWarning();
+      showToast(
+        language === 'hi'
+          ? '⚠️ बहुत तेज़ चैट संदेश भेजे जा रहे हैं। कृपया कुछ सेकंड रुकें।'
+          : '⚠️ Sending messages too fast. Please wait a few seconds.',
+        'warning'
+      );
+      return;
+    }
+
     const now = new Date();
     const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const senderRole: 'customer' | 'worker' =
@@ -3329,24 +3449,112 @@ export default function App() {
     }
   };
 
-  // 14. Support Ticket
-  const handleCreateSupportTicket = (subject: string, category: 'wallet_payment' | 'worker_conduct' | 'job_quality' | 'technical_app') => {
+  // 14. Support Ticket (Routed directly to Firestore & App Owner)
+  const handleCreateSupportTicket = (
+    subject: string,
+    category: 'wallet_payment' | 'worker_conduct' | 'job_quality' | 'technical_app'
+  ) => {
+    if (!SecurityShieldService.checkRateLimit(`support_${customer.id}`, 5, 60000)) {
+      soundManager.playWarning();
+      showToast(
+        language === 'hi'
+          ? '⚠️ स्पैम सुरक्षा: कृपया लगातार कई शिकायतें न भेजें, कुछ समय बाद प्रयास करें।'
+          : '⚠️ Rate limit: Please wait a moment before submitting another ticket.',
+        'warning'
+      );
+      return;
+    }
+    const cleanSubject = SecurityShieldService.sanitizeInput(subject).slice(0, 600);
+    if (!cleanSubject) return;
+    const nowMs = Date.now();
+    const timeLabel = new Date(nowMs).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+    const dateLabel = new Date(nowMs).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
     const newTicket: SupportTicket = {
-      id: `TCK_${Math.floor(100 + Math.random() * 900)}`,
+      id: `TCK_${nowMs.toString().slice(-6)}_${Math.floor(10 + Math.random() * 89)}`,
       userId: customer.id,
-      userName: customer.name,
+      userName: customer.name || 'Customer',
+      userPhone: customer.phone || '',
       userRole: 'customer',
-      subject,
+      subject: cleanSubject,
       category,
       status: 'open',
-      priority: 'medium',
-      createdAt: 'Just now',
+      priority: category === 'worker_conduct' || category === 'wallet_payment' ? 'high' : 'medium',
+      createdAt: dateLabel,
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
       messages: [
-        { sender: 'user', text: subject, time: 'Just now' },
-        { sender: 'support', text: 'Namaste! Your support ticket has been logged.', time: 'Just now' }
-      ]
+        { sender: 'user', text: cleanSubject, time: timeLabel },
+        {
+          sender: 'support',
+          text:
+            language === 'hi'
+              ? 'नमस्ते! आपकी शिकायत सीधे ऐप ओनर (Owner) के पास पहुँच गई है।'
+              : 'Namaste! Your complaint has been sent directly to the App Owner.',
+          time: timeLabel,
+        },
+      ],
     };
-    setSupportTickets((prev) => [newTicket, ...prev]);
+    setSupportTickets((prev) => {
+      const next = [newTicket, ...prev];
+      try {
+        safeStorage.setItem('smart_india_support_tickets_v1', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    soundManager.playSuccess();
+    void syncSupportTicketToFirestore(newTicket).then((res) => {
+      if (!res.ok) {
+        handleFirestoreWriteOutcome(res, 'शिकायत भेजना', 'submit support ticket');
+      } else {
+        showToast(
+          language === 'hi'
+            ? '👑 आपकी शिकायत सीधे ऐप ओनर (Owner) को भेज दी गई है!'
+            : '👑 Your complaint has been sent straight to the App Owner!',
+          'success'
+        );
+      }
+    });
+  };
+
+  // 14b. Owner replies or updates status of a customer support ticket
+  const handleUpdateSupportTicket = (
+    ticketId: string,
+    replyText: string,
+    nextStatus?: SupportTicket['status']
+  ) => {
+    const existing = supportTickets.find((t) => t.id === ticketId);
+    if (!existing) return;
+    const nowMs = Date.now();
+    const timeLabel = new Date(nowMs).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+    const cleanReply = replyText.trim();
+    const updated: SupportTicket = {
+      ...existing,
+      status: nextStatus || existing.status,
+      updatedAtMs: nowMs,
+      messages: cleanReply
+        ? [...existing.messages, { sender: 'support', text: cleanReply, time: timeLabel }]
+        : existing.messages,
+    };
+    setSupportTickets((prev) => {
+      const next = prev.map((t) => (t.id === ticketId ? updated : t));
+      try {
+        safeStorage.setItem('smart_india_support_tickets_v1', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    void syncSupportTicketToFirestore(updated).then((res) => {
+      if (!res.ok) {
+        handleFirestoreWriteOutcome(res, 'शिकायत अपडेट', 'update support ticket');
+      } else {
+        soundManager.playSuccess();
+        showToast(
+          language === 'hi'
+            ? '✓ ग्राहक की शिकायत पर जवाब / स्टेटस अपडेट हो गया।'
+            : '✓ Support ticket updated & synced.',
+          'success'
+        );
+      }
+    });
   };
 
   // 15. Update or Register Worker ID Card details
@@ -3559,6 +3767,7 @@ export default function App() {
       'smart_india_active_customer_id_v4',
       'smart_india_active_worker_id_v4',
       'smart_india_upi_claims_v1',
+      'smart_india_support_tickets_v1',
       'aws_bookings',
       'aws_workers',
       'aws_commission_ledger',
@@ -4320,6 +4529,9 @@ export default function App() {
                 workers={workers}
                 customers={customers}
                 jobs={jobs}
+                bookings={ownerBookings}
+                supportTickets={supportTickets}
+                onUpdateSupportTicket={handleUpdateSupportTicket}
                 language={language}
                 onUpdateConfig={(newCfg) => {
                   setAppOwnerConfig(newCfg);
@@ -4360,6 +4572,7 @@ export default function App() {
                 onResetAllData={() => {
                   handleResetData();
                   setIncomingBookingAlert(null);
+                  setOwnerBookings([]);
                   setCommissionRecords([]);
                   setOwnerPayouts([]);
                   setUpiPaymentClaims([]);
@@ -4511,12 +4724,6 @@ export default function App() {
             isOpen={isSecurityShieldOpen}
             onClose={() => setIsSecurityShieldOpen(false)}
             language={language}
-            onPinUpdated={(newPin) => {
-              setAppOwnerConfig((prev) => ({ ...prev, ownerSecurityPin: newPin }));
-              try {
-                safeStorage.setItem('smart_india_owner_pin', newPin);
-              } catch {}
-            }}
           />
         </React.Suspense>
       )}

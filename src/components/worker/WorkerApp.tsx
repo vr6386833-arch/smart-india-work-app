@@ -1484,18 +1484,12 @@ export const WorkerApp: React.FC<WorkerAppProps> = ({
                   <p className="text-[11px] text-slate-400">{myActiveBooking.serviceSubCategory}</p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  {!isOtpVerified && onDeclineBooking && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        soundManager.playWarning();
-                        onDeclineBooking(myActiveBooking.id);
-                        setActiveTab('radar');
-                      }}
-                      className="px-2.5 py-1.5 rounded-xl bg-rose-950/70 hover:bg-rose-900/70 border border-rose-500/40 text-rose-300 font-bold text-[10px] transition-colors active:scale-95"
-                    >
-                      {language === 'hi' ? '✕ रद्द / हटाएं' : '✕ Clear'}
-                    </button>
+                  {(myActiveBooking.isLocationShared ||
+                    (myActiveBooking.status !== 'requested' && myActiveBooking.status !== 'searching')) && (
+                    <span className="px-2.5 py-1 rounded-xl bg-amber-500/15 border border-amber-500/35 text-amber-300 font-bold text-[10px] flex items-center gap-1">
+                      <Lock className="w-3 h-3" />
+                      <span>{language === 'hi' ? 'स्वीकार • केवल ग्राहक रद्द कर सकते हैं' : 'Locked • Customer-Only Cancel'}</span>
+                    </span>
                   )}
                   <div className="text-right">
                     <span className="text-sm font-black text-emerald-400 block">₹{myActiveBooking.estimatedAmount}</span>

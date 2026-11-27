@@ -51,13 +51,15 @@ import { QRCodeSVG } from 'qrcode.react';
 import confetti from 'canvas-confetti';
 import {
   AppOwnerPaymentConfig,
+  Booking,
   CommissionRecord,
   Language,
   WorkerProfile,
   CustomerProfile,
   JobPost,
   OwnerPayoutRecord,
-  UpiPaymentRequest
+  UpiPaymentRequest,
+  SupportTicket
 } from '../../types';
 import { soundManager } from '../../services/soundEffects';
 import { safeStorage } from '../../services/safeStorage';
@@ -71,6 +73,7 @@ interface OwnerAppProps {
   workers: WorkerProfile[];
   customers: CustomerProfile[];
   jobs: JobPost[];
+  bookings?: Booking[];
   language: Language;
   onUpdateConfig: (updatedConfig: AppOwnerPaymentConfig) => void;
   onPayoutToBank: (
@@ -96,6 +99,8 @@ interface OwnerAppProps {
   ownerAuthVerified?: boolean;
   ownerAuthEmail?: string | null;
   onVerifyOwnerGoogle?: () => Promise<void>;
+  supportTickets?: SupportTicket[];
+  onUpdateSupportTicket?: (ticketId: string, replyText: string, nextStatus?: SupportTicket['status']) => void;
 }
 
 export const OwnerApp: React.FC<OwnerAppProps> = ({
@@ -104,6 +109,7 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
   workers,
   customers,
   jobs,
+  bookings = [],
   language,
   onUpdateConfig,
   onPayoutToBank,
@@ -122,6 +128,8 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
   ownerAuthVerified = false,
   ownerAuthEmail = null,
   onVerifyOwnerGoogle,
+  supportTickets = [],
+  onUpdateSupportTicket,
 }) => {
   // View mode toggle: 'dashboard' (wide full-screen) vs 'phone' (mobile app simulation)
   const [viewLayout, setViewLayout] = useState<'dashboard' | 'phone'>('dashboard');
@@ -129,15 +137,21 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
   // Active Tab:
   // 'overview' = डैशबोर्ड व मुख्य मेट्रिक्स
   // 'users' = ऐप कितने लोगों ने इस्तेमाल किया + ओनर सदस्य नियंत्रण (रखें / हटाएं)
+  // 'bookings' = हर बुकिंग और किसने कैंसिल किया (ग्राहक / कारीगर) की पूरी रिपोर्ट व डेटा फ़ाइल
+  // 'support' = ग्राहकों की सीधे ओनर तक आई शिकायतें व समस्याएं
   // 'bank_transfer' = वर्कर द्वारा दिए गए पैसे बैंक खाते में ट्रांसफर
   // 'worker_fees' = वर्कर फीस लेजर (₹10 per job details)
   // 'settings' = बैंक खाता व ऐप सेटिंग्स
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'bank_transfer' | 'worker_fees' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'bookings' | 'support' | 'bank_transfer' | 'worker_fees' | 'settings'>('overview');
 
   // User tab filter: 'all' | 'customers' | 'workers' | 'logs'
   const [userRoleFilter, setUserRoleFilter] = useState<'all' | 'customers' | 'workers' | 'logs'>('all');
   const [memberStatusFilter, setMemberStatusFilter] = useState<'all' | 'kept' | 'held'>('all');
   const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [bookingStatusFilter, setBookingStatusFilter] = useState<'all' | 'taken_pending' | 'active' | 'completed' | 'cancelled' | 'post_unlock_cancel'>('all');
+  const [bookingSearchQuery, setBookingSearchQuery] = useState('');
+  const [supportStatusFilter, setSupportStatusFilter] = useState<'all' | 'open' | 'in_investigation' | 'resolved'>('all');
+  const [supportReplyDrafts, setSupportReplyDrafts] = useState<Record<string, string>>({});
   const [confirmRemoveTarget, setConfirmRemoveTarget] = useState<{
     role: 'worker' | 'customer';
     id: string;
@@ -220,6 +234,118 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
   const totalKeptCount = Math.max(0, totalAppUsersCount - totalHeldCount);
   const activeWorkers = workers.filter((w) => !w.isBlockedDueToUnpaidFee && !w.isSuspendedByOwner);
   const onlineWorkers = workers.filter((w) => w.isOnline && !w.isSuspendedByOwner);
+
+  const sortedBookings = [...bookings].sort(
+    (a, b) =>
+      (b.cancelledAtMs || b.updatedAtMs || b.createdAtMs || 0) -
+      (a.cancelledAtMs || a.updatedAtMs || a.createdAtMs || 0)
+  );
+  const cancelledBookings = sortedBookings.filter((b) => b.status === 'cancelled');
+  const cancelledByWorkerCount = cancelledBookings.filter((b) => b.cancelledBy === 'worker').length;
+  const cancelledByCustomerCount = cancelledBookings.filter((b) => b.cancelledBy !== 'worker' && b.cancelledBy !== 'owner').length;
+  const completedBookingsCount = sortedBookings.filter((b) => b.status === 'completed').length;
+  const activePendingBookings = sortedBookings.filter((b) => b.status !== 'completed' && b.status !== 'cancelled');
+  const takenNotDoneBookings = activePendingBookings.filter(
+    (b) => Boolean(b.workerId && b.workerId !== 'OPEN_BROADCAST')
+  );
+  const unclaimedPendingBookings = activePendingBookings.filter(
+    (b) => !b.workerId || b.workerId === 'OPEN_BROADCAST'
+  );
+  const postUnlockCancelledBookings = cancelledBookings.filter(
+    (b) => Boolean(b.isLocationShared || b.acceptedAt || (b.workerId && b.workerId !== 'OPEN_BROADCAST'))
+  );
+
+  const filteredBookings = sortedBookings.filter((b) => {
+    if (bookingStatusFilter === 'cancelled' && b.status !== 'cancelled') return false;
+    if (
+      bookingStatusFilter === 'post_unlock_cancel' &&
+      !(b.status === 'cancelled' && (b.isLocationShared || b.acceptedAt || (b.workerId && b.workerId !== 'OPEN_BROADCAST')))
+    ) {
+      return false;
+    }
+    if (bookingStatusFilter === 'completed' && b.status !== 'completed') return false;
+    if (bookingStatusFilter === 'active' && (b.status === 'cancelled' || b.status === 'completed')) return false;
+    if (
+      bookingStatusFilter === 'taken_pending' &&
+      (b.status === 'cancelled' || b.status === 'completed' || !b.workerId || b.workerId === 'OPEN_BROADCAST')
+    ) {
+      return false;
+    }
+    const q = bookingSearchQuery.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      b.id.toLowerCase().includes(q) ||
+      (b.customerName || '').toLowerCase().includes(q) ||
+      (b.customerPhone || '').includes(q) ||
+      (b.workerName || '').toLowerCase().includes(q) ||
+      (b.workerPhone || '').includes(q) ||
+      (b.serviceCategory || '').toLowerCase().includes(q) ||
+      (b.customerLocality || '').toLowerCase().includes(q)
+    );
+  });
+
+  const handleDownloadBookingsCsv = () => {
+    const csvEscape = (raw: string | number | undefined | null) => {
+      let s = String(raw ?? '');
+      if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+      return `"${s.replace(/"/g, '""')}"`;
+    };
+    const headers = [
+      'Booking ID',
+      'Date/Time',
+      'Category',
+      'Customer Name',
+      'Customer Phone',
+      'Customer Location',
+      'Worker Name',
+      'Worker Phone',
+      'Amount (INR)',
+      'OTP Verified',
+      'Location Unlocked',
+      'Status',
+      'Cancelled By',
+      'Cancelled Time',
+    ];
+    const rows = sortedBookings.map((b) => {
+      const createdStr = b.createdAtMs ? new Date(b.createdAtMs).toLocaleString('en-IN') : b.createdAt;
+      const cancelStr = b.cancelledAtMs ? new Date(b.cancelledAtMs).toLocaleString('en-IN') : '';
+      const cancelledWho =
+        b.status === 'cancelled'
+          ? b.cancelledBy === 'worker'
+            ? 'Worker'
+            : b.cancelledBy === 'owner'
+            ? 'Owner'
+            : 'Customer'
+          : '';
+      return [
+        csvEscape(b.id),
+        csvEscape(createdStr),
+        csvEscape(b.serviceSubCategory || b.serviceCategory),
+        csvEscape(b.customerName),
+        csvEscape(b.customerPhone),
+        csvEscape(b.customerAddress || b.customerLocality),
+        csvEscape(b.workerId === 'OPEN_BROADCAST' ? 'Open Broadcast (Unclaimed)' : b.workerName),
+        csvEscape(b.workerPhone),
+        csvEscape(b.finalAmount || b.estimatedAmount || 0),
+        csvEscape(b.isOtpVerified ? 'Yes' : 'No'),
+        csvEscape(b.isLocationShared || b.acceptedAt ? 'Yes' : 'No'),
+        csvEscape(b.status),
+        csvEscape(cancelledWho),
+        csvEscape(cancelStr),
+      ].join(',');
+    });
+    const csvContent = '\uFEFF' + [headers.map(csvEscape).join(','), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `smart_india_bookings_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    soundManager.playSuccess();
+  };
 
   // Filtered users
   const filteredCustomers = customers.filter((c) => {
@@ -477,6 +603,54 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
         <span className="px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-mono">
           {totalAppUsersCount}
         </span>
+      </button>
+
+      <button
+        onClick={() => {
+          soundManager.playTap();
+          setActiveTab('bookings');
+        }}
+        className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+          activeTab === 'bookings'
+            ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+            : 'bg-slate-900/80 text-slate-400 hover:text-slate-200 border border-slate-800'
+        }`}
+      >
+        <FileText className="w-3.5 h-3.5 text-rose-400" />
+        <span>{language === 'hi' ? 'बुकिंग्स व काम रिपोर्ट' : 'Live Bookings & Status'}</span>
+        {activePendingBookings.length > 0 ? (
+          <span className="px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-mono font-bold">
+            {sortedBookings.length} • {activePendingBookings.length} {language === 'hi' ? 'बाकी' : 'Pending'}
+          </span>
+        ) : (
+          <span className="px-1.5 py-0.5 rounded-full bg-slate-800 text-slate-300 text-[10px] font-mono">
+            {sortedBookings.length}
+          </span>
+        )}
+      </button>
+
+      <button
+        onClick={() => {
+          soundManager.playTap();
+          setActiveTab('support');
+        }}
+        className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+          activeTab === 'support'
+            ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+            : 'bg-slate-900/80 text-slate-400 hover:text-slate-200 border border-slate-800'
+        }`}
+      >
+        <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
+        <span>{language === 'hi' ? 'ग्राहक शिकायतें' : 'Complaints'}</span>
+        {supportTickets.filter((t) => t.status !== 'resolved').length > 0 ? (
+          <span className="px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black animate-pulse">
+            {supportTickets.filter((t) => t.status !== 'resolved').length}
+          </span>
+        ) : (
+          <span className="px-1.5 py-0.5 rounded-full bg-slate-800 text-slate-300 text-[10px] font-mono">
+            {supportTickets.length}
+          </span>
+        )}
       </button>
 
       <button
@@ -743,6 +917,32 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
     <div className="space-y-6">
       {renderPendingUpiClaimsSection(false)}
       {/* 4 Hero KPI Cards */}
+      {supportTickets.filter((t) => t.status !== 'resolved').length > 0 && (
+        <button
+          type="button"
+          onClick={() => {
+            soundManager.playTap();
+            setActiveTab('support');
+          }}
+          className="w-full text-left bg-gradient-to-r from-rose-950/60 via-slate-900 to-amber-950/40 border border-rose-500/40 hover:border-amber-400 rounded-2xl p-4 flex items-center justify-between gap-3 transition-all"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/40 flex items-center justify-center shrink-0">
+              <HelpCircle className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="text-xs font-black text-white block">
+                📩 {supportTickets.filter((t) => t.status !== 'resolved').length}{' '}
+                {language === 'hi' ? 'ग्राहक शिकायतें / परेशानी आई हैं' : 'Customer Complaints Pending Review'}
+              </span>
+              <span className="text-[11px] text-slate-300">
+                {language === 'hi' ? 'सीधे ग्राहक का नाम, नंबर और समस्या देखने के लिए टैप करें।' : 'Tap to inspect customer name, phone, and reply.'}
+              </span>
+            </div>
+          </div>
+          <ChevronRight className="w-5 h-5 text-amber-400 shrink-0" />
+        </button>
+      )}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Metric 1: Total Users who used this app */}
         <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-lg relative overflow-hidden group hover:border-blue-500/40 transition-all">
@@ -823,6 +1023,125 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
           <p className="text-[11px] text-slate-500 mt-1 truncate">
             {appOwnerConfig.bankName} •••• {appOwnerConfig.bankAccountNumber.slice(-4)}
           </p>
+        </div>
+      </div>
+
+      {/* Live Work & Booking Status Tracker Card for Owner */}
+      <div className="bg-slate-900/90 border border-blue-500/30 rounded-2xl p-4 md:p-5 shadow-lg space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-black text-white flex items-center gap-2">
+              <FileText className="w-4 h-4 text-blue-400" />
+              <span>
+                {language === 'hi'
+                  ? 'लाइव काम ट्रैकर — किसने बुक किया, कौन गया, क्या पूरा हुआ और क्या बाकी है'
+                  : 'Live Work Tracker — Who Booked, Who Assigned, Completed vs Pending'}
+              </span>
+            </h3>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              {language === 'hi'
+                ? 'किसी भी कार्ड पर टैप करके तुरंत उन सभी बुकिंग्स की पूरी सूची (ग्राहक + कारीगर डिटेल सहित) देखें।'
+                : 'Tap any card below to inspect matching customer & worker booking records.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              soundManager.playTap();
+              setBookingStatusFilter('all');
+              setActiveTab('bookings');
+            }}
+            className="text-xs font-bold text-blue-400 hover:underline flex items-center gap-1 shrink-0"
+          >
+            <span>{language === 'hi' ? 'सभी बुकिंग्स देखें' : 'View All Bookings'}</span>
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+          <button
+            type="button"
+            onClick={() => {
+              soundManager.playTap();
+              setBookingStatusFilter('taken_pending');
+              setActiveTab('bookings');
+            }}
+            className="text-left p-3 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/35 transition-all"
+          >
+            <span className="text-[10px] font-bold text-amber-300 block">
+              {language === 'hi' ? '🟡 लिया गया पर बाकी' : '🟡 Taken, Not Done'}
+            </span>
+            <div className="text-xl font-black text-amber-200 font-mono mt-0.5">
+              {takenNotDoneBookings.length}
+            </div>
+            <span className="text-[10px] text-slate-400">
+              {language === 'hi' ? 'कारीगर तय, काम पूरा नहीं' : 'Worker assigned, unfinished'}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              soundManager.playTap();
+              setBookingStatusFilter('active');
+              setActiveTab('bookings');
+            }}
+            className="text-left p-3 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/35 transition-all"
+          >
+            <span className="text-[10px] font-bold text-blue-300 block">
+              {language === 'hi' ? '⏳ कुल बाकी काम' : '⏳ All Pending'}
+            </span>
+            <div className="text-xl font-black text-blue-200 font-mono mt-0.5">
+              {activePendingBookings.length}
+            </div>
+            <span className="text-[10px] text-slate-400">
+              {language === 'hi'
+                ? `${unclaimedPendingBookings.length} कारीगर खोज जारी`
+                : `${unclaimedPendingBookings.length} searching`}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              soundManager.playTap();
+              setBookingStatusFilter('completed');
+              setActiveTab('bookings');
+            }}
+            className="text-left p-3 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/35 transition-all"
+          >
+            <span className="text-[10px] font-bold text-emerald-300 block">
+              {language === 'hi' ? '✓ पूर्ण हुए काम' : '✓ Completed'}
+            </span>
+            <div className="text-xl font-black text-emerald-200 font-mono mt-0.5">
+              {completedBookingsCount}
+            </div>
+            <span className="text-[10px] text-slate-400">
+              {language === 'hi' ? 'काम सफलतापूर्वक पूरा' : 'Finished jobs'}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              soundManager.playTap();
+              setBookingStatusFilter('cancelled');
+              setActiveTab('bookings');
+            }}
+            className="text-left p-3 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/35 transition-all"
+          >
+            <span className="text-[10px] font-bold text-rose-300 block">
+              {language === 'hi' ? '❌ कैंसिल काम' : '❌ Cancelled'}
+            </span>
+            <div className="text-xl font-black text-rose-200 font-mono mt-0.5">
+              {cancelledBookings.length}
+            </div>
+            <span className="text-[10px] text-slate-400">
+              {language === 'hi'
+                ? `${cancelledByWorkerCount} कारीगर • ${cancelledByCustomerCount} ग्राहक`
+                : `${cancelledByWorkerCount} worker • ${cancelledByCustomerCount} customer`}
+            </span>
+          </button>
         </div>
       </div>
 
@@ -1176,6 +1495,26 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
 
           <div className="space-y-3">
             {[
+              ...sortedBookings.slice(0, 15).map((b) => ({
+                time: b.status === 'cancelled' && b.cancelledAtMs
+                  ? new Date(b.cancelledAtMs).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })
+                  : b.createdAtMs
+                  ? new Date(b.createdAtMs).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })
+                  : b.createdAt,
+                user: `${b.customerName} ➔ ${b.workerId === 'OPEN_BROADCAST' ? (language === 'hi' ? 'सभी कारीगर (Broadcast)' : 'Open Broadcast') : b.workerName}`,
+                role: b.status === 'cancelled'
+                  ? b.cancelledBy === 'worker'
+                    ? (language === 'hi' ? 'कारीगर ने कैंसिल किया' : 'Cancelled by Worker')
+                    : b.cancelledBy === 'owner'
+                    ? (language === 'hi' ? 'ओनर ने रद्द किया' : 'Cancelled by Owner')
+                    : (language === 'hi' ? 'ग्राहक ने कैंसिल किया' : 'Cancelled by Customer')
+                  : b.serviceSubCategory || b.serviceCategory,
+                action:
+                  b.status === 'cancelled'
+                    ? `बुकिंग #${b.id} (${b.serviceSubCategory || b.serviceCategory}) रद्द की गई${b.isLocationShared || b.acceptedAt ? ' ⚠️ (लोकेशन खुलने के बाद)' : ''}`
+                    : `बुकिंग #${b.id} • ${b.customerLocality} • ₹${b.finalAmount || b.estimatedAmount}`,
+                tag: b.status === 'cancelled' ? '❌ Cancelled' : b.status === 'completed' ? '✓ Done' : '⏳ Active',
+              })),
               ...(commissionRecords && commissionRecords.length > 0 ? commissionRecords.map((c) => ({
                 time: c.paidAt || 'अभी (Live)',
                 user: `${c.workerName} ➔ ${c.customerName}`,
@@ -1198,7 +1537,7 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
                 <div className="flex items-start gap-3">
                   <div className="w-2 h-2 rounded-full bg-blue-400 mt-1.5 shrink-0" />
                   <div>
-                    <div className="font-bold text-white flex items-center gap-2">
+                    <div className="font-bold text-white flex items-center gap-2 flex-wrap">
                       <span>{log.user}</span>
                       <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400">
                         {log.role}
@@ -1644,6 +1983,579 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
       )}
     </div>
   );
+
+  // Content for Tab: Bookings & Cancellation Audit ("kisne book kiya, kisne cancel kiya + CSV data file")
+  const renderBookingsTab = () => (
+    <div className="space-y-5">
+      {/* Header Banner + CSV Export */}
+      <div className="bg-gradient-to-r from-rose-950/40 via-slate-900 to-slate-900 border border-rose-500/30 rounded-2xl p-5 shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <span className="px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 font-bold text-[11px] border border-rose-500/30 inline-block">
+            {language === 'hi' ? 'बुकिंग और कैंसिलेशन ऑडिट फ़ाइल' : 'Bookings & Cancellation Audit Log'}
+          </span>
+          <h3 className="text-lg font-black text-white mt-1.5">
+            {language === 'hi'
+              ? 'हर काम की बुकिंग और कैंसिल करने वाले का पूरा रिकॉर्ड'
+              : 'Complete Record of Who Booked & Who Cancelled'}
+          </h3>
+          <p className="text-xs text-slate-400 mt-0.5">
+            {language === 'hi'
+              ? 'ग्राहक, कारीगर, समय और अगर काम कैंसिल हुआ तो किसने कैंसिल किया — सब यहाँ सुरक्षित है।'
+              : 'Customer, assigned worker, timestamps, OTP status, and exact cancellation actor are tracked here.'}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleDownloadBookingsCsv}
+          disabled={sortedBookings.length === 0}
+          className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 disabled:opacity-40 text-slate-950 font-black text-xs shadow-lg active:scale-95 transition-all shrink-0 cursor-pointer"
+        >
+          <Download className="w-4 h-4" />
+          <span>{language === 'hi' ? 'डेटा फ़ाइल डाउनलोड (CSV / Excel)' : 'Download Data File (CSV)'}</span>
+        </button>
+      </div>
+
+      {/* Summary Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4">
+          <span className="text-[11px] text-slate-400 block">{language === 'hi' ? 'कुल बुकिंग्स' : 'Total Bookings'}</span>
+          <div className="text-2xl font-black text-white font-mono mt-1">{sortedBookings.length}</div>
+        </div>
+        <div className="bg-slate-900/90 border border-amber-500/40 rounded-2xl p-4">
+          <span className="text-[11px] text-amber-300 font-bold block">
+            {language === 'hi' ? '🟡 लिया गया पर बाकी' : '🟡 Taken, Not Done'}
+          </span>
+          <div className="text-2xl font-black text-amber-300 font-mono mt-1">{takenNotDoneBookings.length}</div>
+          <span className="text-[10px] text-slate-400 block">
+            {language === 'hi' ? 'कारीगर तय, काम अभी बाकी' : 'Worker assigned, pending'}
+          </span>
+        </div>
+        <div className="bg-slate-900/90 border border-blue-500/30 rounded-2xl p-4">
+          <span className="text-[11px] text-blue-300 block">
+            {language === 'hi' ? '⏳ अभी किसी ने नहीं लिया' : '⏳ Searching Worker'}
+          </span>
+          <div className="text-2xl font-black text-blue-300 font-mono mt-1">{unclaimedPendingBookings.length}</div>
+        </div>
+        <div className="bg-slate-900/90 border border-emerald-500/30 rounded-2xl p-4">
+          <span className="text-[11px] text-emerald-400 block">{language === 'hi' ? '✓ पूर्ण काम' : '✓ Completed Jobs'}</span>
+          <div className="text-2xl font-black text-emerald-300 font-mono mt-1">{completedBookingsCount}</div>
+        </div>
+        <div className="bg-slate-900/90 border border-rose-500/30 rounded-2xl p-4 col-span-2 md:col-span-1">
+          <span className="text-[11px] text-rose-400 block">{language === 'hi' ? '❌ कैंसिल काम' : '❌ Cancelled'}</span>
+          <div className="text-2xl font-black text-rose-300 font-mono mt-1">{cancelledBookings.length}</div>
+          <span className="text-[10px] text-slate-400 block">
+            {language === 'hi'
+              ? `${cancelledByCustomerCount} ग्राहक • ${cancelledByWorkerCount} कारीगर`
+              : `${cancelledByCustomerCount} cust • ${cancelledByWorkerCount} worker`}
+          </span>
+        </div>
+      </div>
+
+      {/* Filter & Search Bar */}
+      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-3.5 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
+          {[
+            { id: 'all', label: language === 'hi' ? `सभी (${sortedBookings.length})` : `All (${sortedBookings.length})` },
+            { id: 'taken_pending', label: language === 'hi' ? `🟡 लिया गया पर बाकी (${takenNotDoneBookings.length})` : `🟡 Taken, Not Done (${takenNotDoneBookings.length})` },
+            { id: 'active', label: language === 'hi' ? `⏳ सभी बाकी काम (${activePendingBookings.length})` : `⏳ All Pending (${activePendingBookings.length})` },
+            { id: 'completed', label: language === 'hi' ? `✓ पूर्ण (${completedBookingsCount})` : `✓ Completed (${completedBookingsCount})` },
+            { id: 'cancelled', label: language === 'hi' ? `❌ कैंसिल (${cancelledBookings.length})` : `❌ Cancelled (${cancelledBookings.length})` },
+            { id: 'post_unlock_cancel', label: language === 'hi' ? `⚠️ लोकेशन बाद कैंसिल (${postUnlockCancelledBookings.length})` : `⚠️ Post-Unlock Cancel (${postUnlockCancelledBookings.length})` },
+          ].map((pill) => (
+            <button
+              key={pill.id}
+              type="button"
+              onClick={() => {
+                soundManager.playTap();
+                setBookingStatusFilter(pill.id as typeof bookingStatusFilter);
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+                bookingStatusFilter === pill.id
+                  ? 'bg-amber-500 text-slate-950 shadow-sm'
+                  : 'bg-slate-950 text-slate-400 border border-slate-800 hover:text-white'
+              }`}
+            >
+              {pill.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="relative w-full md:w-72">
+          <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            value={bookingSearchQuery}
+            onChange={(e) => setBookingSearchQuery(e.target.value)}
+            placeholder={language === 'hi' ? 'ग्राहक, कारीगर, फोन या ID खोजें...' : 'Search customer, worker, phone, ID...'}
+            className="w-full pl-9 pr-3 py-1.5 bg-slate-950 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+          />
+        </div>
+      </div>
+
+      {/* Bookings Audit Cards */}
+      {filteredBookings.length === 0 ? (
+        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-8 text-center text-xs text-slate-400">
+          {language === 'hi' ? 'अभी इस फ़िल्टर में कोई बुकिंग रिकॉर्ड नहीं है।' : 'No booking records found for this filter.'}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {filteredBookings.map((b) => {
+            const isCancelled = b.status === 'cancelled';
+            const isCompleted = b.status === 'completed';
+            const wasUnlockedBeforeCancel =
+              isCancelled && (b.isLocationShared || b.acceptedAt || (b.workerId && b.workerId !== 'OPEN_BROADCAST'));
+            const createdTimeStr = b.createdAtMs
+              ? new Date(b.createdAtMs).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+              : b.createdAt;
+            const cancelTimeStr = b.cancelledAtMs
+              ? new Date(b.cancelledAtMs).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+              : '';
+            const activeStatusLabel = (() => {
+              switch (b.status) {
+                case 'searching':
+                case 'requested':
+                  return language === 'hi'
+                    ? '📡 अभी किसी कारीगर ने नहीं लिया (खोज जारी)'
+                    : '📡 Searching for Worker (Unclaimed)';
+                case 'accepted':
+                  return language === 'hi'
+                    ? '🟡 कारीगर ने काम ले लिया — अभी पूरा नहीं हुआ'
+                    : '🟡 Accepted by Worker — Pending Completion';
+                case 'worker_en_route':
+                  return language === 'hi'
+                    ? '🛵 कारीगर रास्ते में है — काम बाकी'
+                    : '🛵 Worker En Route — Pending';
+                case 'arrived_at_door':
+                  return language === 'hi'
+                    ? '📍 कारीगर पहुँच गया — काम बाकी'
+                    : '📍 Worker Arrived — Pending';
+                case 'otp_verified':
+                  return language === 'hi'
+                    ? '✓ OTP मिलान हो गया — काम शुरू/बाकी'
+                    : '✓ OTP Verified — Work Starting';
+                case 'in_progress':
+                  return language === 'hi'
+                    ? '🔧 काम चल रहा है — अभी पूरा नहीं हुआ'
+                    : '🔧 Work In Progress — Not Finished Yet';
+                default:
+                  return `⏳ ${b.status}`;
+              }
+            })();
+
+            return (
+              <div
+                key={b.id}
+                className={`rounded-2xl p-4 border text-xs space-y-3 ${
+                  isCancelled
+                    ? wasUnlockedBeforeCancel
+                      ? 'bg-rose-950/25 border-rose-500/50'
+                      : 'bg-slate-900/90 border-rose-500/30'
+                    : isCompleted
+                    ? 'bg-slate-900/90 border-emerald-500/30'
+                    : b.workerId && b.workerId !== 'OPEN_BROADCAST'
+                    ? 'bg-amber-950/15 border-amber-500/40'
+                    : 'bg-slate-900/90 border-blue-500/30'
+                }`}
+              >
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-2.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-mono font-bold text-slate-300 bg-slate-950 px-2 py-0.5 rounded-lg border border-slate-800">
+                      #{b.id}
+                    </span>
+                    <span className="font-bold text-amber-300">{b.serviceSubCategory || b.serviceCategory}</span>
+                    <span className="text-[11px] text-slate-400 font-mono">₹{b.finalAmount || b.estimatedAmount || 0}</span>
+                    <span className="text-[10px] text-slate-500">• {createdTimeStr}</span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {isCancelled ? (
+                      <>
+                        <span
+                          className={`px-2.5 py-1 rounded-full font-black text-[11px] ${
+                            b.cancelledBy === 'worker'
+                              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                              : b.cancelledBy === 'owner'
+                              ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+                              : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                          }`}
+                        >
+                          {b.cancelledBy === 'worker'
+                            ? language === 'hi'
+                              ? '🚫 कारीगर ने कैंसिल किया'
+                              : '🚫 Cancelled by Worker'
+                            : b.cancelledBy === 'owner'
+                            ? language === 'hi'
+                              ? '👑 ओनर ने रद्द किया'
+                              : '👑 Cancelled by Owner'
+                            : language === 'hi'
+                            ? '❌ ग्राहक ने कैंसिल किया'
+                            : '❌ Cancelled by Customer'}
+                        </span>
+                        {wasUnlockedBeforeCancel && (
+                          <span className="px-2 py-0.5 rounded-full bg-rose-600 text-white font-black text-[10px]">
+                            {language === 'hi' ? '⚠️ लोकेशन खुलने के बाद कैंसिल' : '⚠️ Cancelled After Location Unlock'}
+                          </span>
+                        )}
+                      </>
+                    ) : isCompleted ? (
+                      <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold text-[11px]">
+                        ✓ {language === 'hi' ? 'काम पूरा हो गया' : 'Completed'}
+                      </span>
+                    ) : (
+                      <span
+                        className={`px-2.5 py-1 rounded-full font-bold text-[11px] border ${
+                          b.workerId && b.workerId !== 'OPEN_BROADCAST'
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                            : 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+                        }`}
+                      >
+                        {activeStatusLabel}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold text-blue-400 uppercase block">
+                        {language === 'hi' ? 'किसने बुक किया (ग्राहक)' : 'Booked By (Customer)'}
+                      </span>
+                      {b.customerPhone && (
+                        <a
+                          href={`tel:${b.customerPhone}`}
+                          className="text-[10px] font-bold text-blue-300 hover:text-blue-200 flex items-center gap-1"
+                        >
+                          <Phone className="w-3 h-3" />
+                          <span>{language === 'hi' ? 'कॉल' : 'Call'}</span>
+                        </a>
+                      )}
+                    </div>
+                    <div className="font-bold text-white">{b.customerName || 'Customer'}</div>
+                    <div className="text-[11px] text-slate-300 font-mono">{b.customerPhone || '—'}</div>
+                    <div className="text-[11px] text-slate-400 truncate">{b.customerAddress || b.customerLocality}</div>
+                  </div>
+
+                  <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold text-emerald-400 uppercase block">
+                        {language === 'hi' ? 'कौन सा कारीगर गया (Worker)' : 'Assigned Worker'}
+                      </span>
+                      {b.workerId !== 'OPEN_BROADCAST' && b.workerPhone && (
+                        <a
+                          href={`tel:${b.workerPhone}`}
+                          className="text-[10px] font-bold text-emerald-300 hover:text-emerald-200 flex items-center gap-1"
+                        >
+                          <Phone className="w-3 h-3" />
+                          <span>{language === 'hi' ? 'कॉल' : 'Call'}</span>
+                        </a>
+                      )}
+                    </div>
+                    <div className="font-bold text-white">
+                      {b.workerId === 'OPEN_BROADCAST'
+                        ? language === 'hi'
+                          ? '📡 ओपन लीड (अभी किसी ने स्वीकार नहीं किया)'
+                          : '📡 Open Broadcast (Unclaimed)'
+                        : b.workerName || 'Worker'}
+                    </div>
+                    <div className="text-[11px] text-slate-300 font-mono">{b.workerPhone || '—'}</div>
+                    <div className="text-[11px] text-slate-400 flex items-center gap-2 flex-wrap">
+                      <span>{b.isOtpVerified ? '✓ OTP सत्यापित (मुलाकात हुई)' : `OTP: ${b.arrivalOtp || '----'}`}</span>
+                      {b.acceptedAt && (
+                        <span className="text-amber-300">
+                          • {language === 'hi' ? 'स्वीकार:' : 'Accepted:'} {b.acceptedAt}
+                        </span>
+                      )}
+                      {cancelTimeStr && <span className="text-rose-300">• कैंसिल समय: {cancelTimeStr}</span>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
+  // Content for Tab: Customer Support & Direct Complaints to Owner
+  const renderSupportTab = () => {
+    const sortedTickets = [...supportTickets].sort(
+      (a, b) => (b.updatedAtMs || b.createdAtMs || 0) - (a.updatedAtMs || a.createdAtMs || 0)
+    );
+    const openCount = sortedTickets.filter((t) => t.status === 'open').length;
+    const reviewingCount = sortedTickets.filter((t) => t.status === 'in_investigation').length;
+    const resolvedCount = sortedTickets.filter((t) => t.status === 'resolved').length;
+    const filteredTickets =
+      supportStatusFilter === 'all'
+        ? sortedTickets
+        : sortedTickets.filter((t) => t.status === supportStatusFilter);
+
+    const getCategoryLabel = (cat: SupportTicket['category']) => {
+      switch (cat) {
+        case 'job_quality':
+          return language === 'hi' ? '🛠️ काम / सर्विस गुणवत्ता' : '🛠️ Service Quality & Work Issue';
+        case 'worker_conduct':
+          return language === 'hi' ? '⚠️ कारीगर व्यवहार या देरी' : '⚠️ Worker Conduct or Delay';
+        case 'wallet_payment':
+          return language === 'hi' ? '💳 पेमेंट / ज्यादा पैसे की शिकायत' : '💳 Payment or Overcharging';
+        case 'technical_app':
+          return language === 'hi' ? '📱 ऐप तकनीकी समस्या' : '📱 App Technical Bug';
+        default:
+          return cat;
+      }
+    };
+
+    const getStatusBadge = (status: SupportTicket['status']) => {
+      if (status === 'resolved') {
+        return (
+          <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold text-[11px]">
+            ✓ {language === 'hi' ? 'समाधान हो गया' : 'Resolved'}
+          </span>
+        );
+      }
+      if (status === 'in_investigation') {
+        return (
+          <span className="px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold text-[11px]">
+            🔍 {language === 'hi' ? 'जांच जारी' : 'In Review'}
+          </span>
+        );
+      }
+      return (
+        <span className="px-2.5 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 font-bold text-[11px]">
+          🆕 {language === 'hi' ? 'नई शिकायत' : 'New / Open'}
+        </span>
+      );
+    };
+
+    return (
+      <div className="space-y-5">
+        <div className="bg-gradient-to-r from-amber-900/30 via-slate-900 to-rose-900/20 border border-amber-500/30 rounded-2xl p-5 shadow-xl space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div>
+              <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold text-xs border border-amber-500/30 inline-flex items-center gap-1.5">
+                <HelpCircle className="w-3.5 h-3.5" />
+                {language === 'hi' ? 'सीधी ग्राहक सहायता व शिकायत केंद्र' : 'Direct Customer Support Inbox'}
+              </span>
+              <h3 className="text-lg md:text-xl font-black text-white mt-1.5">
+                {language === 'hi'
+                  ? 'ग्राहकों की समस्याएं सीधे यहाँ ओनर को मिलती हैं'
+                  : 'Customer Problems Sent Directly to App Owner'}
+              </h3>
+              <p className="text-xs text-slate-300 mt-0.5">
+                {language === 'hi'
+                  ? 'ग्राहक ऐप में "Raise Support Request" से भेजी गई हर परेशानी तुरंत लाइव यहाँ आती है। आप यहीं से ग्राहक को कॉल या जवाब दे सकते हैं।'
+                  : 'Every issue raised by customers arrives here in real time. Call or reply directly from this console.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800">
+              <div className="text-[11px] text-slate-400 font-bold">{language === 'hi' ? 'कुल शिकायतें' : 'Total'}</div>
+              <div className="text-xl font-black text-white mt-0.5">{sortedTickets.length}</div>
+            </div>
+            <div className="p-3 rounded-xl bg-rose-950/30 border border-rose-500/30">
+              <div className="text-[11px] text-rose-300 font-bold">{language === 'hi' ? 'नई / बाकी' : 'New / Open'}</div>
+              <div className="text-xl font-black text-rose-300 mt-0.5">{openCount}</div>
+            </div>
+            <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-500/30">
+              <div className="text-[11px] text-amber-300 font-bold">{language === 'hi' ? 'जांच में' : 'In Review'}</div>
+              <div className="text-xl font-black text-amber-300 mt-0.5">{reviewingCount}</div>
+            </div>
+            <div className="p-3 rounded-xl bg-emerald-950/30 border border-emerald-500/30">
+              <div className="text-[11px] text-emerald-300 font-bold">{language === 'hi' ? 'सुलझाई गईं' : 'Resolved'}</div>
+              <div className="text-xl font-black text-emerald-300 mt-0.5">{resolvedCount}</div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                { id: 'all', label: language === 'hi' ? `सभी (${sortedTickets.length})` : `All (${sortedTickets.length})` },
+                { id: 'open', label: language === 'hi' ? `नई (${openCount})` : `Open (${openCount})` },
+                { id: 'in_investigation', label: language === 'hi' ? `जांच में (${reviewingCount})` : `In Review (${reviewingCount})` },
+                { id: 'resolved', label: language === 'hi' ? `हल हो गईं (${resolvedCount})` : `Resolved (${resolvedCount})` },
+              ] as const
+            ).map((f) => (
+              <button
+                key={f.id}
+                onClick={() => {
+                  soundManager.playTap();
+                  setSupportStatusFilter(f.id);
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                  supportStatusFilter === f.id
+                    ? 'bg-amber-500 text-slate-950 shadow'
+                    : 'bg-slate-900 text-slate-300 border border-slate-800 hover:border-slate-700'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {!ownerAuthVerified && onVerifyOwnerGoogle && (
+          <div className="bg-amber-950/30 border border-amber-500/40 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="text-xs text-amber-200">
+              {language === 'hi'
+                ? '👑 शिकायत का स्टेटस "जांच जारी / हल हुआ" अपडेट करने के लिए कृपया अपनी ओनर Google ID (vr6386833@gmail.com) वेरीफाई रखें।'
+                : '👑 Please keep your Owner Google account verified to update complaint status and reply.'}
+            </div>
+            <button
+              onClick={() => void onVerifyOwnerGoogle()}
+              className="px-3.5 py-2 rounded-xl bg-amber-500 text-slate-950 text-xs font-black shrink-0 hover:bg-amber-400"
+            >
+              {language === 'hi' ? 'Google से ओनर वेरीफाई करें' : 'Verify Owner Google'}
+            </button>
+          </div>
+        )}
+
+        {filteredTickets.length === 0 ? (
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center space-y-2">
+            <HelpCircle className="w-8 h-8 text-slate-500 mx-auto" />
+            <div className="text-sm font-bold text-slate-300">
+              {language === 'hi' ? 'अभी इस श्रेणी में कोई ग्राहक शिकायत नहीं है' : 'No customer support tickets in this view'}
+            </div>
+            <p className="text-xs text-slate-500">
+              {language === 'hi'
+                ? 'जब भी कोई ग्राहक ऐप से अपनी समस्या भेजेगा, वह तुरंत यहाँ दिखाई देगी।'
+                : 'Any complaint submitted by a customer will appear here instantly.'}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {filteredTickets.map((ticket) => {
+              const draft = supportReplyDrafts[ticket.id] ?? '';
+              return (
+                <div
+                  key={ticket.id}
+                  className="bg-slate-900 border border-slate-800 rounded-2xl p-4 md:p-5 space-y-3.5 shadow-lg"
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2.5">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-950 text-slate-400 border border-slate-800">
+                          #{ticket.id}
+                        </span>
+                        <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30">
+                          {getCategoryLabel(ticket.category)}
+                        </span>
+                        {ticket.createdAt && (
+                          <span className="text-[11px] text-slate-400">• {ticket.createdAt}</span>
+                        )}
+                      </div>
+                      <h4 className="text-sm md:text-base font-black text-white leading-snug">
+                        {ticket.subject}
+                      </h4>
+                    </div>
+                    <div className="shrink-0">{getStatusBadge(ticket.status)}</div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-slate-950/70 border border-slate-800/80 text-xs">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-full bg-blue-500/20 text-blue-300 flex items-center justify-center font-black">
+                        {(ticket.userName || 'C')[0]?.toUpperCase()}
+                      </div>
+                      <div>
+                        <div className="font-bold text-white">
+                          {ticket.userName || 'Customer'}{' '}
+                          <span className="text-[10px] font-normal text-slate-400">({ticket.userRole})</span>
+                        </div>
+                        <div className="text-[11px] text-slate-300 font-mono">
+                          {ticket.userPhone || (language === 'hi' ? 'फ़ोन उपलब्ध नहीं' : 'No phone')}
+                        </div>
+                      </div>
+                    </div>
+                    {ticket.userPhone && (
+                      <a
+                        href={`tel:${ticket.userPhone}`}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold text-xs hover:bg-emerald-500/30"
+                      >
+                        <Phone className="w-3.5 h-3.5" />
+                        <span>{language === 'hi' ? 'ग्राहक को कॉल करें' : 'Call Customer'}</span>
+                      </a>
+                    )}
+                  </div>
+
+                  {ticket.messages && ticket.messages.length > 0 && (
+                    <div className="space-y-1.5 bg-slate-950/50 border border-slate-800/70 rounded-xl p-3">
+                      {ticket.messages.map((m, idx) => (
+                        <div
+                          key={idx}
+                          className={`text-xs flex items-start gap-2 ${
+                            m.sender === 'support' ? 'text-emerald-300' : 'text-slate-200'
+                          }`}
+                        >
+                          <span className="font-bold shrink-0">
+                            {m.sender === 'support'
+                              ? '👑 Owner:'
+                              : `👤 ${ticket.userName || 'Customer'}:`}
+                          </span>
+                          <span className="flex-1">{m.text}</span>
+                          <span className="text-[10px] text-slate-500 shrink-0">{m.time}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {onUpdateSupportTicket && (
+                    <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                      <input
+                        type="text"
+                        value={draft}
+                        onChange={(e) =>
+                          setSupportReplyDrafts((prev) => ({ ...prev, [ticket.id]: e.target.value }))
+                        }
+                        placeholder={
+                          language === 'hi'
+                            ? 'ग्राहक को अपना जवाब लिखें (जैसे: कारीगर से बात हो गई है)...'
+                            : 'Write owner reply to customer...'
+                        }
+                        className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-500"
+                      />
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => {
+                            soundManager.playTap();
+                            onUpdateSupportTicket(ticket.id, draft, 'in_investigation');
+                            setSupportReplyDrafts((prev) => ({ ...prev, [ticket.id]: '' }));
+                          }}
+                          className="px-3 py-2 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-bold hover:bg-amber-500/30"
+                        >
+                          {language === 'hi' ? '🔍 जांच में डालें' : 'In Review'}
+                        </button>
+                        <button
+                          onClick={() => {
+                            soundManager.playTap();
+                            onUpdateSupportTicket(
+                              ticket.id,
+                              draft ||
+                                (language === 'hi'
+                                  ? 'ओनर द्वारा समस्या का समाधान कर दिया गया है।'
+                                  : 'Resolved by App Owner.'),
+                              'resolved'
+                            );
+                            setSupportReplyDrafts((prev) => ({ ...prev, [ticket.id]: '' }));
+                          }}
+                          className="px-3.5 py-2 rounded-xl bg-emerald-600 text-white text-xs font-black hover:bg-emerald-500 flex items-center gap-1"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>{language === 'hi' ? 'समस्या हल (Resolve)' : 'Resolve'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   // Content for Tab 3: Bank Transfer ("worker daura pay kiye gaaye paise ko oner aapne khate me bank account me daal sake")
   const renderBankTransferTab = () => (
@@ -2630,6 +3542,8 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
                 {activeTab === 'overview' && renderDashboardTab()}
                 {activeTab === 'users' && renderUsersTab()}
+                {activeTab === 'bookings' && renderBookingsTab()}
+                {activeTab === 'support' && renderSupportTab()}
                 {activeTab === 'bank_transfer' && renderBankTransferTab()}
                 {activeTab === 'worker_fees' && renderWorkerFeesTab()}
                 {activeTab === 'settings' && renderSettingsTab()}
@@ -2660,7 +3574,38 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
                   }`}
                 >
                   <Users className="w-4 h-4" />
-                  <span>यूजर्स ({totalAppUsersCount})</span>
+                  <span>यूजर्स</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    soundManager.playTap();
+                    setActiveTab('bookings');
+                  }}
+                  className={`flex flex-col items-center gap-0.5 p-1 ${
+                    activeTab === 'bookings' ? 'text-amber-400 font-bold' : 'text-slate-400'
+                  }`}
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>बुकिंग्स</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    soundManager.playTap();
+                    setActiveTab('support');
+                  }}
+                  className={`relative flex flex-col items-center gap-0.5 p-1 ${
+                    activeTab === 'support' ? 'text-amber-400 font-bold' : 'text-slate-400'
+                  }`}
+                >
+                  <HelpCircle className="w-4 h-4" />
+                  <span>शिकायत</span>
+                  {supportTickets.filter((t) => t.status !== 'resolved').length > 0 && (
+                    <span className="absolute -top-0.5 right-0 min-w-[14px] h-[14px] px-1 rounded-full bg-rose-500 text-white text-[8px] font-black flex items-center justify-center">
+                      {supportTickets.filter((t) => t.status !== 'resolved').length}
+                    </span>
+                  )}
                 </button>
 
                 <button
@@ -2673,7 +3618,7 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
                   }`}
                 >
                   <Landmark className="w-4 h-4" />
-                  <span>बैंक ट्रांसफर</span>
+                  <span>बैंक</span>
                 </button>
 
                 <button
@@ -2711,6 +3656,8 @@ export const OwnerApp: React.FC<OwnerAppProps> = ({
           {renderNavTabs()}
           {activeTab === 'overview' && renderDashboardTab()}
           {activeTab === 'users' && renderUsersTab()}
+          {activeTab === 'bookings' && renderBookingsTab()}
+          {activeTab === 'support' && renderSupportTab()}
           {activeTab === 'bank_transfer' && renderBankTransferTab()}
           {activeTab === 'worker_fees' && renderWorkerFeesTab()}
           {activeTab === 'settings' && renderSettingsTab()}
